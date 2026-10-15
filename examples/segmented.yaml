@@ -2,6 +2,7 @@
 schema: 1
 hostname: segmented-example
 hardware:
+  machine_id: fedcba9876543210fedcba9876543210 # Synthetic; generate a unique ID once for your device.
   architecture: x86-64
   interfaces:
     wan:

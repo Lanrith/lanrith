@@ -2,6 +2,7 @@
 schema: 1
 hostname: example-router
 hardware:
+  machine_id: 0123456789abcdef0123456789abcdef # Synthetic; generate a unique ID once for your device.
   architecture: x86-64
   interfaces:
     wan:

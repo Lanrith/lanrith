@@ -38,6 +38,8 @@ def installed():
 
 def health():
     value = installed()
+    require(Path('/etc/machine-id').read_text().strip() == value['machine_id'],
+            'Running device identity differs from the signed owner configuration.')
     expected = {'kernel.unprivileged_bpf_disabled': 2, 'net.core.bpf_jit_harden': 2,
                 'kernel.kptr_restrict': 2, 'kernel.dmesg_restrict': 1, 'kernel.yama.ptrace_scope': 2,
                 'kernel.perf_event_paranoid': 3, 'kernel.unprivileged_userns_clone': 0,

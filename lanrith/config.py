@@ -67,7 +67,11 @@ def normalize(value):
     require(isinstance(hostname, str) and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', hostname),
             'Hostname must be a simple DNS label.')
     hardware = value['hardware']
-    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration'}, {'interfaces'})
+    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id'}, {'interfaces'})
+    if 'machine_id' in hardware:
+        require(isinstance(hardware['machine_id'], str) and
+                re.fullmatch(r'[0-9a-f]{32}', hardware['machine_id']) and hardware['machine_id'] != '0'*32,
+                'Machine identity must be a nonzero 32-digit lowercase hexadecimal ID.')
     require(hardware.get('architecture', 'x86-64') == 'x86-64',
             'This release qualifies x86-64; additional architectures require a supported build profile.')
     boot = hardware.setdefault('boot', {'secure_boot': True, 'tpm': 'required'})

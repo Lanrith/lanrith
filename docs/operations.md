@@ -6,6 +6,13 @@ repository, recreating a workflow or rebuilding with different configuration.
 A rollback is a new deployment of reviewed inputs with a higher sequence; the
 accepted boot entry remains a fallback until the candidate is accepted.
 
+Each device also needs a permanent `hardware.machine_id`, generated once in its
+private configuration. Preserve the installed ID when migrating an existing
+router. The signed root and initrd use the same ID, and repartitioning uses it
+as its seed. systemd binds automatic `/var` discovery to this identity; never
+derive it from a release, rotating key, hostname or changing network settings.
+See [systemd's partition discovery rules](https://github.com/systemd/systemd/blob/main/man/systemd-gpt-auto-generator.xml).
+
 The signed manifest declares purpose, image identity, platform version,
 sequence, effective configuration/integration digest, architecture and the
 exact artifact names, lengths and SHA-256 digests. Unknown fields, extra files,

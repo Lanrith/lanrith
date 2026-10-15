@@ -21,6 +21,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     require(release.VERSION.fullmatch(version) and type(sequence) is int and 1 <= sequence <= 999999999,
             'Invalid image release identity.')
     value = config.normalize(value)
+    machine_id = value['hardware'].get('machine_id')
+    require(machine_id is not None, 'Set hardware.machine_id once in owner configuration before building.')
     initrd_base = initrd_base or base
     require(initrd_base.is_file() and not initrd_base.is_symlink() and initrd_base.resolve() == initrd_base.absolute(),
             'Initrd filesystem must be an admitted canonical archive.')
@@ -45,7 +47,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                                              if serial_hash else None})).hexdigest()
     (overlay / 'usr/share/lanrith/configuration.sha256').write_text(digest + '\n')
     image_id = value.get('release', {}).get('image_id', 'lanrith')
-    installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id,
+    installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,
                  'update_image_id': image_id, 'platform_version': version, 'deployment_sequence': sequence,
                  'uki_name': f'{image_id}_{sequence}.efi', 'state_directory': '/var/lib/lanrith',
                  'certificate': '/usr/share/lanrith/owner.crt', 'esp': '/efi',
@@ -57,6 +59,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     metadata = overlay / 'usr/share/lanrith'
     metadata.mkdir(parents=True, exist_ok=True)
     (metadata / 'installed.json').write_bytes(release.canonical(installed))
+    (overlay/'etc/machine-id').write_text(machine_id+'\n')
+    (destination/'mkosi.machine-id').write_text(machine_id+'\n')
     tmpfiles = overlay/'usr/lib/tmpfiles.d/80-lanrith-update.conf'
     tmpfiles.parent.mkdir(parents=True, exist_ok=True)
     tmpfiles.write_text('d /var/lib/lanrith 0700 root root -\n'
@@ -94,6 +98,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-runtime publish\n'
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
+    wants.mkdir(parents=True, exist_ok=True)
+    # Factory provisioning owns repartitioning and always supplies the observed
+    # disk. Do not let an automatic service select a disk from global labels.
+    (wants/'systemd-repart.service').symlink_to('/dev/null')
     for name, text in storage_definitions(value, sequence).items():
         path = overlay/'usr/lib/repart.d'/name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,8 +180,13 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
         f'\n[Output]\nFormat=cpio\nOutput=initrd\nOutputDirectory={destination/"output"}\n'
         'CompressOutput=zstd\nManifestFormat=\nSplitArtifacts=\n'
-        f'\n[Content]\nBaseTrees={initrd_base}\nBootable=no\nMakeInitrd=yes\n')
+        f'\n[Content]\nBaseTrees={initrd_base}\nBootable=no\nMakeInitrd=yes\nMachineID={machine_id}\n')
     initrd_overlay = initrd/'mkosi.extra'
+    (initrd_overlay/'etc').mkdir(parents=True)
+    (initrd_overlay/'etc/machine-id').write_text(machine_id+'\n')
+    initrd_masks = initrd_overlay/'etc/systemd/system'
+    initrd_masks.mkdir(parents=True)
+    (initrd_masks/'systemd-repart.service').symlink_to('/dev/null')
     initrd_units = initrd_overlay/'usr/lib/systemd/system'
     initrd_units.mkdir(parents=True)
     initrd_library = initrd_overlay/'usr/lib/lanrith/lanrith'
@@ -207,7 +220,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             f'\n[Output]\nFormat=disk\nImageId={image_id}\nImageVersion={sequence}\n'
             f'Output={image_id}_{sequence}\nOutputDirectory={destination / "output"}\n'
             'SplitArtifacts=uki,partitions\nManifestFormat=json\n'
-            f'\n[Content]\nBaseTrees={base}\nBootable=yes\nShimBootloader=signed\nInitrds=%O/initrd\n'
+            f'\n[Content]\nBaseTrees={base}\nBootable=yes\nShimBootloader=signed\nInitrds=%O/initrd\nMachineID={machine_id}\n'
             f'KernelCommandLine=console={boot.get("console", "tty0")} systemd.log_target=journal-or-kmsg '
             'systemd.journald.forward_to_console=0 systemd.journald.forward_to_kmsg=0 '
             f'systemd.journald.forward_to_wall=0{kernel}\n'

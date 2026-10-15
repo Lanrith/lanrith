@@ -21,6 +21,10 @@ class AssemblyTests(unittest.TestCase):
             self.assertNotIn('Packages=', text)
             self.assertNotIn('Script=', text)
             self.assertIn('BaseTrees=', text)
+            self.assertEqual((workspace/'mkosi.machine-id').read_text().strip(), value['hardware']['machine_id'])
+            self.assertEqual((workspace/'mkosi.images/initrd/mkosi.extra/etc/machine-id').read_text(),
+                             (workspace/'mkosi.extra/etc/machine-id').read_text())
+            self.assertEqual((workspace/'mkosi.extra/etc/systemd/system/systemd-repart.service').readlink(), Path('/dev/null'))
             self.assertEqual(identity['deployment_sequence'], 9)
             self.assertTrue((workspace / 'mkosi.extra/etc/systemd/system/boot-complete.target.requires/lanrith-health.service').is_symlink())
             with self.assertRaises(ReleaseError):

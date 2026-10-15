@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -157,6 +156,62 @@ def recovery(installed):
     os.close(descriptor)
 
 
+def repartition(installed, disk, *, installed_root):
+    """Create bounded slots/state only on the explicitly observed or selected disk."""
+    definitions = '/sysroot/usr/lib/repart.d'
+    arguments = ['systemd-repart', '--definitions='+definitions, '--empty=refuse', '--dry-run=no', '--offline=no',
+                 '--seed='+installed['machine_id']]
+    if installed_root:
+        arguments.append('--root=/sysroot')
+    if installed['boot'].get('tpm', 'required') == 'disabled':
+        require(os.ttyname(sys.stdin.fileno()) == '/dev/'+installed['boot']['recovery_console'],
+                'Manual state encryption requires the selected physical console.')
+        first = getpass.getpass('State encryption passphrase (at least 24 characters): ')
+        require(len(first) >= 24 and first == getpass.getpass('Repeat state encryption passphrase: '),
+                'State encryption passphrases differ or are too short.')
+        with tempfile.TemporaryDirectory(prefix='lanrith-state.', dir='/run') as secret:
+            key = Path(secret)/'key'
+            key.write_text(first)
+            key.chmod(0o600)
+            del first
+            command([*arguments, '--key-file='+str(key), disk], timeout=600)
+    else:
+        command([*arguments, disk], timeout=600)
+    command(['udevadm', 'settle', '--timeout=30'])
+
+
+def prepare_state(installed, disk, active):
+    rows = geometry(disk)
+    state = [row for row in rows if row['type'].lower() == VAR_GUID]
+    require(len(state) <= 1, 'Persistent state partition is ambiguous.')
+    if not state:
+        # A pristine installed factory image has only ESP and one verified-root
+        # triplet. Never repartition a populated or otherwise foreign disk.
+        require(len(rows) == 4 and sum(row['type'].lower() ==
+            'c12a7328-f81f-11d2-ba4b-00a0c93ec93b' for row in rows) == 1,
+            'Initial state provisioning requires the pristine factory layout.')
+        for role, guid in GUIDS.items():
+            parts = [row for row in rows if row['type'].lower() == guid]
+            require(len(parts) == 1 and parts[0]['label'] == installed['active_labels'][role] and
+                    (role == 'verity-sig' or parts[0]['number'] in active),
+                    'Factory slot identity differs from the verified boot.')
+        observed = json.loads(command(['lsblk', '--json', '--bytes', '--nodeps', '--output', 'SIZE,RO,LOG-SEC', disk]))
+        devices = observed['blockdevices']
+        require(len(devices) == 1 and devices[0].get('ro') is False and devices[0].get('log-sec') == 512 and
+                type(devices[0].get('size')) is int and devices[0]['size'] >= minimum_size(installed),
+                'Installed disk cannot accommodate the selected state and A/B budgets.')
+        repartition(installed, disk, installed_root=True)
+        state = [row for row in geometry(disk) if row['type'].lower() == VAR_GUID]
+    require(len(state) == 1 and state[0]['label'] == 'var' and
+            state[0]['size'] >= installed['storage']['state_mib']*1024*1024,
+            'Selected persistent state partition is absent or undersized.')
+    devices = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PARTN', disk]))
+    parts = [part['name'] for part in devices['blockdevices'][0].get('children', [])
+             if part.get('type') == 'part' and part.get('partn') == state[0]['number']]
+    require(len(parts) == 1, 'Cannot identify the selected persistent state partition.')
+    command(['cryptsetup', 'isLuks', parts[0]])
+
+
 def provision():
     require(os.geteuid() == 0, 'Installation requires root in the verified initrd.')
     installed = json.loads(read(Path('/sysroot/usr/share/lanrith/installed.json'), 65536))
@@ -175,6 +230,7 @@ def provision():
             require(str(Path(selected).resolve()) == disk, 'Installed boot disk differs from the selected hardware profile.')
         require(selected or command(['lsblk', '--nodeps', '--noheadings', '--output', 'TRAN', disk]).strip() != 'usb',
                 'Removable boot media lacks its authenticated factory payload.')
+        prepare_state(installed, disk, active)
         return
     require(len(media) == 1 and media[0].get('pkname') == disk,
             'Factory payload must be on the single verified boot disk.')
@@ -199,19 +255,7 @@ def provision():
             command(['cmp', '--bytes='+str(raw.stat().st_size), str(raw), chosen], timeout=1800)
             command(['sfdisk', '--relocate', 'gpt-bak-std', chosen])
             if installed['boot'].get('tpm', 'required') == 'disabled':
-                # Encrypt with an operator passphrase supplied directly on the selected console.
-                first = getpass.getpass('State encryption passphrase (at least 24 characters): ')
-                require(len(first) >= 24 and first == getpass.getpass('Repeat state encryption passphrase: '),
-                        'State encryption passphrases differ or are too short.')
-                with tempfile.TemporaryDirectory(prefix='lanrith-state.', dir='/run') as secret:
-                    key = Path(secret)/'key'
-                    key.write_text(first)
-                    key.chmod(0o600)
-                    del first
-                    definitions = Path(secret)/'repart'
-                    shutil.copytree('/sysroot/usr/lib/repart.d', definitions)
-                    command(['systemd-repart', '--definitions='+str(definitions), '--empty=allow', '--dry-run=no',
-                             '--key-file='+str(key), chosen], timeout=600)
+                repartition(installed, chosen, installed_root=False)
             print('Installation read-back passed. Remove the factory medium after power-off.')
             command(['systemctl', '--no-block', 'poweroff'])
             # Never return into initrd-switch-root on the removable installation medium.
