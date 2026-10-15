@@ -82,9 +82,11 @@ def main():
         run('git', '-C', str(source), 'apply', str(ROOT/'builders/node-exporter/dependencies.patch'))
         shutil.copyfile(ROOT/'scripts/collect-notices.py', work/'collect-notices.py')
         run('docker', 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+            '--user', str(os.getuid())+':'+str(os.getgid()),
+            '--env', 'GOCACHE=/work/go-cache', '--env', 'GOMODCACHE=/work/go-mod', '--env', 'GOENV=off',
             '-v', str(work)+':/work', '-v', str(scanner)+':/scanner:ro', '-w', '/work/node-exporter',
             pin['builder'], 'sh', '-ec',
-            'test "$(go env GOVERSION)" = go1.26.9; go mod download; go mod verify; '
+            'test "$(go env GOVERSION)" = go1.26.9; go mod download all; go mod verify; '
             './ttar -C collector/fixtures -x -f collector/fixtures/sys.ttar; '
             './ttar -C collector/fixtures -x -f collector/fixtures/udev.ttar; '
             'go test ./...; /scanner ./... > /work/exporter-source.txt; '

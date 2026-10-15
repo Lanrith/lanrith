@@ -239,7 +239,8 @@ def storage_definitions(value, sequence):
 
 
 def run(destination):
-    result = subprocess.run(['mkosi', '--directory', str(destination), '--cache-only=always', 'build'],
+    result = subprocess.run(['mkosi', '--directory', str(destination),
+                             '--cache-directory', str(destination/'cache'), '--cache-only=always', 'build'],
                             stdin=subprocess.DEVNULL, timeout=3600)
     require(result.returncode == 0, 'mkosi image assembly failed.')
     normalize_factory_entry(destination)
