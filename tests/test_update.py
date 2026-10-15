@@ -3,12 +3,23 @@
 import copy
 from pathlib import Path
 import unittest
+import tempfile
 
 from lanrith import update
 from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    def test_running_slot_must_be_the_explicitly_accepted_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            variable = Path(temporary)/'LoaderEntryDefault'
+            accepted = Path('/efi/EFI/Linux/lanrith_41.efi')
+            variable.write_bytes(bytes(4)+(accepted.name+'\0').encode('utf-16-le'))
+            update.require_default(accepted, variable)
+            for value in ('lanrith_40.efi', 'lanrith_41.efi\0extra', '', 'lanrith_41.efi\n'):
+                variable.write_bytes(bytes(4)+(value+'\0').encode('utf-16-le'))
+                with self.subTest(value=value), self.assertRaises(ReleaseError):
+                    update.require_default(accepted, variable)
     def setUp(self):
         self.installed = {'deployment_sequence': 8, 'layout': 'ab-verity-v1',
                           'active_labels': {role: 'current-' + role for role in update.PARTITION_ROLES}}

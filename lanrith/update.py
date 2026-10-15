@@ -166,6 +166,18 @@ def accepted_boot(current, expected, esp):
     return stable
 
 
+def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
+    """Do not overwrite the last accepted fallback from an unaccepted running slot."""
+    data = read(variable, 4096)
+    require(len(data) >= 6 and (len(data)-4) % 2 == 0, 'Boot-default EFI variable is malformed.')
+    try:
+        entry = data[4:].decode('utf-16-le').rstrip('\x00')
+    except UnicodeError as error:
+        from .release import ReleaseError
+        raise ReleaseError('Boot-default EFI variable is malformed.') from error
+    require(entry == accepted.name, 'Accept the running boot as default before staging another update.')
+
+
 def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
     """Stage an admitted root-owned inbox through the ordinary A/B mechanism."""
     require(os.geteuid() == 0, 'Update staging requires the root-owned admission helper.')
@@ -190,6 +202,7 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1 and
                 stat.S_IMODE(info.st_mode) == 0o600, 'Unsafe update lock file.')
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        require_default(accepted)
         manifest = verify(directory, Path(installed['certificate']), purpose='update',
                           image_id=installed['update_image_id'],
                           minimum_sequence=installed['deployment_sequence'])
@@ -226,7 +239,7 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         observed_uki = file_record(candidates[0])
         require(observed_uki['sha256'] == expected['sha256'] and observed_uki['size'] == expected['size'],
                 'Staged UKI differs from the admitted bytes.')
-        command(['bootctl', 'set-default', accepted.name])
+        require_default(accepted)
         # Type-2 boot entry IDs omit the boot-counting suffix.
         command(['bootctl', 'set-oneshot', value['uki']])
         variable = Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')

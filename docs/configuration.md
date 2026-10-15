@@ -10,6 +10,7 @@ selectors and undeclared management networks fail validation. See the
 | `hostname` | Router's DNS label |
 | `hardware.interfaces` | Stable MAC, udev path or driver selector, name and MTU |
 | `hardware.storage` | Optional `/dev/disk/by-id` install target and ESP, root and state budgets in MiB |
+| `hardware.machine_id` | Permanent device identity, generated once before installation; retain it across updates and recovery |
 | `hardware.boot` | Secure Boot, TPM requirement and boot/recovery consoles |
 | `hardware.acceleration` | Explicit PCI ownership and hugepage allocation |
 | `uplink` | DHCP/static IPv4, RA/static IPv6, gateways and optional CAKE upload rate |

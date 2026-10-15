@@ -26,6 +26,12 @@ native and SLSA qualification. Retained releases are rescanned independently.
 Missing success after 48 hours triggers the watchdog. Unavailable or malformed
 advisory data fails closed; it is not a clean scan.
 
+Debian packages resolve from the reviewed immutable archive snapshot and use
+the authenticated archive's actual source versions for backport checks. Custom
+packages have separate exact source and artifact pins. Avoid treating ordinary
+archive packages as local overrides: that would freeze security revisions and
+misidentify the source examined by the vulnerability gate.
+
 Owner builds run network and provenance checks before keys are materialized.
 Assembly runs offline in the admitted builder with keys in private tmpfs.
 Compiler inputs cannot install packages or execute owner hooks. GitHub owner

@@ -27,6 +27,10 @@ ambiguous or foreign targets fail. The inactive signature/hash/root are written
 before the boot-counted UKI. The accepted default is retained and only a
 one-shot boot is selected. Staging does not itself reboot.
 
+Staging also requires the running slot to be the explicitly accepted persistent
+default. Accept a healthy candidate before staging another update, so its
+previously accepted fallback cannot be overwritten prematurely.
+
 After an independently authorized reboot, verify the fresh boot observation,
 Secure Boot, dm-verity, encrypted state, selected interfaces, required services
 and recovery enrollment. Only then accept the deployment as default. A failed
