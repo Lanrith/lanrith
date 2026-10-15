@@ -102,6 +102,9 @@ def main():
     args.output = args.output.resolve()
     require(not args.work.exists() and not args.output.exists(), 'Build directories must be new.')
     selection = json.loads((PROJECT / 'build-inputs.json').read_text())
+    recipes = {p.relative_to(PROJECT).as_posix(): file_record(p)['sha256']
+               for p in sorted((PROJECT/'builders').rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
+    require(selection['custom_package_inputs'] == recipes, 'Builder recipes differ from the reviewed input lock.')
     # Resolve these before allocating an expensive builder. Empty pins are deliberately ineligible.
     require(set(selection['component_releases']) == {'discovery-bridge', 'router-policy-agent'},
             'Fresh Lanrith component release pins are required; old release evidence cannot be reused.')
@@ -118,11 +121,11 @@ def main():
         run('curl', '--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', str(path),
             f'https://snapshot.debian.org/archive/{archive}/{snapshot}/dists/{suite}/Release')
         require(file_record(path)['sha256'] == inputs[key], 'Debian snapshot Release differs from the reviewed lock.')
-    for component in ('vpp', 'unbound', 'tayga'):
-        extract_packages(image(component, args.work, inputs), packages)
     # Non-Debian packages and native PAM are produced and scanned by the same run.
     run(sys.executable, str(PROJECT / 'scripts/custom-packages.py'), '--output', str(packages),
         '--evidence', str(args.work / 'custom-security.json'))
+    for component in ('vpp', 'unbound', 'tayga'):
+        extract_packages(image(component, args.work, inputs), packages)
     builder = image('mkosi', args.work, inputs)
     build = args.work / 'image'
     build.mkdir()
@@ -131,6 +134,9 @@ def main():
     pam = build / 'mkosi.extra/usr/lib/x86_64-linux-gnu/security/pam_rssh.so'
     pam.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(packages/'pam_rssh.so', pam)
+    notices = build/'mkosi.extra/usr/share/doc/pam-rssh/THIRD-PARTY-NOTICES'
+    notices.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(packages/'pam-rssh.notices.txt', notices)
     version = (PROJECT / 'VERSION').read_text().strip()
     require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
     package_list = json.loads((PROJECT / 'mkosi/packages.json').read_text())['packages']

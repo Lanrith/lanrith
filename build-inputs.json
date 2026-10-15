@@ -32,7 +32,7 @@
     "builders/mkosi/Containerfile": "10239afc933b9d1e8b149b97333ece08d1d4ccd4c79010ec28516a61f814f8d5",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "b351270468340f1545cf0f6540ef5883815cd65cab5120d2cac2e288498d8cd2",
-    "builders/pam/Containerfile": "01bfd557f57441269319a241c882cbf77b458aee2805f3fd99e6650ae56a63c2",
+    "builders/pam/Containerfile": "e80693c5b90a8b871f1e4091e8c0d4b866c6c549266e83c0152644d40a0bf40a",
     "builders/patches/GHSA-rc9p-89wj-mx7h.patch": "75c13db90e834077891e29cb2962027b0c648f14c26a5a1bc9895ad2515bd908",
     "builders/tayga-source.lock": "47fe031be8568eb3db5751b366c88108cdf9adce3b32ff4d928536093e71d6dc",
     "builders/tayga/Containerfile": "ba86edc0b1778e576213f574b0dc1d77d0264f07eb3f6a744b2559ccf0366be5",

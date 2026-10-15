@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""End the authenticated ttyS0 login after 300 seconds without serial input.
+"""End an authenticated serial login at its configured idle deadline.
 
 Debian's login intentionally does not write USER_PROCESS to utmp, so autolog
 cannot find a session. The UART receive counter tracks keyboard input even
@@ -90,7 +90,7 @@ def main():
             # Recheck to avoid logging out a new session after a getty restart
             # or a new keystroke between the poll and the restart request.
             if main_pid() == pid and has_login_child(pid) and receive_count() == rx:
-                print('serial admin session idle for 300 seconds; restarting getty', flush=True)
+                print('serial administration idle deadline reached; restarting getty', flush=True)
                 try:
                     result = subprocess.run(
                         ['systemctl', 'restart', UNIT], check=False, timeout=15,

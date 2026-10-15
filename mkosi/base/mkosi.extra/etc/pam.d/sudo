@@ -1,5 +1,5 @@
 #%PAM-1.0
-# The serial passphrase works only on ttyS0. OOB SSH sudo continues to use
+# The serial passphrase works only on the explicitly selected terminal. OOB SSH sudo continues to use
 # the forwarded key; the Unix password remains locked everywhere.
 auth sufficient pam_rssh.so auth_key_file=/etc/security/authorized_keys
 auth sufficient pam_exec.so quiet quiet_log seteuid expose_authtok /usr/lib/lanrith/verify-serial-passphrase

@@ -12,6 +12,8 @@ root.chmod(0o755)
 profile = json.loads((root/'usr/share/lanrith/resolved.json').read_text())
 username = profile['administration']['username']
 if username != 'admin':
+    if any(line.split(':')[0] == username for line in (root/'etc/passwd').read_text().splitlines()):
+        raise ValueError('Administrator account conflicts with a reserved service identity.')
     for name in ('passwd', 'shadow', 'group', 'gshadow'):
         path = root/'etc'/name
         if not path.is_file():
@@ -26,6 +28,15 @@ if username != 'admin':
             if name in ('group', 'gshadow'):
                 fields[-1] = ','.join(username if member == 'admin' else member for member in fields[-1].split(','))
             lines.append(':'.join(fields))
+        path.write_text('\n'.join(lines)+'\n')
+    for path in (root/'usr/lib/sysusers.d').glob('*.conf'):
+        lines = []
+        for line in path.read_text().splitlines():
+            fields = line.split()
+            if len(fields) > 1 and fields[0] in ('u', 'g', 'm') and fields[1] == 'admin':
+                fields[1] = username
+                line = ' '.join(fields)
+            lines.append(line)
         path.write_text('\n'.join(lines)+'\n')
 users = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
          for line in (root/'etc/passwd').read_text().splitlines() if line and (row := line.split(':'))}

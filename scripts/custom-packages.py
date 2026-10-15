@@ -24,7 +24,7 @@ def run(*arguments, **kwargs):
     return subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, **kwargs)
 
 
-def inert_package(binary, license_file, name, version, output):
+def inert_package(binary, license_file, name, version, output, notices=None):
     with tempfile.TemporaryDirectory(prefix='lanrith-package.') as temporary:
         root = Path(temporary)
         (root/'DEBIAN').mkdir()
@@ -33,6 +33,8 @@ def inert_package(binary, license_file, name, version, output):
         shutil.copyfile(binary, root/('usr/bin/'+name))
         (root/('usr/bin/'+name)).chmod(0o755)
         shutil.copyfile(license_file, root/('usr/share/doc/'+name+'/copyright'))
+        if notices:
+            shutil.copyfile(notices, root/('usr/share/doc/'+name+'/THIRD-PARTY-NOTICES'))
         (root/'DEBIAN/control').write_text(
             f'Package: {name}\nVersion: {version}\nArchitecture: amd64\n'
             'Maintainer: Lanrith <maintainers@lanrith.org>\nSection: net\nPriority: optional\n'
@@ -69,7 +71,7 @@ def main():
     require(scanner is not None and 'govulncheck@v1.8.0' in
             run(scanner, '-version', capture_output=True, text=True).stdout,
             'Custom binaries require the reviewed govulncheck version.')
-    with tempfile.TemporaryDirectory(prefix='lanrith-custom.') as temporary:
+    with tempfile.TemporaryDirectory(prefix='lanrith-custom.', dir=args.output.parent) as temporary:
         work = Path(temporary)
         pin = json.loads((ROOT/'builders/node-exporter/source.json').read_text())
         source = work/'node-exporter'
@@ -78,6 +80,7 @@ def main():
                 == pin['commit'], 'Node exporter source tag changed.')
         run('git', '-C', str(source), 'apply', '--check', str(ROOT/'builders/node-exporter/dependencies.patch'))
         run('git', '-C', str(source), 'apply', str(ROOT/'builders/node-exporter/dependencies.patch'))
+        shutil.copyfile(ROOT/'scripts/collect-notices.py', work/'collect-notices.py')
         run('docker', 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '-v', str(work)+':/work', '-v', str(scanner)+':/scanner:ro', '-w', '/work/node-exporter',
             pin['builder'], 'sh', '-ec',
@@ -86,9 +89,10 @@ def main():
             './ttar -C collector/fixtures -x -f collector/fixtures/udev.ttar; '
             'go test ./...; /scanner ./... > /work/exporter-source.txt; '
             'CGO_ENABLED=0 go build -trimpath -o /work/node_exporter .; '
-            '/scanner -mode=binary /work/node_exporter > /work/exporter-binary.txt')
+            '/scanner -mode=binary /work/node_exporter > /work/exporter-binary.txt; '
+            'python3 /work/collect-notices.py go --output /work/exporter-notices.txt')
         inert_package(work/'node_exporter', source/'LICENSE', 'prometheus-node-exporter',
-                      '1.12.1-1+lanrith1', args.output)
+                      '1.12.1-1+lanrith1', args.output, work/'exporter-notices.txt')
         reports['node-exporter'] = {'source_commit': pin['commit'], 'patch_sha256':
                                     file_record(ROOT/'builders/node-exporter/dependencies.patch')['sha256'],
                                     'scans': {name: file_record(work/name)['sha256']
@@ -124,6 +128,7 @@ def main():
         coverage = json.loads(result)['results']
         require(len(coverage) == len(queries) and all(not item.get('vulns') for item in coverage),
                 'PAM Cargo dependencies have unresolved advisories.')
+        shutil.copyfile(ROOT/'scripts/collect-notices.py', pam/'collect-notices.py')
         argv = ['docker', 'build', '--file', str(ROOT/'builders/pam/Containerfile'), '--tag', 'lanrith-pam:build']
         argv += [argument for key in ('PAM_RSSH_BUILDER_OCI', 'DEBIAN_BOOKWORM_SNAPSHOT',
                                      'DEBIAN_BOOKWORM_SECURITY_SNAPSHOT')
@@ -132,6 +137,7 @@ def main():
         container = run('docker', 'create', 'lanrith-pam:build', '/none', capture_output=True, text=True).stdout.strip()
         try:
             run('docker', 'cp', container+':/libpam_rssh.so', str(args.output/'pam_rssh.so'))
+            run('docker', 'cp', container+':/notices.txt', str(args.output/'pam-rssh.notices.txt'))
         finally:
             run('docker', 'rm', container, stdout=subprocess.DEVNULL)
         reports['pam-rssh'] = {'source_commit': commit, 'cargo_lock_sha256': file_record(pam/'Cargo.lock')['sha256'],

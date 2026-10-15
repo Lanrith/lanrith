@@ -25,6 +25,15 @@ def installed():
 
 def health():
     value = installed()
+    expected = {'kernel.unprivileged_bpf_disabled': 2, 'net.core.bpf_jit_harden': 2,
+                'kernel.kptr_restrict': 2, 'kernel.dmesg_restrict': 1, 'kernel.yama.ptrace_scope': 2,
+                'kernel.perf_event_paranoid': 3, 'kernel.unprivileged_userns_clone': 0,
+                'kernel.io_uring_disabled': 2, 'kernel.kexec_load_disabled': 1, 'dev.tty.ldisc_autoload': 0,
+                'fs.suid_dumpable': 0, 'fs.protected_fifos': 2, 'fs.protected_regular': 2,
+                'fs.protected_hardlinks': 1, 'fs.protected_symlinks': 1, 'kernel.randomize_va_space': 2}
+    for key, setting in expected.items():
+        require(Path('/proc/sys', key.replace('.', '/')).read_text().strip() == str(setting),
+                'Required kernel hardening is not active.')
     factory.secure_boot(value['boot'].get('secure_boot', True))
     factory.initialize(value)
     require(Path(value['state_directory'], 'recovery-key-enrolled').is_file(),

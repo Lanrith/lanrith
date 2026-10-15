@@ -52,6 +52,12 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     metadata = overlay / 'usr/share/lanrith'
     metadata.mkdir(parents=True, exist_ok=True)
     (metadata / 'installed.json').write_bytes(release.canonical(installed))
+    tmpfiles = overlay/'usr/lib/tmpfiles.d/80-lanrith-update.conf'
+    tmpfiles.parent.mkdir(parents=True, exist_ok=True)
+    tmpfiles.write_text('d /var/lib/lanrith 0700 root root -\n'
+                        'd /var/lib/lanrith/update-inbox 0700 root root -\n'
+                        f'd /var/tmp/lanrith-update 0700 {value["administration"]["username"]} '
+                        f'{value["administration"]["username"]} -\n')
     library = overlay / 'usr/lib/lanrith/lanrith'
     library.mkdir(parents=True)
     for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py'):
@@ -199,7 +205,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     if certificate is None:
         text += 'SecureBoot=no\n'
     else:
-        text += (f'SecureBoot=yes\nSecureBootKey={private_key}\nSecureBootCertificate={certificate}\n'
+        text += (f'Verity=signed\nSecureBoot=yes\nSecureBootKey={private_key}\nSecureBootCertificate={certificate}\n'
                  f'VerityKey={private_key}\nVerityCertificate={certificate}\n')
     (destination / 'mkosi.conf').write_text(text)
     finalize = Path(__file__).parents[1]/'scripts/finalize-image.py'
