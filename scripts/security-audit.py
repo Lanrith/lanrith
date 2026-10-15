@@ -17,6 +17,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
+from lanrith import archive as handoff
 
 
 def main():
@@ -65,14 +66,14 @@ def main():
             if gate.returncode:
                 failures.append('debian-admission')
             # A positive scan does not execute binaries. The archive is already digest-bound.
-            import tarfile
             binaries = work/'binaries'
             binaries.mkdir()
-            with tarfile.open(work/'go-binaries.tar.gz') as archive:
-                members = archive.getmembers()
-                require(members and all(m.isfile() and '/' not in m.name and m.size <= 512*1024*1024 for m in members),
-                        'Unsafe retained binary scan archive.')
-                archive.extractall(binaries, filter='data')
+            members = handoff.extract(work/'go-binaries.tar.gz', binaries, entries=9,
+                                     maximum_file=1024*1024*1024, maximum_size=2*1024*1024*1024)
+            require(members == {'alloy', 'prometheus-node-exporter', 'discovery-bridge',
+                'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
+                'router-policy-check', 'router-policy-status', 'router-policy-recover'},
+                'Retained binary scan coverage is incomplete.')
             for binary in binaries.iterdir():
                 scan = run('govulncheck', '-mode=binary', str(binary), stdout=subprocess.DEVNULL, check=False)
                 if scan.returncode:

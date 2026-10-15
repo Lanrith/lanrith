@@ -6,20 +6,18 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import sys
-import tarfile
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import config, evidence, release, trust
+from lanrith import archive as handoff, config, evidence, release, trust
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--owner', type=Path, required=True)
 parser.add_argument('--artifacts', type=Path, required=True)
 args = parser.parse_args()
 owner, artifacts = args.owner.resolve(), args.artifacts.resolve()
-release.require({p.name for p in artifacts.iterdir()} == {'update.tar.gz', 'deployment.json'},
+release.require({p.name for p in artifacts.iterdir()} == {'update.tar.gz', 'factory.tar.gz', 'deployment.json'},
                 'Unexpected signing-job output set.')
 value = config.load(owner/'config.yaml')
 selection = trust.lock(owner/'platform.lock')
@@ -36,20 +34,29 @@ release.require(all(deployment.get(key) == value for key, value in expected.item
 # Authenticity is checked against owner-reviewed certificates, never one from the artifact.
 with tempfile.TemporaryDirectory(prefix='lanrith-subject-check.') as temporary:
     root = Path(temporary)
-    with tarfile.open(artifacts/'update.tar.gz') as archive:
-        members = archive.getmembers()
-        release.require(len(members) == 6 and all(m.isfile() and '/' not in m.name and
-                        re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,191}', m.name) and
-                        m.size <= 3*1024*1024*1024 for m in members) and
-                        sum(m.size for m in members) <= 4*1024*1024*1024,
-                        'Unsafe update evidence archive.')
-        archive.extractall(root, filter='data')
+    members = handoff.extract(artifacts/'update.tar.gz', root, entries=6,
+        maximum_file=3*1024*1024*1024, maximum_size=4*1024*1024*1024)
+    release.require(len(members) == 6, 'Incomplete update evidence archive.')
     manifest = release.verify(root, owner/'trust/boot.crt', purpose='update',
         image_id=value.get('release', {}).get('image_id', 'lanrith'),
         expected_version=selection['version'][1:])
     release.require(manifest == deployment['release'] and
                     manifest['deployment_sequence'] == value.get('release', {}).get('sequence_floor', 0)+int(os.environ['GITHUB_RUN_NUMBER']),
                     'Signed deployment identity differs from the qualified workflow.')
+with tempfile.TemporaryDirectory(prefix='lanrith-factory-check.') as temporary:
+    root=Path(temporary)
+    storage=value['hardware']['storage']
+    budget=(storage['esp_mib']+3*storage['root_mib']+1024)*1024*1024
+    members=handoff.extract(artifacts/'factory.tar.gz',root,entries=8,maximum_file=budget,maximum_size=budget)
+    release.require(len(members)==8, 'Incomplete factory evidence archive.')
+    factory=release.verify(root,owner/'trust/boot.crt',purpose='factory',image_id=manifest['image_id'],
+                           expected_version=manifest['platform_version'],
+                           configuration_sha256=manifest['configuration_sha256'])
+    release.require(factory==deployment['factory'] and factory['deployment_sequence']==manifest['deployment_sequence'],
+                    'Factory identity differs from the signed update.')
+    common={a['role']:a for a in factory['artifacts'] if a['role'] in release.ROLES['update']}
+    release.require(common=={a['role']:a for a in manifest['artifacts']},
+                    'Factory and update do not contain the same verified-root triplet and UKI.')
 statement = evidence.predicate(artifacts, repository=expected['repository'], source_commit=expected['source_commit'],
     workflow_commit=expected['workflow_commit'], invocation=os.environ['GITHUB_RUN_ID'],
     inputs={'platform': selection, 'configuration_sha256': expected['configuration_sha256']})

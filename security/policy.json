@@ -72,15 +72,15 @@
     },
     "router-policy-collector": {
       "source": "router-policy-collector",
-      "version": "0.1.0"
+      "version": "0.1.2"
     },
     "router-policy-helper": {
       "source": "router-policy-helper",
-      "version": "0.1.0"
+      "version": "0.1.2"
     },
     "router-policy-reader": {
       "source": "router-policy-reader",
-      "version": "0.1.0"
+      "version": "0.1.2"
     },
     "unbound": {
       "source": "unbound",
@@ -112,9 +112,9 @@
     "libunbound8": "1.26.1-0+deb13u1",
     "libvppinfra": "25.06-release",
     "prometheus-node-exporter": "1.12.1-1+lanrith1",
-    "router-policy-collector": "0.1.0",
-    "router-policy-helper": "0.1.0",
-    "router-policy-reader": "0.1.0",
+    "router-policy-collector": "0.1.2",
+    "router-policy-helper": "0.1.2",
+    "router-policy-reader": "0.1.2",
     "unbound": "1.26.1-0+deb13u1",
     "unbound-anchor": "1.26.1-0+deb13u1",
     "vpp": "25.06-release",

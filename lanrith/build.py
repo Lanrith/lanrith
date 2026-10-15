@@ -323,22 +323,43 @@ def update_payload(destination, identity, output):
     manifest = release.unsigned_manifest(output, purpose='update', version=identity['platform_version'],
                                          sequence=sequence, configuration_sha256=identity['configuration_sha256'],
                                          files=selected, image_id=image_id)
+    with disks[0].open('rb') as raw:
+        for artifact in manifest['artifacts']:
+            if artifact['role']=='uki':
+                continue
+            part=next(p for p in table if p.get('name')==f'l_{sequence}_{artifact["role"].replace("-","_")}')
+            raw.seek(part['start']*512)
+            remaining=part['size']*512
+            digest=hashlib.sha256()
+            while remaining:
+                block=raw.read(min(1024*1024,remaining))
+                require(block, 'Factory disk partition is truncated.')
+                digest.update(block)
+                remaining-=len(block)
+            require(digest.hexdigest()==artifact['sha256'], 'Factory disk differs from its split verified-root payload.')
     (output / 'release.json').write_bytes(release.canonical(manifest))
     return manifest
 
 
-def factory_payload(destination, identity, update, output):
+def factory_payload(destination, identity, update, output, *, consume=False):
     require(not output.exists() and not output.is_symlink(), 'Factory output already exists.')
     output.mkdir(mode=0o700)
     value = release.document(release.read(update/'release.json', 65536))
     files = {item['role']: item['name'] for item in value['artifacts']}
-    for name in files.values():
-        shutil.copyfile(update/name, output/name)
+    for role,name in files.items():
+        source=destination/'output'/(f'{identity["image_id"]}_{identity["deployment_sequence"]}'+
+                                    ('.efi' if role=='uki' else '.'+role+'.raw'))
+        if consume:
+            require(release.file_record(source)['sha256']==release.file_record(update/name)['sha256'],
+                    'Factory split data differs from the update payload.')
+            shutil.move(source,output/name)
+        else:
+            shutil.copyfile(update/name, output/name)
     for role, name in (('disk', f'{identity["image_id"]}_{identity["deployment_sequence"]}.raw'),
                        ('initrd', 'initrd.cpio.zst')):
         source = destination/'output'/name
         require(source.is_file() and not source.is_symlink(), 'Factory artifact is missing.')
-        shutil.copyfile(source, output/name)
+        (shutil.move if consume else shutil.copyfile)(source, output/name)
         files[role] = name
     value = release.unsigned_manifest(output, purpose='factory', version=identity['platform_version'],
                                      sequence=identity['deployment_sequence'],

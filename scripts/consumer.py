@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import admission, config, evidence, extensions, release, trust
+from lanrith import admission, archive as handoff, config, evidence, extensions, release, trust
 
 
 def run(*argv, **kwargs):
@@ -147,11 +147,8 @@ def assemble(owner, bundle, request, output):
         tools = assembly_root/'tools'
         tools.mkdir()
         # Authenticated compiler archives have only ordinary source files and directories.
-        with tarfile.open(bundle/'tools.tar.gz') as archive:
-            members = archive.getmembers()
-            release.require(all((m.isfile() or m.isdir()) and not m.name.startswith('/') and
-                                '..' not in Path(m.name).parts for m in members), 'Unsafe compiler archive.')
-            archive.extractall(tools, filter='data')
+        handoff.extract(bundle/'tools.tar.gz', tools, entries=10000, maximum_size=64*1024*1024,
+                        maximum_file=4*1024*1024, nested=True)
         workspace = assembly_root/'work'
         payload = assembly_root/'update'
         command = ['docker', 'run', '--rm', '--network', 'none', '--privileged',
@@ -173,12 +170,17 @@ def assemble(owner, bundle, request, output):
         release.verify(payload, private/'boot.crt', purpose='update', image_id=
                        config.load(owner/'config.yaml').get('release', {}).get('image_id', 'lanrith'))
         output.mkdir(mode=0o700)
-        with tarfile.open(output/'update.tar.gz', 'w:gz') as archive:
+        with tarfile.open(output/'update.tar.gz', 'w:gz', format=tarfile.PAX_FORMAT) as archive:
             for path in sorted(payload.iterdir()):
                 archive.add(path, arcname=path.name)
+        factory=assembly_root/'factory'
+        with tarfile.open(output/'factory.tar.gz','w:gz',format=tarfile.PAX_FORMAT) as archive:
+            for path in sorted(factory.iterdir()):
+                archive.add(path,arcname=path.name)
         manifest = json.loads((payload/'release.json').read_text())
         (output/'deployment.json').write_bytes(release.canonical({**actual,
-            'deployment_sequence': sequence, 'release': manifest}))
+            'deployment_sequence': sequence, 'release': manifest,
+            'factory':json.loads((factory/'release.json').read_text())}))
 
 
 def main():

@@ -14,16 +14,16 @@
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "dc5b6a3c606ef3644c821c2232d042122551f08d0d975eea6347a7acfacace81",
-        "router-policy-collector_0.1.0_amd64.deb": "72d2254c0a8b18f2d41af2048ac0c6b7faadb7ef1f68c53ab3642e68b8951120",
-        "router-policy-helper_0.1.0_amd64.deb": "a10a4f94685ef647da548428f5a42ceb584fab8fe536f49ff9d61c947a7f5cf2",
-        "router-policy-reader_0.1.0_amd64.deb": "a297652fdc4f5a2b735b242952b0d6e80b567522686e9e2d2b3cee3bd0a8c739",
-        "security.txt": "30e74f6b6abe7b05cec5416b2a03c66a5fc1da33b63ae5d04b61c55f10203fc8"
+        "component-release.json": "816f9172ea0217bcf4728f3b50b9a4b05bd6b33da28bac2f6fc0574b818b174d",
+        "router-policy-collector_0.1.2_amd64.deb": "f47585c82d84b2edd5dd2a8ce19133882dd537104e7bb40be3abdad0bbd84c20",
+        "router-policy-helper_0.1.2_amd64.deb": "d9144fe65265a15b1d3de845e0a5bc92f1edf908995de3ad8414b4c6a116540d",
+        "router-policy-reader_0.1.2_amd64.deb": "88df40fc36462b3840ea4c3eba745dbcb137a88be4b9bd23949648c12b63b6c4",
+        "security.txt": "a80224713684e78c409a3dc7f54aa866b1c90fd7c332bd0fa46a4d0de1fa93bb"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "f8a4732ac886ab6f9a6536f5cf4f637456e91e01",
-      "tag": "v0.1.0",
-      "workflow_commit": "f8a4732ac886ab6f9a6536f5cf4f637456e91e01"
+      "source_commit": "821cce8935b24b0d682d4776b22688fbdde1fd41",
+      "tag": "v0.1.2",
+      "workflow_commit": "821cce8935b24b0d682d4776b22688fbdde1fd41"
     }
   },
   "custom_package_inputs": {

@@ -181,7 +181,7 @@ def main():
     run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
     run('docker', 'save', '--output', str(args.output / 'builder.tar'), builder)
     import tarfile
-    with tarfile.open(args.output/'tools.tar.gz', 'w:gz') as archive:
+    with tarfile.open(args.output/'tools.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT) as archive:
         for name in ('lanrith', 'scripts', 'security', 'mkosi', 'pyproject.toml', 'requirements.txt', 'LICENSE'):
             archive.add(PROJECT/name, arcname=name, filter=lambda entry: None if '__pycache__' in entry.name else entry)
     manifest = unsigned_manifest(args.output, purpose='base', version=version, sequence=0,

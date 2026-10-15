@@ -47,3 +47,7 @@ build.run(args.workspace)
 build.update_payload(args.workspace, identity, args.output)
 release.sign(args.output, args.private/'boot.key')
 release.verify(args.output, args.private/'boot.crt', purpose='update', image_id=identity['image_id'])
+factory=args.output.parent/'factory'
+build.factory_payload(args.workspace,identity,args.output,factory,consume=True)
+release.sign(factory,args.private/'boot.key')
+release.verify(factory,args.private/'boot.crt',purpose='factory',image_id=identity['image_id'])

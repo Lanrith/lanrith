@@ -173,7 +173,7 @@ def provision():
         selected = installed['storage'].get('target')
         if selected:
             require(str(Path(selected).resolve()) == disk, 'Installed boot disk differs from the selected hardware profile.')
-        require(command(['lsblk', '--nodeps', '--noheadings', '--output', 'TRAN', disk]).strip() != 'usb',
+        require(selected or command(['lsblk', '--nodeps', '--noheadings', '--output', 'TRAN', disk]).strip() != 'usb',
                 'Removable boot media lacks its authenticated factory payload.')
         return
     require(len(media) == 1 and media[0].get('pkname') == disk,
@@ -210,7 +210,7 @@ def provision():
                     del first
                     definitions = Path(secret)/'repart'
                     shutil.copytree('/sysroot/usr/lib/repart.d', definitions)
-                    command(['systemd-repart', '--definitions='+str(definitions), '--empty=allow',
+                    command(['systemd-repart', '--definitions='+str(definitions), '--empty=allow', '--dry-run=no',
                              '--key-file='+str(key), chosen], timeout=600)
             print('Installation read-back passed. Remove the factory medium after power-off.')
             command(['systemctl', '--no-block', 'poweroff'])

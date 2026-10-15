@@ -33,6 +33,19 @@ disk and mounted/in-use devices, and requires the full stable target identity
 in the destructive confirmation. It reads the copied image back before
 power-off. Never substitute an ordinary raw writer for those checks.
 
+Create a USB installer from the owner's authenticated factory release directory:
+
+```sh
+sudo python3 scripts/make-media.py /path/to/factory --certificate /independent/trust/boot.crt \
+  --target /dev/disk/by-id/usb-selected-device
+```
+
+The writer requires a typed destructive confirmation and rejects mounted,
+in-use, read-only, undersized and incompatible targets. It preserves and reads
+back every original partition, then mounts the payload read-only and verifies
+its complete signed file set. Add `--verify-only` to repeat verification without
+writing. Do not run either command until a qualified factory release exists.
+
 For boot-key rotation, first enroll and qualify the new trust while retaining
 the old accepted fallback. For evidence-key rotation, review the new public
 certificate separately. Revoke compromised artifact digests in the reviewed
