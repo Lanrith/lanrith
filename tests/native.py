@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import shutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith import config
@@ -30,7 +31,17 @@ for example in ('minimal.yaml', 'segmented.yaml'):
             subprocess.run(['nft', '--check', '--file', str(output/'etc/nftables.conf')], check=True)
             subprocess.run(['nft', '--file', str(output/'etc/nftables.conf')], check=True)
             subprocess.run(['unbound-checkconf', str(output/'etc/unbound/unbound.conf.d/lanrith.conf')], check=True)
-            subprocess.run(['kea-dhcp4', '-t', str(output/'etc/kea/kea-dhcp4.conf')], check=True)
+        # Ubuntu's Kea AppArmor profile permits /etc/kea, not arbitrary /tmp files.
+        # Use the production configuration boundary without changing that policy.
+        descriptor, name = tempfile.mkstemp(prefix='lanrith-native.', suffix='.json', dir='/etc/kea')
+        os.close(descriptor)
+        candidate = Path(name)
+        try:
+            shutil.copyfile(output/'etc/kea/kea-dhcp4.conf', candidate)
+            candidate.chmod(0o644)
+            subprocess.run(['kea-dhcp4', '-t', str(candidate)], check=True)
+        finally:
+            candidate.unlink()
         finally:
             for name in names:
                 subprocess.run(['ip', 'link', 'delete', name], check=False, capture_output=True)
