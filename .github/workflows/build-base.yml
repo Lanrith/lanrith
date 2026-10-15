@@ -1,0 +1,142 @@
+name: Qualified base build
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.repository == 'Lanrith/lanrith'
+    uses: ./.github/workflows/check.yml
+  build:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      builder-digest: ${{ steps.builder.outputs.digest }}
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Install the reviewed scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/next-version.py
+          cat "$RUNNER_TEMP/lanrith-version" > VERSION
+      - name: Build packages and the neutral filesystem
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/build-base.py --work "$RUNNER_TEMP/lanrith-work" --output "$RUNNER_TEMP/lanrith-output"
+      - id: builder
+        name: Publish the exact builder to its immutable digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          image="ghcr.io/lanrith/lanrith-builder:$GITHUB_SHA"
+          docker push "$image"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image")
+          digest=${digest##*@}
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          rm "$RUNNER_TEMP/lanrith-output/builder.tar"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qualified-base
+          path: ${{ runner.temp }}/lanrith-output/*
+          if-no-files-found: error
+          retention-days: 7
+  attest:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: release
+          merge-multiple: true
+      - name: Bind the filesystem, tools and builder into a selection record
+        env:
+          BUILDER_DIGEST: ${{ needs.build.outputs.builder-digest }}
+          PLATFORM_VERSION: ${{ needs.build.outputs.version }}
+          SIGNER_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,re
+          root=pathlib.Path('release')
+          digest=os.environ['BUILDER_DIGEST']
+          assert re.fullmatch(r'sha256:[0-9a-f]{64}',digest)
+          files={}
+          for path in root.iterdir():
+              assert path.is_file() and not path.is_symlink()
+              assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,191}',path.name)
+              with path.open('rb') as stream: files[path.name]=hashlib.file_digest(stream,'sha256').hexdigest()
+          selection={'schema':1,'repository':'Lanrith/lanrith','version':'v'+os.environ['PLATFORM_VERSION'],
+            'source_commit':os.environ['GITHUB_SHA'],'signer_commit':os.environ['SIGNER_COMMIT'],
+            'security_workflow_commit':os.environ['GITHUB_SHA'],
+            'manifest_sha256':files['release.json'],'builder':'ghcr.io/lanrith/lanrith-builder',
+            'builder_digest':digest[7:],'files':files}
+          (root/'selection.json').write_text(json.dumps(selection,sort_keys=True,indent=2)+'\n')
+          PY
+      # No source checkout, downloaded executable, or caller-provided provenance runs here.
+      - id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*
+      - id: builder-provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/lanrith/lanrith-builder
+          subject-digest: ${{ needs.build.outputs.builder-digest }}
+      - name: Retain offline verification bundles
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          BUILDER_BUNDLE: ${{ steps.builder-provenance.outputs.bundle-path }}
+        run: |
+          for file in release/*; do cp "$BUNDLE" "$file.intoto.jsonl"; done
+          cp "$BUILDER_BUNDLE" release/builder.intoto.jsonl
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: attested-base
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [build, attest]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM_VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.attest.outputs.artifact-id }}
+          path: release
+          merge-multiple: true
+      - name: Publish qualification release
+        run: |
+          gh release create "v$PLATFORM_VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Lanrith $PLATFORM_VERSION" --prerelease --generate-notes release/*

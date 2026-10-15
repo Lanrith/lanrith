@@ -1,0 +1,76 @@
+#!/bin/sh
+# Enable the one egress path required by Unbound.  The simulator uses its
+# static documentation GUA; the static production profile uses the reviewed
+# provider /48; the DHCP/PD profile derives a stable service /64 at runtime.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+namespace=$lanrith_service_namespace
+host_link=$lanrith_service_host_link
+namespace_link=$lanrith_service_namespace_link
+namespace_address=$lanrith_service_ipv6_namespace_address
+
+ip netns list | awk -v expected="$namespace" '$1 == expected { found = 1 } END { exit !found }'
+ip link show dev "$host_link" >/dev/null
+ip -n "$namespace" link show dev "$namespace_link" >/dev/null
+
+if [ "$lanrith_wan_mode" = 'standalone_lab' ]; then
+  service_address=$lanrith_unbound_lab_address
+  service_prefix=$lanrith_unbound_lab_prefix
+  host_address=$lanrith_service_ipv6_host_address
+elif [ "$lanrith_wan_mode" = 'existing_network_static' ]; then
+  service_prefix=$(lanrith_service_gua_prefix)
+  service_address="$(lanrith_service_gua_service_address 10)/128"
+  # The namespace reaches the host over the fixed ULA veth endpoint.  The
+  # provider GUA is assigned to the host side only and is not a veth gateway.
+  host_address=$lanrith_service_ipv6_host_address
+else
+  attempts=0
+  while ! service_prefix=$(lanrith_service_gua_prefix); do
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 90 ] || {
+      echo 'Unbound network path requires a delegated service prefix.' >&2
+      exit 1
+    }
+    sleep 1
+  done
+  service_address="$(lanrith_service_gua_service_address 10)/128"
+  # The namespace reaches the host over the fixed ULA veth endpoint; the
+  # delegated GUA is the service prefix, not the veth next hop.
+  host_address=$lanrith_service_ipv6_host_address
+fi
+
+# Remove only Unbound's previous delegated service address if an upstream
+# lease changed.  Chrony, Bind, and FreeRADIUS share this namespace and their
+# provider-GUA addresses must survive an Unbound restart.
+if [ "$lanrith_wan_mode" != 'standalone_lab' ]; then
+  old_prefix_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  for old_address in $(ip -n "$namespace" -6 -o address show dev lo scope global | \
+      awk -v prefix="$old_prefix_start" \
+        '$4 ~ ("^" prefix ":") && $4 ~ /::10\/128$/ { print $4 }'); do
+    ip -n "$namespace" -6 address del "$old_address" dev lo 2>/dev/null || true
+  done
+
+  # The upstream gateway treats the provider aggregate as on-link. Proxy only
+  # Unbound's exact egress address so replies still return after either peer's
+  # neighbour cache is empty; never proxy the complete delegated aggregate.
+  [ "$(sysctl --values "net.ipv6.conf.$lanrith_wan_interface.proxy_ndp")" = 1 ] || {
+    echo 'Unbound network path requires WAN proxy NDP.' >&2
+    exit 1
+  }
+  proxy_address=${service_address%/*}
+  for old_proxy in $(ip -6 neigh show proxy dev "$lanrith_wan_interface" | \
+      awk -v prefix="$old_prefix_start:" \
+        '$1 ~ ("^" prefix) && $1 ~ /::10$/ { print $1 }'); do
+    [ "$old_proxy" = "$proxy_address" ] || \
+      ip -6 neigh del proxy "$old_proxy" dev "$lanrith_wan_interface"
+  done
+  ip -6 neigh replace proxy "$proxy_address" \
+    dev "$lanrith_wan_interface"
+fi
+
+ip -n "$namespace" -6 address replace "$service_address" dev lo
+ip -n "$namespace" -6 route replace default via "$host_address" \
+  dev "$namespace_link" src "${service_address%/*}"
+ip -6 route replace "$service_prefix" via "$namespace_address" dev "$host_link" metric 10

@@ -1,0 +1,42 @@
+# Synthetic example. Replace the interface selectors and administrator key.
+schema: 1
+hostname: example-router
+hardware:
+  architecture: x86-64
+  interfaces:
+    wan:
+      match:
+        mac: 02:00:00:00:01:01
+    lan:
+      match:
+        mac: 02:00:00:00:01:02
+uplink:
+  interface: wan
+  ipv4: dhcp
+  ipv6: ra
+networks:
+  home:
+    interface: lan
+    addresses:
+    - 192.168.10.1/24
+    - fd42:1000:1000:10::1/64
+    ra: true
+    dns: true
+    dhcp4:
+      pool:
+      - 192.168.10.100
+      - 192.168.10.200
+services:
+  dns:
+    enabled: true
+  dhcp4:
+    enabled: true
+access:
+  internet:
+  - home
+  between_networks: []
+administration:
+  networks:
+  - home
+  authorized_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFhpcHJoRXhhbXBsZU9ubHlOb3RBVXNlcklkZW50aXR5

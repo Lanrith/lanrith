@@ -1,0 +1,23 @@
+[Unit]
+Description=Resolve internal zones with private DNS64 inside router-services
+Requires=lanrith-service-namespace.service var.mount named.service
+After=lanrith-service-namespace.service var.mount named.service
+Before=unbound.service
+PartOf=lanrith-service-namespace.service
+
+[Service]
+Type=exec
+User=unbound
+Group=unbound
+NetworkNamespacePath=/run/netns/router-services
+ExecStartPre=/usr/sbin/unbound-checkconf /etc/unbound/unbound-private.conf
+ExecStart=/usr/sbin/unbound -d -c /etc/unbound/unbound-private.conf
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

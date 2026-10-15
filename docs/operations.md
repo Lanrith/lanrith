@@ -1,0 +1,40 @@
+# Recovery and operations
+
+A deployment sequence belongs to the owner and increases independently of the
+platform semantic version. Never reuse a sequence, including after restoring a
+repository, recreating a workflow or rebuilding with different configuration.
+A rollback is a new deployment of reviewed inputs with a higher sequence; the
+accepted boot entry remains a fallback until the candidate is accepted.
+
+The signed manifest declares purpose, image identity, platform version,
+sequence, effective configuration/integration digest, architecture and the
+exact artifact names, lengths and SHA-256 digests. Unknown fields, extra files,
+linked files, wrong trust, replay and incomplete sets fail admission.
+
+On the router, an administrator uploads to the unprivileged staging area and
+invokes the root-owned promotion helper through the approved authorization
+path. It copies into exclusive root-owned files before signature verification.
+The updater identifies the actual mounted dm-verity dependency graph and both
+slots; it does not guess a disk from device naming. Undersized, mounted,
+ambiguous or foreign targets fail. The inactive signature/hash/root are written
+before the boot-counted UKI. The accepted default is retained and only a
+one-shot boot is selected. Staging does not itself reboot.
+
+After an independently authorized reboot, verify the fresh boot observation,
+Secure Boot, dm-verity, encrypted state, selected interfaces, required services
+and recovery enrollment. Only then accept the deployment as default. A failed
+candidate must return automatically to the previously accepted entry. Keep the
+matching factory image, public trust, recovery key and previous configuration
+offline. Exercise recovery with populated state before a production cutover.
+
+Initial factory installation verifies media against the certificate embedded
+in the booted verified root, checks matching root identities, excludes the boot
+disk and mounted/in-use devices, and requires the full stable target identity
+in the destructive confirmation. It reads the copied image back before
+power-off. Never substitute an ordinary raw writer for those checks.
+
+For boot-key rotation, first enroll and qualify the new trust while retaining
+the old accepted fallback. For evidence-key rotation, review the new public
+certificate separately. Revoke compromised artifact digests in the reviewed
+revocation policy and publish a fresh signed assessment. Do not silently fall
+back to an older vulnerable release when admission fails.

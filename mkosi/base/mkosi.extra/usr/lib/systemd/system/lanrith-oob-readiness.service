@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify factory OOB address and SSH readiness
+Requires=ssh.service systemd-networkd.service nftables.service
+After=ssh.service systemd-networkd.service nftables.service
+Before=lanrith-boot-health.service boot-complete.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/lanrith/verify-oob-readiness
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

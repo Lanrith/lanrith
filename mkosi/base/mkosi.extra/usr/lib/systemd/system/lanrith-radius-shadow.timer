@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh root-private RADIUS ownership shadow report
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Unit=lanrith-radius-shadow.service
+
+[Install]
+WantedBy=timers.target

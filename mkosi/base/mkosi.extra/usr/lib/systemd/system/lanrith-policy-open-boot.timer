@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry closed-boot acceptance until directory classification is durable
+
+[Timer]
+OnBootSec=10s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

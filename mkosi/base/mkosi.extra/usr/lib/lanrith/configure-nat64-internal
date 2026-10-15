@@ -1,0 +1,49 @@
+#!/bin/sh
+# Configure the Network-Specific Prefix NAT64 tunnel used by DNS64.  It keeps
+# its dynamic state separate from the well-known-prefix translator and creates
+# no IPv4 client gateway, DHCP scope, or NAT44 route.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+. /usr/lib/lanrith/network-checks.sh
+
+interface=$lanrith_nat64_internal_interface
+config=/etc/tayga-nat64-internal.conf
+translator=/usr/lib/lanrith/tayga-internal
+
+remove() {
+  if ip link show dev "$interface" >/dev/null 2>&1; then
+    require_translation_tun "$interface" || return 1
+  fi
+  ip -6 route del "$lanrith_nat64_internal_prefix" dev "$interface" 2>/dev/null || true
+  ip route del "$lanrith_nat64_internal_ipv4_pool" dev "$interface" 2>/dev/null || true
+  if ip link show dev "$interface" >/dev/null 2>&1; then
+    ip link set "$interface" down 2>/dev/null || true
+    "$translator" --rmtun --config "$config" 2>/dev/null || true
+  fi
+}
+
+if [ "${1:-}" = remove ]; then
+  [ "$#" -eq 1 ] || { echo 'Usage: configure-nat64-internal [remove]' >&2; exit 64; }
+  remove
+  exit 0
+fi
+[ "$#" -eq 0 ] || { echo 'Usage: configure-nat64-internal [remove]' >&2; exit 64; }
+[ "$lanrith_nat64_internal_enabled" = 1 ] || {
+  echo 'Internal NAT64 is not enabled in the signed profile.' >&2
+  exit 1
+}
+
+if ! ip link show dev "$interface" >/dev/null 2>&1; then
+  "$translator" --mktun --config "$config"
+fi
+require_translation_tun "$interface" || { echo 'Refusing a non-TUN internal NAT64 interface.' >&2; exit 1; }
+ip link set "$interface" up
+# Remove an interrupted old-pool setup on this TUN, preserving service routes
+# and persisted mappings. The selected data directory belongs to this pool.
+ip -4 address flush dev "$interface" scope global
+ip -4 route flush dev "$interface"
+ip address replace "$lanrith_nat64_internal_ipv4_cidr" dev "$interface"
+ip -6 address replace "$lanrith_nat64_internal_ipv6_cidr" dev "$interface"
+ip route replace "$lanrith_nat64_internal_ipv4_pool" dev "$interface"
+ip -6 route replace "$lanrith_nat64_internal_prefix" dev "$interface"

@@ -1,0 +1,31 @@
+[Unit]
+Description=Read Authentik device policy over verified StartTLS
+Requires=lanrith-policy-helper.service lanrith-radius-directory-network.service
+After=lanrith-policy-helper.service lanrith-radius-directory-network.service
+
+[Service]
+Type=exec
+User=router-policy-reader
+Group=router-policy-reader
+NetworkNamespacePath=/run/netns/router-services
+ExecStart=/usr/bin/router-policy-reader -config-directory /run/router-policy-reader
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=64

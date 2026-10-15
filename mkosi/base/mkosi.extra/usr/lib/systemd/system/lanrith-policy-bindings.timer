@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh native ownership without granting access
+
+[Timer]
+OnBootSec=5s
+OnUnitInactiveSec=15s
+AccuracySec=1s
+Unit=lanrith-policy-bindings.service
+
+[Install]
+WantedBy=timers.target

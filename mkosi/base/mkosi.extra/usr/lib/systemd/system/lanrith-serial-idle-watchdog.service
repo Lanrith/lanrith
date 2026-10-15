@@ -1,0 +1,17 @@
+[Unit]
+Description=Expire idle motherboard serial login
+Upholds=serial-getty@ttyS0.service
+ConditionPathExists=/var/lib/lanrith-factory/recovery-key-enrolled
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/lanrith/serial-idle-watchdog
+Restart=always
+RestartSec=2s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

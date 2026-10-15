@@ -1,0 +1,27 @@
+[Unit]
+Description=Configure the router NAT64 path
+Requires=systemd-networkd.service nftables.service
+After=systemd-networkd.service nftables.service
+Before=lanrith-network-base.service unbound.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/lib/lanrith/configure-nat64
+ExecStart=/usr/sbin/tayga --nodetach --config /etc/tayga.conf --pidfile /run/tayga.pid --user tayga --group tayga
+ExecStopPost=/usr/lib/lanrith/configure-nat64 remove
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+# TAYGA changes into its data directory before dropping to its configured
+# unprivileged user.  The tmpfiles entry grants only root-group traversal to
+# that directory.  CAP_SETGID and CAP_SETUID are retained only for this
+# startup privilege drop; they are not needed by the resulting tayga process.
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/tayga /run
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETGID CAP_SETUID
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SETGID CAP_SETUID
+
+[Install]
+WantedBy=multi-user.target

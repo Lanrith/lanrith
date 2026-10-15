@@ -1,0 +1,12 @@
+[Unit]
+PartOf=lanrith-service-namespace.service
+Description=Configure the isolated VPP service AF_PACKET attachment
+Requires=vpp.service lanrith-service-namespace.service
+After=vpp.service lanrith-service-namespace.service
+Before=lanrith-network-base.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/lanrith/configure-vpp-service-attachment
+ExecStop=/usr/lib/lanrith/configure-vpp-service-attachment remove

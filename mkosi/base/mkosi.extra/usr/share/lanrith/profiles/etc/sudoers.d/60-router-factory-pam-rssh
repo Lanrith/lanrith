@@ -1,0 +1,5 @@
+# The OOB-only factory account reauthenticates sudo via PAM-RSSH. Do not add
+# NOPASSWD, a shared root password, or a generic static key here.
+Defaults:admin env_keep += "SSH_AUTH_SOCK"
+Defaults:admin timestamp_type=tty
+Defaults:admin timestamp_timeout=5

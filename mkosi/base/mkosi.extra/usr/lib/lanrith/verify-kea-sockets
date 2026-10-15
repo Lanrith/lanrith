@@ -1,0 +1,74 @@
+#!/bin/sh
+# Kea can report an active systemd service after failing to open every DHCP
+# service socket. Require one Kea-owned raw packet socket on each approved
+# directly attached IPv4 VLAN before service startup or boot health succeeds.
+set -eu
+
+profile=${HOMELAB_ROUTER_NETWORK_PROFILE:-/usr/lib/lanrith/network-profile.sh}
+wait_for_sockets=0
+case "${1:-}" in
+  '') ;;
+  --wait) wait_for_sockets=1 ;;
+  *) echo 'Usage: verify-kea-sockets [--wait]' >&2; exit 64 ;;
+esac
+[ "$#" -le 1 ] || {
+  echo 'Usage: verify-kea-sockets [--wait]' >&2
+  exit 64
+}
+
+[ -f "$profile" ] && [ ! -L "$profile" ] || {
+  echo "Kea socket verification cannot read a regular network profile: $profile" >&2
+  exit 66
+}
+# shellcheck disable=SC1090
+. "$profile"
+
+if [ "$wait_for_sockets" -eq 1 ]; then
+  max_attempts=${HOMELAB_ROUTER_KEA_SOCKET_WAIT_ATTEMPTS:-30}
+else
+  max_attempts=1
+fi
+case "$max_attempts" in
+  ''|*[!0-9]*)
+    echo 'Kea socket wait attempts must be a positive integer.' >&2
+    exit 64
+    ;;
+esac
+[ "$max_attempts" -gt 0 ] || {
+  echo 'Kea socket wait attempts must be greater than zero.' >&2
+  exit 64
+}
+
+socket_table() {
+  LC_ALL=C ss --packet --all --processes 2>/dev/null
+}
+
+kea_sockets_ready() {
+  sockets=$(socket_table) || return 1
+
+  if [ "$lanrith_dhcpv4_enabled" != 1 ]; then
+    printf '%s\n' "$sockets" | awk '
+      index($0, "\"kea-dhcp4\"") { found = 1 }
+      END { exit found ? 1 : 0 }
+    '
+    return
+  fi
+
+  for vlan in $lanrith_ipv4_cutover_vlan_ids; do
+    endpoint="*:lan-vlan$vlan"
+    printf '%s\n' "$sockets" | awk -v endpoint="$endpoint" '
+      $5 == endpoint && index($0, "\"kea-dhcp4\"") { found = 1 }
+      END { exit !found }
+    ' || return 1
+  done
+}
+
+attempt=1
+while ! kea_sockets_ready; do
+  if [ "$attempt" -eq "$max_attempts" ]; then
+    echo 'Kea does not own a raw DHCP socket on every configured IPv4 VLAN.' >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done

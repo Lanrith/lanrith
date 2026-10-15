@@ -1,0 +1,11 @@
+[Unit]
+Description=Grow the encrypted router var volume to its approved capacity
+Requires=var.mount
+After=var.mount
+Before=lanrith-network-base.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=5min
+ExecStart=/usr/lib/lanrith/grow-var-or-defer

@@ -1,0 +1,59 @@
+name: Check
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes python3-yaml nftables unbound kea-dhcp4-server chrony
+      - name: Unit and contract tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Source checks and native service parsers
+        run: |
+          python3 scripts/check-source.py
+          sudo python3 tests/native.py
+  workflows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate workflow security invariants
+        run: python3 scripts/check-workflows.py
+      - name: Validate GitHub Actions syntax
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          # v1.7.12 predates GitHub Cloud's documented job.workflow_* properties.
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= \
+            -ignore 'property "workflow_(sha|repository)" is not defined' .github/workflows/*.yml
+
+  required:
+    name: Required checks
+    if: always()
+    needs: [source, workflows]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          assert all(item['result']=='success' for item in json.loads(os.environ['RESULTS']).values())
+          PY

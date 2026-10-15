@@ -1,0 +1,23 @@
+[Unit]
+Description=Restore policy deny state before opening Untrusted applications
+Requires=var.mount nftables.service
+Wants=lanrith-headscale-return-routing.service lanrith-nat64.service lanrith-nat64-internal.service lanrith-nat46.service
+After=var.mount nftables.service systemd-networkd.service lanrith-headscale-return-routing.service lanrith-nat64.service lanrith-nat64-internal.service lanrith-nat46.service
+Before=lanrith-policy-helper.service lanrith-policy-bindings.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StateDirectory=lanrith/policy-agent
+StateDirectoryMode=0700
+ExecStart=/usr/lib/lanrith/policy-runtime bootstrap
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_CHOWN CAP_DAC_OVERRIDE
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run /var/lib/lanrith/policy-agent /var/lib/lanrith/policy-enrollment
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes

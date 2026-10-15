@@ -1,0 +1,8 @@
+# VPP source used for the Debian 13 router image.  Debian 13 does not ship VPP,
+# so the factory builds these packages in a separately cached OCI image.
+VPP_SOURCE_URL=https://gerrit.fd.io/r/vpp
+VPP_SOURCE_REF=v25.06
+VPP_SOURCE_COMMIT=1573e751c5478d3914d26cdde153390967932d6b
+VPP_DEBIAN_VERSION=25.06-release
+VPP_SECURITY_PATCH=GHSA-rc9p-89wj-mx7h.patch
+VPP_SECURITY_PATCH_SHA256=75c13db90e834077891e29cb2962027b0c648f14c26a5a1bc9895ad2515bd908

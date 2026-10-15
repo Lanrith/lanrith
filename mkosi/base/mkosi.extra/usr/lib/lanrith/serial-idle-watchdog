@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+"""End the authenticated ttyS0 login after 300 seconds without serial input.
+
+Debian's login intentionally does not write USER_PROCESS to utmp, so autolog
+cannot find a session. The UART receive counter tracks keyboard input even
+while a foreground program owns the terminal.
+"""
+
+import re
+import json
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+
+POLICY = json.loads(Path('/usr/share/lanrith/resolved.json').read_text())['administration']['serial']
+TTY = POLICY.get('tty', 'ttyS0')
+UNIT = 'serial-getty@'+TTY+'.service'
+SERIAL_STATUS = Path('/proc/tty/driver/serial')
+TIMEOUT = POLICY.get('timeout_seconds', 300)
+POLL_SECONDS = 2
+
+
+@dataclass
+class State:
+    pid: int = 0
+    rx: int | None = None
+    last_input: float = 0
+
+
+def receive_count(status=SERIAL_STATUS):
+    number = re.fullmatch(r'ttyS([0-9]+)', TTY)
+    if number is None:
+        return None  # Non-UART consoles receive a bounded session lifetime.
+    try:
+        for line in status.read_text().splitlines():
+            if re.match(r'^\s*'+number[1]+r':\s', line):
+                match = re.search(r'\brx:(\d+)\b', line)
+                return int(match.group(1)) if match else None
+    except OSError:
+        pass
+    return None
+
+
+def main_pid():
+    try:
+        result = subprocess.run(
+            ['systemctl', 'show', '--property=MainPID', '--value', UNIT],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    if result.returncode:
+        return 0
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def has_login_child(pid):
+    if pid <= 1:
+        return False
+    try:
+        children = Path(f'/proc/{pid}/task/{pid}/children').read_text()
+    except OSError:
+        return False
+    return bool(children.strip())
+
+
+def advance(state, pid, active, rx, now):
+    """Return the next state and whether the authenticated session expired."""
+    if not active or not pid:
+        return State(), False
+    if state.pid != pid:
+        return State(pid, rx, now), False
+    if rx is not None and rx != state.rx:
+        return State(pid, rx, now), False
+    return State(pid, state.rx, state.last_input), now - state.last_input >= TIMEOUT
+
+
+def main():
+    state = State()
+    while True:
+        pid = main_pid()
+        rx = receive_count()
+        state, expired = advance(state, pid, has_login_child(pid), rx, time.monotonic())
+        if expired:
+            # Recheck to avoid logging out a new session after a getty restart
+            # or a new keystroke between the poll and the restart request.
+            if main_pid() == pid and has_login_child(pid) and receive_count() == rx:
+                print('serial admin session idle for 300 seconds; restarting getty', flush=True)
+                try:
+                    result = subprocess.run(
+                        ['systemctl', 'restart', UNIT], check=False, timeout=15,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    print(f'failed to restart serial getty: {error}', flush=True)
+                else:
+                    if result.returncode == 0:
+                        state = State()
+                    else:
+                        print(f'failed to restart serial getty: exit {result.returncode}', flush=True)
+        time.sleep(POLL_SECONDS)
+
+
+if __name__ == '__main__':
+    main()

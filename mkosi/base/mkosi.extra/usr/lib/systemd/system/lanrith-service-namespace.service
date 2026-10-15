@@ -1,0 +1,15 @@
+[Unit]
+Description=Own the isolated router service namespace and its attachments
+After=systemd-networkd.service nftables.service
+Before=vpp.service lanrith-vpp-service-attachment.service lanrith-network-base.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+RuntimeDirectory=lanrith-service-namespace
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=60
+TimeoutStopSec=20
+ExecStart=/usr/lib/lanrith/initialize-service-namespace
+ExecStopPost=/usr/lib/lanrith/remove-service-namespace

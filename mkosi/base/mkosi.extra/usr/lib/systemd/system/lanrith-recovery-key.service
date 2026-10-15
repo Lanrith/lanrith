@@ -1,0 +1,26 @@
+[Unit]
+Description=Enroll the factory var recovery key on the motherboard serial console
+Documentation=man:systemd-cryptenroll(1)
+ConditionPathExists=!/var/lib/lanrith-factory/recovery-key-enrolled
+Requires=var.mount lanrith-slot-initialization.service
+After=systemd-repart.service var.mount lanrith-slot-initialization.service
+# The getty condition also requires the acknowledgment marker. Ordering keeps
+# its first start behind enrollment; OnSuccess starts it if boot skipped it.
+Before=getty.target serial-getty@ttyS0.service multi-user.target
+OnSuccess=serial-getty@ttyS0.service
+OnFailure=lanrith-factory-failure-console@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/lanrith/run-recovery-key-console
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/ttyS0
+TTYReset=yes
+# Do not hang up the active serial session during recovery-key acknowledgement.
+TTYVHangup=no
+TimeoutStartSec=infinity
+
+[Install]
+RequiredBy=multi-user.target

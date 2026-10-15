@@ -1,0 +1,58 @@
+[Unit]
+PartOf=lanrith-service-namespace.service
+Description=Expose bounded router metrics in the isolated service namespace
+Requires=lanrith-service-namespace.service
+After=lanrith-service-namespace.service
+Before=lanrith-network-base.service
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+NetworkNamespacePath=/run/netns/router-services
+ExecStart=/usr/bin/prometheus-node-exporter \
+  --web.listen-address=[::]:9100 \
+  --collector.disable-defaults \
+  --collector.arp \
+  --collector.conntrack \
+  --collector.cpu \
+  --collector.cpufreq \
+  --collector.diskstats \
+  --collector.entropy \
+  --collector.filefd \
+  --collector.filesystem \
+  --collector.hwmon \
+  --collector.interrupts \
+  --collector.loadavg \
+  --collector.meminfo \
+  --collector.netclass \
+  --collector.netdev \
+  --collector.netstat \
+  --collector.netstat.fields=^(Ip|IpExt|Icmp|Tcp|TcpExt|Udp|UdpLite)_ \
+  --collector.powersupplyclass \
+  --collector.pressure \
+  --collector.processes \
+  --collector.schedstat \
+  --collector.sockstat \
+  --collector.softnet \
+  --collector.stat \
+  --collector.systemd \
+  --collector.systemd.unit-include=^.+[.](service|socket)$ \
+  --collector.tcpstat \
+  --collector.thermal_zone \
+  --collector.time \
+  --collector.timex \
+  --collector.textfile \
+  --collector.textfile.directory=/var/lib/node_exporter/textfile_collector \
+  --collector.uname \
+  --collector.vmstat
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh router health metrics
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+RandomizedDelaySec=5s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

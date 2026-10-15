@@ -1,0 +1,23 @@
+[Unit]
+Description=Configure the router internal DNS64 NAT64 path
+Requires=systemd-networkd.service nftables.service
+After=systemd-networkd.service nftables.service
+Before=lanrith-network-base.service unbound.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/lib/lanrith/configure-nat64-internal
+ExecStart=/usr/lib/lanrith/tayga-internal --nodetach --config /etc/tayga-nat64-internal.conf --pidfile /run/tayga-nat64-internal.pid --user tayga --group tayga
+ExecStopPost=/usr/lib/lanrith/configure-nat64-internal remove
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/tayga-nat64-internal /run
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETGID CAP_SETUID
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SETGID CAP_SETUID
+
+[Install]
+WantedBy=multi-user.target

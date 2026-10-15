@@ -1,0 +1,27 @@
+# No listener. The proxy pool calls this virtual server only after the
+# Authentik home server has failed. Only the first wired NAS and the local
+# qualification client may use it. APs fail closed even with forged wired fields.
+server router_mab_fallback {
+    authorize {
+        if (("%{client:shortname}" != "usw-ultra" && "%{client:shortname}" != "router_loopback_test") || (&request:NAS-Port-Type && &request:NAS-Port-Type != Ethernet)) {
+            reject
+        }
+        if (!&request:Service-Type || &request:Service-Type != Call-Check || !&request:User-Name || &request:User-Name !~ /^[0-9A-Fa-f]{12}$/ || !&request:Calling-Station-Id || &request:Calling-Station-Id != &request:User-Name || !&request:User-Password || &request:User-Password != &request:User-Name || !&request:NAS-Port-Id || &request:EAP-Message) {
+            reject
+        }
+
+        update control {
+            &Cache-Read-Only := yes
+        }
+        router_mab_cache
+        if (&control:Tunnel-Type == VLAN && &control:Tunnel-Medium-Type == IEEE-802 && &control:Tunnel-Private-Group-ID == "22") {
+            update reply {
+                &Tunnel-Type := VLAN
+                &Tunnel-Medium-Type := IEEE-802
+                &Tunnel-Private-Group-ID := "22"
+            }
+            accept
+        }
+        reject
+    }
+}

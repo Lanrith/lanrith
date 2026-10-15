@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+"""PAM verifier for the router's serial-only admin passphrase."""
+
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+
+HASH_FILE = Path('/etc/security/admin.serial-passphrase.hash')
+HASH_PATTERN = re.compile(r'scrypt:32768:8:1:([0-9a-f]{32}):([0-9a-f]{64})\n?\Z')
+
+
+def permitted_context(environment, policy=None):
+    if policy is None:
+        try:
+            policy = json.loads(Path('/usr/share/lanrith/resolved.json').read_text())['administration']
+        except (OSError, ValueError, KeyError):
+            return False
+    serial = policy.get('serial', {})
+    tty = serial.get('tty', 'ttyS0')
+    return (
+        serial.get('enabled') is True
+        and
+        environment.get('PAM_TYPE') == 'auth'
+        and environment.get('PAM_SERVICE') in ('login', 'sudo')
+        and environment.get('PAM_USER') == policy.get('username', 'admin')
+        and environment.get('PAM_TTY') in (tty, '/dev/'+tty)
+        and not environment.get('PAM_RHOST')
+    )
+
+
+def verify(passphrase, stored):
+    match = HASH_PATTERN.fullmatch(stored)
+    if match is None or not passphrase or len(passphrase) > 512 or b'\x00' in passphrase:
+        return False
+    expected = bytes.fromhex(match.group(2))
+    try:
+        actual = hashlib.scrypt(passphrase, salt=bytes.fromhex(match.group(1)),
+                                n=32768, r=8, p=1, dklen=32, maxmem=64 * 1024 * 1024)
+    except (ValueError, MemoryError):
+        return False
+    return hmac.compare_digest(actual, expected)
+
+
+def main():
+    if os.geteuid() != 0 or not permitted_context(os.environ):
+        return 1
+    try:
+        metadata = HASH_FILE.stat(follow_symlinks=False)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o077:
+            return 1
+        stored = HASH_FILE.read_text(encoding='ascii')
+        passphrase = sys.stdin.buffer.read(513)
+    except (OSError, UnicodeError):
+        return 1
+    return 0 if verify(passphrase, stored) else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -1,0 +1,12 @@
+#%PAM-1.0
+# Only the named admin may authenticate on the physical serial terminal.
+# The account's Unix password remains locked for every other PAM service.
+auth requisite pam_nologin.so
+auth required pam_exec.so quiet quiet_log seteuid expose_authtok /usr/lib/lanrith/verify-serial-passphrase
+# pam_exec ignores pam_setcred; this supplies its success without overriding a
+# failed required passphrase check.
+auth required pam_permit.so
+account required pam_unix.so
+session required pam_loginuid.so
+@include common-session
+password required pam_deny.so

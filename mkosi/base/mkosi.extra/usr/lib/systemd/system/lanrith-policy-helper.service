@@ -1,0 +1,35 @@
+[Unit]
+Description=Enforce directory policy with protected early, late and egress guards
+Wants=lanrith-policy-reader.service
+Requires=lanrith-policy-bootstrap.service lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket
+After=lanrith-policy-bootstrap.service lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket
+
+[Service]
+Type=exec
+Environment=GOMAXPROCS=2 GOMEMLIMIT=400MiB
+ExecStart=/usr/bin/router-policy-helper -config-directory /run/lanrith-policy/config -binding-directory /run/lanrith-policy/bindings
+Sockets=lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ReadWritePaths=/run/lanrith-policy /var/lib/lanrith/policy-agent
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=512M
+TasksMax=64

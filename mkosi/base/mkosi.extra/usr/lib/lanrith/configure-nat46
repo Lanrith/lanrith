@@ -1,0 +1,81 @@
+#!/bin/sh
+# Configure the separately scoped static-map NAT46 TUN device. The signed
+# profile may carry one or more reviewed maps. This helper creates only the
+# TUN and translator routes; forwarding remains owned by nftables.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+. /usr/lib/lanrith/network-checks.sh
+
+interface=$lanrith_nat46_interface
+config=/etc/tayga-nat46.conf
+
+require_reviewed_maps() {
+  [ -r "$config" ] || return 1
+  # The profile and immutable TAYGA configuration are rendered from the same
+  # reviewed registry.  Refuse to create a forwarding TUN when the named test
+  # mapping is absent, duplicated, malformed, or the total map count differs.
+  # Full source validation owns the complete map-to-registry comparison; this
+  # small runtime predicate prevents a partial or stale mounted configuration
+  # from activating the translator.
+  case "$lanrith_nat46_map_count" in *[!0-9]*|'') return 1 ;; esac
+  # grep is part of the minimal immutable image and builder. Do not introduce
+  # an awk dependency solely for this early-boot admission predicate.
+  map_lines=$(grep -Ec '^[[:space:]]*map([[:space:]]|$)' "$config" || true)
+  valid_maps=$(grep -Ec '^[[:space:]]*map[[:space:]]+[^[:space:]#]+[[:space:]]+[^[:space:]#]+[[:space:]]*(#.*)?$' "$config" || true)
+  test_maps=$(grep -Fxc "map $lanrith_nat46_test_ipv4 $lanrith_nat46_test_ipv6" "$config" || true)
+  [ "$lanrith_nat46_map_count" -ge 1 ] &&
+    [ "$map_lines" -eq "$lanrith_nat46_map_count" ] &&
+    [ "$valid_maps" -eq "$lanrith_nat46_map_count" ] &&
+    [ "$test_maps" -eq 1 ]
+}
+
+eligible() {
+  [ "$lanrith_nat46_enabled" = 1 ] &&
+    [ "$lanrith_nat46_map_count" -ge 1 ] &&
+    require_reviewed_maps
+}
+
+remove() {
+  if ip link show dev "$interface" >/dev/null 2>&1; then
+    require_translation_tun "$interface" || return 1
+  fi
+  ip -6 route del "$lanrith_nat46_prefix" dev "$interface" 2>/dev/null || true
+  ip route del "$lanrith_nat46_ipv4_pool" dev "$interface" 2>/dev/null || true
+  if ip link show dev "$interface" >/dev/null 2>&1; then
+    ip link set "$interface" down 2>/dev/null || true
+    tayga --rmtun --config "$config" 2>/dev/null || true
+  fi
+}
+
+case "${1:-}" in
+  eligible)
+    [ "$#" -eq 1 ] || { echo 'Usage: configure-nat46 [eligible|remove]' >&2; exit 64; }
+    eligible
+    ;;
+  remove)
+    [ "$#" -eq 1 ] || { echo 'Usage: configure-nat46 [eligible|remove]' >&2; exit 64; }
+    remove
+    ;;
+  '')
+    eligible || {
+      echo 'NAT46 requires an enabled signed profile with at least one reviewed mapping.' >&2
+      exit 1
+    }
+    if ! ip link show dev "$interface" >/dev/null 2>&1; then
+      tayga --mktun --config "$config"
+    fi
+    require_translation_tun "$interface" || { echo 'Refusing a non-TUN NAT46 interface.' >&2; exit 1; }
+    ip link set "$interface" up
+    ip -4 address flush dev "$interface" scope global
+    ip -4 route flush dev "$interface"
+    ip address replace "$lanrith_nat46_ipv4_cidr" dev "$interface"
+    ip -6 address replace "$lanrith_nat46_ipv6_cidr" dev "$interface"
+    ip route replace "$lanrith_nat46_ipv4_pool" dev "$interface"
+    ip -6 route replace "$lanrith_nat46_prefix" dev "$interface"
+    ;;
+  *)
+    echo 'Usage: configure-nat46 [eligible|remove]' >&2
+    exit 64
+    ;;
+esac

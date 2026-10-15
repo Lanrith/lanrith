@@ -1,0 +1,20 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    paths: ['lanrith/**', 'scripts/**', 'security/**', 'builders/**', 'mkosi/**', 'tests/**', 'build-inputs.json', 'VERSION', '.github/workflows/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: platform-release
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'Lanrith/lanrith'
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/build-base.yml

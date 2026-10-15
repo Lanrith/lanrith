@@ -1,0 +1,94 @@
+#!/bin/sh
+# Create the reviewed AF_PACKET host interface and its narrow L3 routes.  The
+# Linux veth pair is created by lanrith-service-namespace.service; VPP
+# owns only the host-vpp-services interface and never the physical X710 here.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+socket=/run/vpp/cli.sock
+interface=$lanrith_vpp_service_interface
+host_veth=$lanrith_vpp_service_host_veth
+namespace=$lanrith_service_namespace
+namespace_peer=$lanrith_vpp_service_namespace_peer
+
+vpp_cli() {
+  output=$(vppctl -s "$socket" "$1" 2>&1) || {
+    printf '%s\n' "$output" >&2
+    return 1
+  }
+  case "$output" in
+    *'unknown command'*|*'Unknown command'*|*'unknown interface'*|*'Unknown interface'*|*'No such file'*|*'failed'*|*'Failed'*|*'error:'*|*'Error:'*)
+      printf '%s\n' "$output" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$output"
+}
+
+interface_exists() {
+  vppctl -s "$socket" 'show interface' |
+    awk -v expected="$interface" '$1 == expected { found = 1 } END { exit !found }'
+}
+
+wait_for_vpp() {
+  attempts=0
+  while ! test -S "$socket" || ! vppctl -s "$socket" 'show interface' >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 60 ] || {
+      echo 'VPP service attachment timed out waiting for its CLI.' >&2
+      exit 1
+    }
+    sleep 1
+  done
+}
+
+remove_attachment() {
+  if ! test -S "$socket" || ! interface_exists; then
+    return 0
+  fi
+  vpp_cli "delete host-interface name $host_veth" >/dev/null
+}
+
+if [ "${1:-}" = remove ]; then
+  remove_attachment
+  exit 0
+fi
+[ "$#" -eq 0 ] || {
+  echo 'Usage: configure-vpp-service-attachment [remove]' >&2
+  exit 64
+}
+
+ip netns list | awk -v expected="$namespace" '$1 == expected { found = 1 } END { exit !found }'
+ip link show dev "$host_veth" >/dev/null
+ip -n "$namespace" link show dev "$namespace_peer" >/dev/null
+test -x /usr/bin/vppctl
+
+wait_for_vpp
+if ! interface_exists; then
+  vpp_cli "create host-interface name $host_veth" >/dev/null
+fi
+vpp_cli "set interface state $interface up" >/dev/null
+
+if ! vppctl -s "$socket" "show interface address $interface" |
+  grep -Fq "L3 $lanrith_vpp_service_ipv4_cidr"; then
+  vpp_cli "set interface ip address $interface $lanrith_vpp_service_ipv4_cidr" >/dev/null
+fi
+if ! vppctl -s "$socket" "show interface address $interface" |
+  grep -Fq "L3 $lanrith_vpp_service_ipv6_cidr"; then
+  vpp_cli "set interface ip address $interface $lanrith_vpp_service_ipv6_cidr" >/dev/null
+fi
+
+# VPP's connected link route and the namespace's connected peer route are
+# insufficient for the service prefixes themselves.  Add only those two
+# explicit routes; no default, client, OOB, or bridge route is introduced.
+if ! vppctl -s "$socket" "show ip fib $lanrith_vpp_service_ipv4_prefix" |
+  grep -Fq "$lanrith_vpp_service_ipv4_namespace_address $interface"; then
+  vpp_cli "ip route add $lanrith_vpp_service_ipv4_prefix via $lanrith_vpp_service_ipv4_namespace_address $interface" >/dev/null
+fi
+if ! vppctl -s "$socket" "show ip6 fib $lanrith_vpp_service_ipv6_prefix" |
+  grep -Fq "$lanrith_vpp_service_ipv6_namespace_address $interface"; then
+  vpp_cli "ip route add $lanrith_vpp_service_ipv6_prefix via $lanrith_vpp_service_ipv6_namespace_address $interface" >/dev/null
+fi
+
+echo 'VPP service attachment configured.'

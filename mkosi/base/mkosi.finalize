@@ -1,0 +1,38 @@
+#!/usr/bin/python3
+"""Remove transient identities and disable optional package activation."""
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+root = Path(os.environ['BUILDROOT'])
+metadata = root/'usr/share/lanrith'
+metadata.mkdir(parents=True, exist_ok=True)
+result = subprocess.run(['chroot', str(root), 'apt-cache', 'dumpavail'],
+                        check=True, capture_output=True, timeout=60)
+(metadata/'apt-metadata').write_bytes(result.stdout)
+identities = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
+              for line in (root/'etc/passwd').read_text().splitlines()
+              if line and (row := line.split(':'))}
+(metadata/'service-identities.json').write_text(json.dumps(identities, sort_keys=True)+'\n')
+for path in (root/'etc/ssh').glob('ssh_host_*'):
+    path.unlink()
+for name in ('var/log', 'var/lib/dhcp', 'var/lib/kea', 'var/lib/systemd/random-seed',
+             'var/lib/dbus/machine-id', 'etc/machine-id', 'etc/hostname'):
+    path = root/name
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+(root/'etc/machine-id').touch()
+(root/'etc/hostname').write_text('lanrith\n')
+# Consumers explicitly activate features after rendering. Optional packages
+# must not start a listener merely because their maintainer scripts enabled it.
+for pattern in ('etc/systemd/system/*.wants/*', 'etc/systemd/system/*.requires/*'):
+    for path in root.glob(pattern):
+        if path.is_symlink() and not path.name.startswith('systemd-'):
+            path.unlink()
+(root/'etc/resolv.conf').unlink(missing_ok=True)
+(root/'etc/resolv.conf').write_text('nameserver 127.0.0.1\nnameserver ::1\n')

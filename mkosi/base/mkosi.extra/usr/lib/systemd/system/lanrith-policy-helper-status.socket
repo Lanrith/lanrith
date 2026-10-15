@@ -1,0 +1,18 @@
+[Unit]
+Description=UID-bound read-only policy status endpoint
+DefaultDependencies=no
+Requires=lanrith-policy-bootstrap.service
+After=lanrith-policy-bootstrap.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Socket]
+ListenStream=/run/router-policy-ipc/status.sock
+FileDescriptorName=status
+Service=lanrith-policy-helper.service
+SocketUser=root
+SocketGroup=router-policy-operator
+SocketMode=0660
+DirectoryMode=0755
+Accept=no
+RemoveOnStop=yes

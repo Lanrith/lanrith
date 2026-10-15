@@ -1,0 +1,70 @@
+#!/bin/sh
+# Do not start Kea until every configured directly attached DHCP interface has
+# its exact listener address and a working lower-layer link. systemd-networkd
+# being active is not sufficient: VLAN creation and carrier propagation finish
+# asynchronously during boot.
+set -eu
+
+profile=${HOMELAB_ROUTER_NETWORK_PROFILE:-/usr/lib/lanrith/network-profile.sh}
+max_attempts=${HOMELAB_ROUTER_KEA_WAIT_ATTEMPTS:-60}
+
+case "$max_attempts" in
+  ''|*[!0-9]*)
+    echo 'Kea interface wait attempts must be a positive integer.' >&2
+    exit 64
+    ;;
+esac
+[ "$max_attempts" -gt 0 ] || {
+  echo 'Kea interface wait attempts must be greater than zero.' >&2
+  exit 64
+}
+
+# The production path uses the immutable generated profile. The override lets
+# the disposable network-namespace regression exercise this exact helper.
+[ -f "$profile" ] && [ ! -L "$profile" ] || {
+  echo "Kea interface wait cannot read a regular network profile: $profile" >&2
+  exit 66
+}
+# shellcheck disable=SC1090
+. "$profile"
+
+[ "$lanrith_dhcpv4_enabled" = 1 ] || exit 0
+
+interface_ready() {
+  vlan=$1
+  interface="lan-vlan$vlan"
+  expected=$(lanrith_vlan_dhcp_server_cidr "$vlan")
+
+  ip -o link show dev "$interface" 2>/dev/null | awk -F'[<>]' '
+    NR == 1 {
+      count = split($2, flags, ",")
+      for (item = 1; item <= count; item++) {
+        if (flags[item] == "UP") administratively_up = 1
+        if (flags[item] == "LOWER_UP") lower_layer_up = 1
+      }
+    }
+    END { exit !(administratively_up && lower_layer_up) }
+  ' || return 1
+
+  ip -4 -o address show dev "$interface" 2>/dev/null | \
+    awk -v expected="$expected" '$4 == expected { found = 1 } END { exit !found }'
+}
+
+attempt=1
+while [ "$attempt" -le "$max_attempts" ]; do
+  missing=''
+  for vlan in $lanrith_ipv4_cutover_vlan_ids; do
+    if ! interface_ready "$vlan"; then
+      expected=$(lanrith_vlan_dhcp_server_cidr "$vlan")
+      missing="$missing lan-vlan$vlan/$expected"
+    fi
+  done
+
+  [ -n "$missing" ] || exit 0
+  if [ "$attempt" -eq "$max_attempts" ]; then
+    echo "Kea interface readiness timed out; unavailable:$missing" >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done

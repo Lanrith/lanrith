@@ -1,0 +1,16 @@
+#!/bin/sh
+# Start recovery-key enrollment from the motherboard COM port.
+set -eu
+
+case "$(tty 2>/dev/null || true)" in
+  /dev/ttyS0) ;;
+  *)
+    printf '%s\n' 'Recovery-key enrollment requires the motherboard serial console.' >&2
+    exit 1
+    ;;
+esac
+
+# The kernel deliberately leaves this UART unconfigured as a console.
+stty 115200 cs8 -cstopb -parenb -crtscts clocal
+printf '<6>lanrith-recovery: recovery input is on ttyS0\n' > /dev/kmsg 2>/dev/null || true
+exec /usr/lib/lanrith/enroll-recovery-key

@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+key_dir=/var/lib/lanrith/ssh-host-keys
+key_file="$key_dir/ssh_host_ed25519_key"
+public_file="$key_file.pub"
+source_key=/etc/ssh/ssh_host_ed25519_key
+
+umask 077
+install -d -o root -g root -m 0700 "$key_dir"
+
+if [ -e "$key_file" ]; then
+    test -f "$key_file"
+    test ! -L "$key_file"
+else
+    # Preserve the current identity during the first persistent-key rollout.
+    # New factory installs have no usable root key and generate one here.
+    if [ -f "$source_key" ] && [ ! -L "$source_key" ]; then
+        install -o root -g root -m 0600 "$source_key" "$key_file"
+    else
+        ssh-keygen -q -t ed25519 -N '' -f "$key_file"
+    fi
+fi
+
+public_tmp="$key_dir/.ssh_host_ed25519_key.pub.$$"
+ssh-keygen -y -f "$key_file" >"$public_tmp"
+install -o root -g root -m 0644 "$public_tmp" "$public_file"
+rm -f "$public_tmp"

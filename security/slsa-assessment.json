@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "specification": "SLSA v1.2",
+  "target": "Build L3",
+  "result": "pending-native-and-platform-assessment",
+  "requirements": {
+    "provenance": "GitHub artifact attestations for every selected file and the matching OCI builder",
+    "identity": "Exact repository, reusable workflow commit, source commit, OIDC issuer and hosted-runner policy",
+    "isolation": "Fresh hosted jobs; build has no OIDC authority; attestation job executes no build outputs",
+    "handoff": "Immutable artifact IDs between build, attestation and publication",
+    "inputs": "Reviewed source/tool/action/package/patch pins and inventory-bound security evidence",
+    "assessment": "Actual successful run and supported GitHub build-platform guarantees must be reviewed before qualification"
+  },
+  "references": [
+    "https://slsa.dev/spec/v1.2/levels",
+    "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating"
+  ]
+}

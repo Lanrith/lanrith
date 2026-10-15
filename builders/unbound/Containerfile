@@ -1,0 +1,127 @@
+# Build a current Unbound for Debian 13 without adding Debian unstable to the
+# router or to its mkosi package transaction. Both source-signing boundaries
+# are checked before Debian's package build (including its test suite) runs.
+ARG UNBOUND_BUILDER_OCI
+FROM ${UNBOUND_BUILDER_OCI} AS build
+
+ARG UNBOUND_VERSION
+ARG UNBOUND_UPSTREAM_VERSION
+ARG UNBOUND_SOURCE_BASE_URL
+ARG UNBOUND_DSC
+ARG UNBOUND_DSC_SHA256
+ARG UNBOUND_ORIG
+ARG UNBOUND_ORIG_SHA256
+ARG UNBOUND_ORIG_SIGNATURE
+ARG UNBOUND_ORIG_SIGNATURE_SHA256
+ARG UNBOUND_DEBIAN_TAR
+ARG UNBOUND_DEBIAN_TAR_SHA256
+ARG UNBOUND_RELEASE_KEY_URL
+ARG UNBOUND_RELEASE_KEY_SHA256
+ARG UNBOUND_RELEASE_KEY_FINGERPRINT
+ARG UNBOUND_DEBIAN_SIGNER_FINGERPRINT
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list \
+ && printf '%s\n' \
+      'Package: *' \
+      'Pin: origin snapshot.debian.org' \
+      'Pin-Priority: 1001' \
+      > /etc/apt/preferences.d/99-lanrith-snapshot \
+ && apt-get update \
+ && apt-get install --yes --allow-downgrades --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      curl \
+      debian-keyring \
+      devscripts \
+      equivs \
+      fakeroot \
+      gnupg
+
+WORKDIR /build
+
+RUN set -eu; \
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+      --output "$UNBOUND_DSC" "$UNBOUND_SOURCE_BASE_URL/$UNBOUND_DSC"; \
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+      --output "$UNBOUND_ORIG" "$UNBOUND_SOURCE_BASE_URL/$UNBOUND_ORIG"; \
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+      --output "$UNBOUND_ORIG_SIGNATURE" \
+      "$UNBOUND_SOURCE_BASE_URL/$UNBOUND_ORIG_SIGNATURE"; \
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+      --output "$UNBOUND_DEBIAN_TAR" \
+      "$UNBOUND_SOURCE_BASE_URL/$UNBOUND_DEBIAN_TAR"; \
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+      --output releases-g2.asc "$UNBOUND_RELEASE_KEY_URL"; \
+    printf '%s  %s\n' \
+      "$UNBOUND_DSC_SHA256" "$UNBOUND_DSC" \
+      "$UNBOUND_ORIG_SHA256" "$UNBOUND_ORIG" \
+      "$UNBOUND_ORIG_SIGNATURE_SHA256" "$UNBOUND_ORIG_SIGNATURE" \
+      "$UNBOUND_DEBIAN_TAR_SHA256" "$UNBOUND_DEBIAN_TAR" \
+      "$UNBOUND_RELEASE_KEY_SHA256" releases-g2.asc \
+      | sha256sum --check --strict
+
+RUN set -eu; \
+    gpgv --status-fd 1 --keyring /usr/share/keyrings/debian-keyring.gpg \
+      "$UNBOUND_DSC" >debian-signature.status; \
+    grep -F "[GNUPG:] VALIDSIG $UNBOUND_DEBIAN_SIGNER_FINGERPRINT " \
+      debian-signature.status >/dev/null; \
+    actual_release_fingerprint=$(gpg --batch --show-keys --with-colons \
+      releases-g2.asc | awk -F: '$1 == "fpr" { print $10; exit }'); \
+    test "$actual_release_fingerprint" = "$UNBOUND_RELEASE_KEY_FINGERPRINT"; \
+    gpg --batch --yes --dearmor --output releases-g2.gpg releases-g2.asc; \
+    gpgv --status-fd 1 --keyring ./releases-g2.gpg \
+      "$UNBOUND_ORIG_SIGNATURE" "$UNBOUND_ORIG" >upstream-signature.status; \
+    grep -F "[GNUPG:] VALIDSIG $UNBOUND_RELEASE_KEY_FINGERPRINT " \
+      upstream-signature.status >/dev/null; \
+    dpkg-source --extract "$UNBOUND_DSC" source; \
+    test "$(dpkg-parsechangelog --show-field Version --file source/debian/changelog)" \
+      = "$UNBOUND_VERSION"; \
+    test "$(dpkg-parsechangelog --show-field Source --file source/debian/changelog)" \
+      = unbound
+
+RUN set -eu; \
+    mk-build-deps --install --remove \
+      --tool 'apt-get --yes --allow-downgrades --no-install-recommends' source/debian/control; \
+    cd source; \
+    dpkg-buildpackage --build=binary --no-sign
+
+RUN set -eu; \
+    install -d -m 0755 /packages; \
+    for package in unbound libunbound8 unbound-anchor; do \
+      package_file="/build/${package}_${UNBOUND_VERSION}_amd64.deb"; \
+      test -f "$package_file"; \
+      test "$(dpkg-deb --field "$package_file" Package)" = "$package"; \
+      test "$(dpkg-deb --field "$package_file" Version)" = "$UNBOUND_VERSION"; \
+      test "$(dpkg-deb --field "$package_file" Architecture)" = amd64; \
+      install -m 0644 "$package_file" /packages/; \
+    done; \
+    (cd /packages && sha256sum ./*.deb >SHA256SUMS)
+
+FROM ${UNBOUND_BUILDER_OCI}
+
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list
+
+COPY --from=build /packages/ /packages/
+
+CMD ["/bin/true"]

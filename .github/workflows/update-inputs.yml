@@ -1,0 +1,41 @@
+name: Propose dependency updates
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+concurrency:
+  group: dependency-proposal
+  cancel-in-progress: false
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve proposed authenticated component and snapshot inputs
+        run: python3 scripts/refresh-inputs.py
+      - id: proposal
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: automation/dependency-inputs
+          title: Review router package and component updates
+          commit-message: Propose reviewed router build input updates
+          body: |
+            Refreshes public snapshot and qualified component selections. Review package versions,
+            upstream advisories, locked patches and source changes. Production signing remains gated
+            by fresh security admission and native qualification. This PR does not approve itself.
+          add-paths: |
+            build-inputs.json
+            builders/build-inputs.lock
+            security/policy.json
+      - name: Explicitly run checks for the bot proposal
+        if: steps.proposal.outputs.pull-request-number
+        run: gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref automation/dependency-inputs

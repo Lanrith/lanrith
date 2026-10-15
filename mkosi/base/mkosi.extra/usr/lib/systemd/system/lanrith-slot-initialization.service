@@ -1,0 +1,19 @@
+[Unit]
+Description=Initialize versioned router A/B slot metadata
+Requires=var.mount
+After=systemd-repart.service var.mount
+Before=lanrith-recovery-key.service multi-user.target
+ConditionPathExists=!/var/lib/lanrith/slots-initialized
+OnFailure=lanrith-factory-failure-console@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/lanrith/initialize-slots
+# The action has no secret input. Mirroring failures to the local serial
+# console makes a factory first-boot fault diagnosable without weakening SSH
+# or copying recovery material into the immutable root.
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+RequiredBy=multi-user.target

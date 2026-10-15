@@ -1,0 +1,16 @@
+#!/bin/sh
+# Record a failed first boot in the journal and keep local login blocked
+# until the recovery-key ceremony has completed.
+set -eu
+
+failed_unit=${1:-unknown}
+case "$failed_unit" in
+  lanrith-slot-initialization.service|lanrith-recovery-key.service) ;;
+  *) failed_unit=an-unrecognised-factory-unit ;;
+esac
+
+printf '%s\n' 'Factory provisioning stopped before completion.'
+printf 'The failed unit is: %s\n' "$failed_unit"
+printf '%s\n' 'No offline recovery key was created and local login remains unavailable.'
+printf '%s\n' 'Correct the signed factory image and reinstall; do not treat this router as configured.'
+printf '<3>lanrith-factory: factory provisioning stopped at %s\n' "$failed_unit" > /dev/kmsg 2>/dev/null || true

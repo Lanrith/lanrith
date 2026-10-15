@@ -1,0 +1,12 @@
+[Unit]
+Description=Enable Chrony's constrained namespace source address
+Requires=lanrith-unbound-network.service
+After=lanrith-unbound-network.service
+Before=chrony.service
+PartOf=chrony.service lanrith-service-namespace.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/lanrith/enable-chrony-network
+ExecStop=/usr/lib/lanrith/disable-chrony-network

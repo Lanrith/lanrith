@@ -1,0 +1,249 @@
+#!/usr/bin/python3
+"""Extend only the mounted router /var, without moving or shrinking data.
+
+GPT LBAs use the disk's logical sector size. Linux sysfs and cryptsetup's
+offset/size fields always use 512-byte sectors. Keep all other sizes in bytes.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import stat
+import subprocess
+import sys
+import tempfile
+from types import SimpleNamespace
+
+
+layout = runpy.run_path(str(Path(__file__).with_name("disk-layout")))
+Disk = layout["Disk"]
+require = layout["require"]
+TARGET_BYTES = 64 * 1024 ** 3
+MINIMUM_FILESYSTEM_BYTES = 60 * 1024 ** 3
+MARKER = Path("/var/lib/lanrith/var-growth-deferred")
+
+
+def run(arguments, *, input=None, timeout=30):
+    # Never inherit a console for a passphrase/PIN fallback. Command output is
+    # parsed locally; errors report the operation, not LUKS/token diagnostics.
+    options = dict(input=input) if input is not None else dict(stdin=subprocess.DEVNULL)
+    try:
+        result = subprocess.run(list(map(str, arguments)), text=True, capture_output=True,
+            env=dict(os.environ, LC_ALL="C"), start_new_session=True, timeout=timeout, **options)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(f"{arguments[0]} exceeded its {timeout}s deadline") from error
+    require(result.returncode == 0, f"{arguments[0]} failed with status {result.returncode}")
+    return result.stdout
+
+
+def positive_integer(value, description):
+    require(re.fullmatch(r"[0-9]+", value.strip()) is not None, f"invalid {description}")
+    number = int(value)
+    require(number > 0, f"invalid {description}")
+    return number
+
+
+def fields(output):
+    result = {}
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        require(key not in result, f"duplicate inspection field: {key}")
+        result[key] = value
+    return result
+
+
+def block_identity(path):
+    status = path.stat()
+    require(stat.S_ISBLK(status.st_mode), f"{path} is not a block device")
+    return f"{os.major(status.st_rdev)}:{os.minor(status.st_rdev)}"
+
+
+def mounted_mapper(mapper):
+    mounts = json.loads(run(["findmnt", "--json", "--mountpoint", "/var",
+                             "--output", "SOURCE,FSTYPE,MAJ:MIN,OPTIONS"]))
+    records = mounts.get("filesystems", [])
+    require(len(records) == 1 and records[0].get("fstype") == "ext4"
+            and records[0].get("maj:min") == block_identity(mapper)
+            and "rw" in records[0].get("options", "").split(","),
+            "/var must be the read/write ext4 filesystem on the var mapper")
+
+
+def inspect_volume():
+    partition = Path("/dev/disk/by-partlabel/var").resolve(strict=True)
+    mapper = Path("/dev/mapper/var").resolve(strict=True)
+    partition_id = block_identity(partition)
+    node = Path(f"/sys/dev/block/{partition_id}").resolve(strict=True)
+    number = positive_integer((node / "partition").read_text(), "var partition number")
+    require(re.fullmatch(r"nvme[0-9]+n[0-9]+", node.parent.name) is not None,
+            "the var partition is not on an NVMe disk")
+    disk = Path("/dev") / node.parent.name
+    require(block_identity(disk) == (node.parent / "dev").read_text().strip(),
+            "var parent device and sysfs disagree")
+    mounted_mapper(mapper)
+    run(["cryptsetup", "isLuks", "--type", "luks2", partition])
+    mapper_node = Path(f"/sys/dev/block/{block_identity(mapper)}").resolve(strict=True)
+    slaves = list((mapper_node / "slaves").iterdir())
+    require(len(slaves) == 1 and (slaves[0] / "dev").read_text().strip() == partition_id,
+            "the var mapper must depend only on the labelled partition")
+    return SimpleNamespace(disk=disk, partition=partition, mapper=mapper,
+                           node=node, number=number)
+
+
+def kernel_partition(volume, plan):
+    # The sysfs ABI is 512-byte units even on a 4Kn NVMe.
+    offset = positive_integer((volume.node / "start").read_text(), "kernel partition start") * 512
+    size = positive_integer((volume.node / "size").read_text(), "kernel partition size") * 512
+    require(offset == plan["offset"] and 0 < size <= plan["size"],
+            "kernel var geometry is incompatible with GPT")
+    require(size % plan["sector_bytes"] == 0 and size ==
+            positive_integer(run(["blockdev", "--getsize64", volume.partition]), "partition capacity"),
+            "kernel var capacity is inconsistent")
+    return size
+
+
+def mapping(volume, partition_bytes):
+    info = fields(run(["cryptsetup", "status", "var"]))
+    require(info.get("type") == "LUKS2" and info.get("mode") == "read/write"
+            and not any(key in info for key in ("reencryption", "integrity", "encryption")),
+            "var must be an active, writable, ordinary LUKS2 mapping")
+    require(block_identity(Path(info.get("device", ""))) == block_identity(volume.partition),
+            "the var mapper has the wrong backing device")
+    values = {}
+    for key in ("offset", "size"):
+        match = re.fullmatch(r"([0-9]+) sectors", info.get(key, ""))
+        require(match is not None, f"invalid LUKS {key}")
+        values[key] = positive_integer(match[1], f"LUKS {key}") * 512
+    values["sector_bytes"] = positive_integer(info.get("sector size", ""), "encryption sector size")
+    require(values["sector_bytes"] in layout["SECTOR_SIZES"]
+            and values["offset"] % values["sector_bytes"] == 0
+            and values["size"] % values["sector_bytes"] == 0
+            and values["size"] + values["offset"] <= partition_bytes,
+            "LUKS geometry exceeds the kernel partition or is not aligned")
+    require(values["size"] == positive_integer(run(["blockdev", "--getsize64", volume.mapper]),
+                                               "mapper capacity"), "LUKS and mapper capacities disagree")
+    return values
+
+
+def filesystem_geometry(mapper):
+    info = fields(run(["dumpe2fs", "-h", mapper]))
+    blocks = positive_integer(info.get("Block count", ""), "ext4 block count")
+    block_bytes = positive_integer(info.get("Block size", ""), "ext4 block size")
+    require(block_bytes in (1024, 2048, 4096), "unsupported ext4 block size")
+    return blocks, block_bytes
+
+
+def resize_partition(volume, before, plan):
+    require(plan["action"] == "grow", "partition update requires a valid growth plan")
+    # The parent holds the exclusive disk lock. Update one existing entry;
+    # defer notification to partx so no other in-use partition is reloaded.
+    run(["sfdisk", "--no-reread", "--no-tell-kernel", "--lock=no", "--wipe", "never",
+         "--wipe-partitions", "never", "--sector-size", before.sector_bytes,
+         "-N", volume.number, volume.disk],
+        input=f"start={plan['first']}, size={plan['target_sectors']}\n")
+    with Disk(volume.disk) as after:
+        layout["verify_var_growth"](before, after, plan)
+
+
+def resize_filesystem(mapper, capacity_bytes):
+    blocks, block_bytes = filesystem_geometry(mapper)
+    target_blocks = capacity_bytes // block_bytes
+    require(blocks <= target_blocks, "ext4 exceeds the mapper capacity; shrinking is forbidden")
+    if blocks < target_blocks:
+        run(["resize2fs", mapper, target_blocks], timeout=120)
+        require(filesystem_geometry(mapper) == (target_blocks, block_bytes),
+                "ext4 did not reach the requested size")
+
+
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def defer(plan):
+    encoded = json.dumps(plan, sort_keys=True) + "\n"
+    if (not MARKER.is_symlink() and MARKER.is_file() and MARKER.stat().st_size == len(encoded)
+            and MARKER.read_text() == encoded):
+        return
+    MARKER.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".var-growth-deferred.", dir=MARKER.parent)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, MARKER)
+        sync_directory(MARKER.parent)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def grow(volume, allow_defer):
+    with Disk(volume.disk, lock=True) as before:
+        plan = before.plan_var(volume.number, TARGET_BYTES)
+        kernel_bytes = kernel_partition(volume, plan)
+        initial_mapping = mapping(volume, kernel_bytes)
+        blocks, block_bytes = filesystem_geometry(volume.mapper)
+        require(blocks * block_bytes <= initial_mapping["size"], "ext4 exceeds the active mapper")
+        if plan["action"] == "defer":
+            require(allow_defer, f"{plan['reason']}; offline migration is required")
+            defer(plan)
+            print(f"Deferring encrypted var growth: {plan['reason']}; offline migration is required.")
+            return
+        final_partition_bytes = max(plan["size"], TARGET_BYTES)
+        expected_bytes = ((final_partition_bytes - initial_mapping["offset"])
+                          // initial_mapping["sector_bytes"] * initial_mapping["sector_bytes"])
+        require(expected_bytes >= MINIMUM_FILESYSTEM_BYTES, "LUKS data area is below the filesystem minimum")
+        if plan["action"] == "grow":
+            resize_partition(volume, before, plan)
+        with Disk(volume.disk) as after:
+            current = after.plan_var(volume.number, TARGET_BYTES)
+            require(current["action"] == "unchanged", "GPT var size is still below the target")
+            if kernel_bytes < current["size"]:
+                run(["partx", "--update", "--nr", volume.number, volume.disk])
+                run(["udevadm", "settle", "--timeout=30"], timeout=35)
+            require(kernel_partition(volume, current) == current["size"],
+                    "the kernel did not expose the enlarged var partition")
+            active = mapping(volume, current["size"])
+            require(all(active[key] == initial_mapping[key] for key in ("offset", "sector_bytes"))
+                    and active["size"] >= initial_mapping["size"], "var mapping changed unexpectedly")
+            if active["size"] < expected_bytes:
+                # LUKS2 keyring mappings may need their existing TPM token to
+                # resize. Refuse passphrase fallback; no new key is enrolled.
+                run(["cryptsetup", "resize", "--batch-mode", "--token-only", "--token-type", "systemd-tpm2",
+                     "--timeout", "10", "--size", expected_bytes // 512, "var"], timeout=60)
+                updated = mapping(volume, current["size"])
+                require(updated == dict(active, size=expected_bytes), "LUKS resize did not reach the expected geometry")
+            resize_filesystem(volume.mapper, expected_bytes)
+            mounted_mapper(volume.mapper)
+            filesystem = os.statvfs("/var")
+            require(filesystem.f_blocks * filesystem.f_frsize >= MINIMUM_FILESYSTEM_BYTES,
+                    "mounted var is below the approved filesystem minimum")
+        if MARKER.exists():
+            MARKER.unlink()
+            sync_directory(MARKER.parent)
+    print("Router encrypted var meets its approved capacity.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--allow-defer", action="store_true",
+                        help="record a legacy layout needing offline migration without resizing it")
+    args = parser.parse_args()
+    try:
+        grow(inspect_volume(), args.allow_defer)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"Router var growth refused: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

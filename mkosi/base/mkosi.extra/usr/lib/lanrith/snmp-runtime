@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""SNMP runtime protocol. Private input only on stdin; bounded public output."""
+
+import json
+import signal
+import subprocess
+import sys
+
+from credential_runtime import read_json
+from snmp_credentials import SNMPError
+from snmp_service import State, apply, load_policy, prepare
+
+
+def interrupted(_signal, _frame):
+    raise SNMPError('SNMP activation was interrupted; retry managed recovery.', 70)
+
+
+for name in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(name, interrupted)
+
+try:
+    policy = load_policy()
+    if sys.argv[1:] == ['protocol']:
+        print('snmp-runtime-v1')
+    elif sys.argv[1:] == ['status']:
+        state = State()
+        try:
+            state.directory(state.root)
+            pending = state.metadata()
+        except FileNotFoundError:
+            pending = None
+        print(json.dumps({'journal_present': pending is not None,
+                          'phase': pending['phase'] if pending else None}))
+    elif sys.argv[1:] == ['prepare']:
+        raise SystemExit(0 if prepare(policy) else 1)
+    elif sys.argv[1:] == ['apply']:
+        raw = sys.stdin.buffer.read(8193)
+        if len(raw) > 8192:
+            raise SNMPError('SNMP request exceeds its size limit.')
+        try:
+            request = read_json(raw)
+        except (ValueError, UnicodeError) as error:
+            raise SNMPError('SNMP request is not valid unambiguous JSON.') from error
+        print(json.dumps(apply(policy, request)))
+    else:
+        raise SNMPError('SNMP runtime requires protocol, status, prepare, or apply.', 64)
+except SNMPError as error:
+    print(str(error), file=sys.stderr)
+    # ExecCondition 1–254 skips a unit; operational errors must instead fail it.
+    raise SystemExit(255 if sys.argv[1:] == ['prepare'] else error.code)
+except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+    print('SNMP runtime failed; inspect public service status and retry managed recovery.', file=sys.stderr)
+    raise SystemExit(255 if sys.argv[1:] == ['prepare'] else 70)

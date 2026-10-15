@@ -1,0 +1,88 @@
+# This produces only the pinned VPP Debian packages.  The final router image
+# installs them through mkosi's local package directory; it never adds an
+# Ubuntu or third-party runtime APT source to Debian 13.
+ARG VPP_BUILDER_OCI
+FROM ${VPP_BUILDER_OCI} AS build
+
+ARG VPP_SOURCE_URL
+ARG VPP_SOURCE_REF
+ARG VPP_SOURCE_COMMIT
+ARG VPP_SECURITY_PATCH_SHA256
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list \
+ && printf '%s\n' \
+      'Package: *' \
+      'Pin: origin snapshot.debian.org' \
+      'Pin-Priority: 1001' \
+      > /etc/apt/preferences.d/99-lanrith-snapshot \
+ && apt-get update \
+ && apt-get install --yes --allow-downgrades --no-install-recommends \
+      ca-certificates \
+      git \
+      make \
+      sudo
+
+COPY patches/GHSA-rc9p-89wj-mx7h.patch /patches/GHSA-rc9p-89wj-mx7h.patch
+
+RUN git clone --depth 1 --branch "${VPP_SOURCE_REF}" "${VPP_SOURCE_URL}" /src/vpp \
+ && cd /src/vpp \
+ && test "$(git rev-parse HEAD)" = "${VPP_SOURCE_COMMIT}" \
+ && printf '%s  %s\n' \
+      "${VPP_SECURITY_PATCH_SHA256}" \
+      /patches/GHSA-rc9p-89wj-mx7h.patch | sha256sum --check --strict \
+ && git apply --check /patches/GHSA-rc9p-89wj-mx7h.patch \
+ && git apply /patches/GHSA-rc9p-89wj-mx7h.patch \
+ && grep -Fq 'size_t n_addrs = clib_min ((size_t) vrrp0->n_addrs, max_addrs);' \
+      src/plugins/vrrp/node.c \
+ && grep -Fq 'n_addrs * addr_len);' src/plugins/vrrp/node.c
+
+# VPP v25.06 downloads and patches its external dependencies from the package
+# target. Its upstream dependency graph is not parallel-safe, so this one-time
+# content-addressed cache build stays serial.
+# The upstream v25.06 vpp post-installation script applies 1024 default-sized
+# HugeTLB pages. HugeTLB reservations belong to the selected hardware profile. Remove
+# the upstream default reservation so package installation cannot override it.
+RUN cd /src/vpp \
+ && make UNATTENDED=yes install-dep \
+ && make pkg-deb \
+ && install -d -m 0755 /packages \
+ && vpp_deb="$(find build-root -maxdepth 1 -type f -name 'vpp_*.deb' -print -quit)" \
+ && test -n "$vpp_deb" \
+ && package_root=$(mktemp -d) \
+ && dpkg-deb --raw-extract "$vpp_deb" "$package_root" \
+ && grep -Fqx 'if [ -z "${VPP_INSTALL_SKIP_SYSCTL}" ]' "$package_root/DEBIAN/postinst" \
+ && sed -i 's/^if \[ -z "${VPP_INSTALL_SKIP_SYSCTL}" \]$/if false/' "$package_root/DEBIAN/postinst" \
+ && grep -Fqx 'if false' "$package_root/DEBIAN/postinst" \
+ && dpkg-deb --build --root-owner-group "$package_root" "$vpp_deb" \
+ && find build-root -maxdepth 1 -type f -name '*.deb' -exec install -m 0644 {} /packages/ \; \
+ && cd / \
+ && rm -rf /src/vpp "$package_root" /var/lib/apt/lists/*
+
+FROM ${VPP_BUILDER_OCI}
+
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list
+
+COPY --from=build /packages/ /packages/
+
+CMD ["/bin/true"]

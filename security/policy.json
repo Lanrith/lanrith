@@ -1,0 +1,140 @@
+{
+  "custom_components": {
+    "advisory_records": {},
+    "prohibited_advisories": [],
+    "required": [
+      "pam-rssh",
+      "vpp",
+      "unbound",
+      "tayga-internal",
+      "alloy",
+      "discovery-bridge",
+      "router-policy-collector",
+      "router-policy-helper",
+      "router-policy-reader",
+      "node-exporter"
+    ],
+    "reviewed_exceptions": []
+  },
+  "forbidden_package_suffixes": [
+    "-dbg",
+    "-dbgsym"
+  ],
+  "forbidden_packages": [
+    "inetutils-inetd",
+    "openbsd-inetd",
+    "proftpd-core",
+    "rsh-server",
+    "samba",
+    "telnetd",
+    "tftpd",
+    "vsftpd",
+    "xinetd"
+  ],
+  "image": {
+    "architecture": "x86-64",
+    "distribution": "debian",
+    "name": "lanrith",
+    "release": "trixie"
+  },
+  "local_package_sources": {
+    "alloy": {
+      "source": "alloy",
+      "version": "1.20.0-1"
+    },
+    "discovery-bridge": {
+      "source": "discovery-bridge",
+      "version": "0.1.0"
+    },
+    "lanrith-tayga-internal": {
+      "source": "tayga-internal",
+      "version": "0.9.6-1"
+    },
+    "libcurl3t64-gnutls": {
+      "source": "curl",
+      "version": "8.14.1-2+deb13u7"
+    },
+    "libcurl4t64": {
+      "source": "curl",
+      "version": "8.14.1-2+deb13u7"
+    },
+    "libunbound8": {
+      "source": "unbound",
+      "version": "1.26.1-0+deb13u1"
+    },
+    "libvppinfra": {
+      "source": "vpp",
+      "version": "25.06-release"
+    },
+    "prometheus-node-exporter": {
+      "source": "node-exporter",
+      "version": "1.12.1-1+lanrith1"
+    },
+    "router-policy-collector": {
+      "source": "router-policy-collector",
+      "version": "0.1.0"
+    },
+    "router-policy-helper": {
+      "source": "router-policy-helper",
+      "version": "0.1.0"
+    },
+    "router-policy-reader": {
+      "source": "router-policy-reader",
+      "version": "0.1.0"
+    },
+    "unbound": {
+      "source": "unbound",
+      "version": "1.26.1-0+deb13u1"
+    },
+    "unbound-anchor": {
+      "source": "unbound",
+      "version": "1.26.1-0+deb13u1"
+    },
+    "vpp": {
+      "source": "vpp",
+      "version": "25.06-release"
+    },
+    "vpp-plugin-core": {
+      "source": "vpp",
+      "version": "25.06-release"
+    },
+    "vpp-plugin-dpdk": {
+      "source": "vpp",
+      "version": "25.06-release"
+    }
+  },
+  "required_exact_packages": {
+    "alloy": "1.20.0-1",
+    "discovery-bridge": "0.1.0",
+    "lanrith-tayga-internal": "0.9.6-1",
+    "libcurl3t64-gnutls": "8.14.1-2+deb13u7",
+    "libcurl4t64": "8.14.1-2+deb13u7",
+    "libunbound8": "1.26.1-0+deb13u1",
+    "libvppinfra": "25.06-release",
+    "prometheus-node-exporter": "1.12.1-1+lanrith1",
+    "router-policy-collector": "0.1.0",
+    "router-policy-helper": "0.1.0",
+    "router-policy-reader": "0.1.0",
+    "unbound": "1.26.1-0+deb13u1",
+    "unbound-anchor": "1.26.1-0+deb13u1",
+    "vpp": "25.06-release",
+    "vpp-plugin-core": "25.06-release",
+    "vpp-plugin-dpdk": "25.06-release"
+  },
+  "required_packages": [
+    "avahi-daemon",
+    "bind9",
+    "chrony",
+    "freeradius",
+    "freeradius-ldap",
+    "frr",
+    "kea-dhcp4-server",
+    "linux-image-amd64",
+    "nftables",
+    "openssh-server",
+    "prometheus-node-exporter",
+    "snmpd",
+    "suricata"
+  ],
+  "schema_version": 1
+}

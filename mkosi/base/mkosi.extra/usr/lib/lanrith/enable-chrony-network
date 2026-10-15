@@ -1,0 +1,55 @@
+#!/bin/sh
+# Give Chrony its service source address. The namespace default route is owned
+# by Unbound's required network unit and is deliberately not changed.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+namespace=$lanrith_service_namespace
+
+ip netns list | awk -v expected="$namespace" '$1 == expected { found = 1 } END { exit !found }'
+ip -n "$namespace" link show dev lo >/dev/null
+if [ "$lanrith_wan_mode" = 'standalone_lab' ]; then
+  service_address=$lanrith_chrony_lab_address
+elif [ "$lanrith_wan_mode" = 'existing_network_static' ]; then
+  service_address="$(lanrith_service_gua_service_address 40)/128"
+else
+  attempts=0
+  while ! service_prefix=$(lanrith_service_gua_prefix); do
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 90 ] || {
+      echo 'Chrony network path requires a delegated service prefix.' >&2
+      exit 1
+    }
+    sleep 1
+  done
+  service_address="$(lanrith_service_gua_service_address 40)/128"
+  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  for old_address in $(ip -n "$namespace" -6 -o address show dev lo scope global | \
+      awk -v prefix="$aggregate_start" \
+        '$4 ~ ("^" prefix ":") && $4 ~ /::40\/128$/ { print $4 }'); do
+    ip -n "$namespace" -6 address del "$old_address" dev lo 2>/dev/null || true
+  done
+fi
+
+if [ "$lanrith_wan_mode" != 'standalone_lab' ]; then
+  # Chrony has its own stable egress identity and therefore needs a separate
+  # exact upstream proxy entry. Unbound's required network unit has already
+  # enabled proxy NDP on this WAN link.
+  [ "$(sysctl --values "net.ipv6.conf.$lanrith_wan_interface.proxy_ndp")" = 1 ] || {
+    echo 'Chrony network path requires WAN proxy NDP.' >&2
+    exit 1
+  }
+  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  proxy_address=${service_address%/*}
+  for old_proxy in $(ip -6 neigh show proxy dev "$lanrith_wan_interface" | \
+      awk -v prefix="$aggregate_start:" \
+        '$1 ~ ("^" prefix) && $1 ~ /::40$/ { print $1 }'); do
+    [ "$old_proxy" = "$proxy_address" ] || \
+      ip -6 neigh del proxy "$old_proxy" dev "$lanrith_wan_interface"
+  done
+  ip -6 neigh replace proxy "$proxy_address" \
+    dev "$lanrith_wan_interface"
+fi
+
+ip -n "$namespace" -6 address replace "$service_address" dev lo

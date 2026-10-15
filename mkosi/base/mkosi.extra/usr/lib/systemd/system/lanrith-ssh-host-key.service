@@ -1,0 +1,9 @@
+[Unit]
+Description=Ensure persistent router SSH host identity
+Documentation=man:sshd(8)
+RequiresMountsFor=/var
+Before=ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/lanrith/ensure-ssh-host-key

@@ -1,0 +1,72 @@
+# Public controller-side tool image. The helper derives its local image tag
+# from this file, so package changes create a new cache entry automatically.
+ARG MKOSI_BUILDER_OCI
+FROM ${MKOSI_BUILDER_OCI}
+
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list \
+ && printf '%s\n' \
+      'Package: *' \
+      'Pin: origin snapshot.debian.org' \
+      'Pin-Priority: 1001' \
+      > /etc/apt/preferences.d/99-lanrith-snapshot \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --allow-downgrades --no-install-recommends \
+      erofs-utils \
+      bind9 \
+      bind9-dnsutils \
+      chrony \
+      curl \
+      e2fsprogs \
+      fdisk \
+      freeradius \
+      freeradius-utils \
+      freeradius-ldap \
+      iproute2 \
+      iputils-ping \
+      kea-admin \
+      kea-dhcp4-server \
+      mkosi \
+      mtools \
+      nftables \
+      openssl \
+      python3 \
+      python3-jinja2 \
+      python3-yaml \
+      reprepro \
+      sbsigntool \
+      suricata \
+      shim-signed \
+      tayga \
+      avahi-daemon \
+      apt-utils \
+      binutils \
+      unbound \
+      util-linux \
+ && rm -rf /var/lib/apt/lists/*
+
+# Debian stable currently carries mkosi 25.x, which predates the Snapshot
+# option required by the factory's locked package replay. Install the pinned
+# Debian 27 package after the regular dependency transaction so the builder
+# uses the reviewed interface without an unpinned tool download.
+# Keep the tool artifact on its own immutable snapshot: a runtime security
+# snapshot can stop listing mkosi 27. The package checksum still pins its bytes.
+RUN curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+      --output /tmp/mkosi.deb \
+      https://snapshot.debian.org/archive/debian/20260912T080811Z/pool/main/m/mkosi/mkosi_27-1_all.deb \
+ && printf '%s  %s\n' \
+      374b121fe598b89f1c2e3b99a65b305822b31b75e621ebda1f431a1e306766e9 \
+      /tmp/mkosi.deb | sha256sum --check --strict \
+ && dpkg-deb --extract /tmp/mkosi.deb / \
+ && mkosi --version | grep -Fqx 'mkosi 27' \
+ && rm -f /tmp/mkosi.deb \
+ && rm -rf /var/lib/apt/lists/*

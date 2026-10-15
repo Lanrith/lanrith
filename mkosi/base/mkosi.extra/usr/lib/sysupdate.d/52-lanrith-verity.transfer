@@ -1,0 +1,15 @@
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=regular-file
+Path=/
+PathRelativeTo=explicit
+MatchPattern=lanrith_@v_@u.verity.raw
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=r_@v_verity
+MatchPartitionType=root-verity
+ReadOnly=yes

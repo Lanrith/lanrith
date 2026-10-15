@@ -1,0 +1,9 @@
+# Internal DNS64 NAT64 needs the reviewed UDP zero-checksum behavior absent
+# from Debian 13's tayga package. This exact upstream tag is packaged under a
+# distinct name so the Debian binary continues to serve WAN NAT64 and NAT46.
+TAYGA_SOURCE_URL=https://github.com/apalrd/tayga.git
+TAYGA_SOURCE_REF=0.9.6
+TAYGA_SOURCE_COMMIT=7f00122b75d808f696df0efe481a8c8919ba9bd7
+TAYGA_DEBIAN_VERSION=0.9.6-1
+TAYGA_PACKAGE=lanrith-tayga-internal
+TAYGA_BINARY=/usr/lib/lanrith/tayga-internal

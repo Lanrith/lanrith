@@ -1,0 +1,26 @@
+[Unit]
+Description=Configure the router static-map NAT46 path
+Requires=systemd-networkd.service nftables.service
+After=systemd-networkd.service nftables.service
+
+[Service]
+Type=simple
+# The enabled test stage creates the dedicated TUN and reserved translator
+# routes for one reviewed static map. Forwarding, DNS and service exposure
+# remain separate policy gates.
+ExecCondition=/usr/lib/lanrith/configure-nat46 eligible
+ExecStartPre=/usr/lib/lanrith/configure-nat46
+ExecStart=/usr/sbin/tayga --nodetach --config /etc/tayga-nat46.conf --pidfile /run/tayga-nat46.pid --user tayga --group tayga
+ExecStopPost=/usr/lib/lanrith/configure-nat46 remove
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/tayga-nat46 /run
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETGID CAP_SETUID
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SETGID CAP_SETUID
+
+[Install]
+WantedBy=multi-user.target

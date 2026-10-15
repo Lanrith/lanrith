@@ -1,0 +1,18 @@
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=regular-file
+Path=/
+PathRelativeTo=explicit
+# The partition UUID comes from the signed release filename.  mkosi embeds
+# that UUID in the UKI's verity configuration, so sysupdate must assign it to
+# the inactive target rather than retaining the factory-empty partition UUID.
+MatchPattern=lanrith_@v_@u.verity-sig.raw
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=r_@v_verity_sig
+MatchPartitionType=root-verity-sig
+ReadOnly=yes

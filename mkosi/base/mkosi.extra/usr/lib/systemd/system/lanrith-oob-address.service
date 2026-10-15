@@ -1,0 +1,14 @@
+[Unit]
+Description=Activate the static factory OOB IPv4 address
+Requires=systemd-networkd.service
+After=systemd-networkd.service
+Before=ssh.service lanrith-oob-readiness.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/lanrith/activate-oob-address
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,99 @@
+name: Retained release security
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: retained-security
+  cancel-in-progress: false
+jobs:
+  assess:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Install the reviewed scanner and Debian version tool
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes dpkg
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Reassess retained inventories
+        run: python3 scripts/security-audit.py --output "$RUNNER_TEMP/assessments"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: assessed-inventories
+          path: ${{ runner.temp }}/assessments/
+          if-no-files-found: error
+          retention-days: 7
+  attest:
+    needs: assess
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.assess.outputs.artifact-id }}
+          path: assessments
+          merge-multiple: true
+      - id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assessments/*/security-assessment.json
+      - env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          for file in assessments/*/security-assessment.json; do cp "$BUNDLE" "$file.intoto.jsonl"; done
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-assessments
+          path: assessments/
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: attest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.attest.outputs.artifact-id }}
+          path: assessments
+          merge-multiple: true
+      - name: Publish immutable freshness evidence
+        run: |
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          for directory in assessments/*; do
+            inventory=${directory##*/}
+            [[ "$inventory" =~ ^[0-9a-f]{12}$ ]]
+            gh release create "assessment-$stamp-$inventory" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Security assessment $stamp" --prerelease --notes "Retained inventory security assessment." "$directory"/*
+          done
+      - name: Fail the watchdog signal when any retained release is unsafe
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          reports=[json.loads(p.read_text()) for p in pathlib.Path('assessments').glob('*/security-assessment.json')]
+          assert reports and all(report['result']=='pass' for report in reports)
+          PY

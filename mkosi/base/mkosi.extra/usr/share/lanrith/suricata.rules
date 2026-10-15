@@ -1,0 +1,6 @@
+# Minimal reviewed lab rule set.  This release is detect-only: nftables remains
+# the enforcement layer and Suricata cannot drop or modify packets.  External
+# rule updates are intentionally not enabled until their provenance and budget
+# are approved.
+alert tcp $EXTERNAL_NET any -> $HOME_NET 22 (msg:"HOMELAB inbound SSH attempt"; flow:stateless; sid:1000001; rev:1;)
+alert icmpv6 $EXTERNAL_NET any -> $HOME_NET any (msg:"HOMELAB inbound ICMPv6"; sid:1000002; rev:1;)

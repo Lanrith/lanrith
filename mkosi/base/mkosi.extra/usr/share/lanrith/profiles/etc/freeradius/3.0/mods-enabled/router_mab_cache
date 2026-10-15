@@ -1,0 +1,15 @@
+# This cache never stores passwords or privileged replies. Only a live
+# Authentik Access-Accept for a canonical wired MAB request may populate it.
+cache router_mab_cache {
+    driver = "rlm_cache_rbtree"
+    key = "%{client:shortname}:%{NAS-Port-Id}:%{User-Name}"
+    ttl = 300
+    max_entries = 512
+    add_stats = no
+
+    update {
+        &control:Tunnel-Type := VLAN
+        &control:Tunnel-Medium-Type := IEEE-802
+        &control:Tunnel-Private-Group-ID := "22"
+    }
+}

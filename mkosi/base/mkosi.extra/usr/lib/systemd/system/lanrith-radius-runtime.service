@@ -1,0 +1,20 @@
+[Unit]
+Description=Reconcile RADIUS clients from signed policy and stored credentials
+Requires=var.mount
+After=var.mount
+Before=freeradius.service
+ConditionPathExists=/var/lib/lanrith/radius/production-enabled
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+# No RemainAfterExit: rerun before each daemon start, not just the first boot.
+ExecStart=/usr/lib/lanrith/radius-runtime reconcile
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/lanrith/radius
+RestrictAddressFamilies=AF_UNIX

@@ -1,0 +1,11 @@
+[Unit]
+Description=Record the factory failure after %I fails
+Conflicts=getty.target
+Before=getty.target multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/lanrith/hold-factory-failure-console %I
+StandardOutput=journal
+StandardError=journal

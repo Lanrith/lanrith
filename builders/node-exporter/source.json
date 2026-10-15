@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/prometheus/node_exporter.git",
+  "tag": "v1.12.1",
+  "commit": "6044da783597cc3b57aef7580ddcdcff58a4ee99",
+  "version": "1.12.1",
+  "builder": "docker.io/library/golang@sha256:cf7e928cb9edc2ed8b3cc6fe77ee1ee30b9fea28149564c8840097321a7600ea",
+  "go_version": "go1.26.9",
+  "scanner": "golang.org/x/vuln/cmd/govulncheck@v1.8.0"
+}

@@ -1,0 +1,84 @@
+# Build the internal DNS64 translator separately from Debian's tayga package.
+# The package deliberately owns only /usr/lib/lanrith/tayga-internal;
+# WAN NAT64 and NAT46 continue to invoke Debian's /usr/sbin/tayga.
+ARG TAYGA_BUILDER_OCI
+FROM ${TAYGA_BUILDER_OCI} AS build
+
+ARG TAYGA_SOURCE_URL
+ARG TAYGA_SOURCE_REF
+ARG TAYGA_SOURCE_COMMIT
+ARG TAYGA_DEBIAN_VERSION
+ARG TAYGA_PACKAGE
+ARG TAYGA_BINARY
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list \
+ && printf '%s\n' \
+      'Package: *' \
+      'Pin: origin snapshot.debian.org' \
+      'Pin-Priority: 1001' \
+      > /etc/apt/preferences.d/99-lanrith-snapshot \
+ && apt-get update \
+ && apt-get install --yes --allow-downgrades --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      git
+
+RUN git clone --depth 1 --branch "${TAYGA_SOURCE_REF}" "${TAYGA_SOURCE_URL}" /src/tayga \
+ && cd /src/tayga \
+ && test "$(git rev-parse HEAD)" = "${TAYGA_SOURCE_COMMIT}" \
+ && test "$(git describe --exact-match --tags HEAD)" = "${TAYGA_SOURCE_REF}" \
+ && make \
+ && make test \
+ && ./tayga --help 2>&1 | grep -Fqx "TAYGA version ${TAYGA_SOURCE_REF}"
+
+RUN set -eu; \
+    package_root=$(mktemp -d); \
+    install -D -m 0755 /src/tayga/tayga "$package_root$TAYGA_BINARY"; \
+    install -d -m 0755 "$package_root/DEBIAN" /packages; \
+    printf '%s\n' \
+      "Package: $TAYGA_PACKAGE" \
+      "Version: $TAYGA_DEBIAN_VERSION" \
+      'Section: net' \
+      'Priority: optional' \
+      'Architecture: amd64' \
+      'Depends: libc6 (>= 2.38)' \
+      'Maintainer: Lanrith <root@localhost>' \
+      'Description: TAYGA 0.9.6 for the internal DNS64 NAT64 service' \
+      > "$package_root/DEBIAN/control"; \
+    package_file="/packages/${TAYGA_PACKAGE}_${TAYGA_DEBIAN_VERSION}_amd64.deb"; \
+    dpkg-deb --build --root-owner-group "$package_root" "$package_file"; \
+    test "$(dpkg-deb --field "$package_file" Package)" = "$TAYGA_PACKAGE"; \
+    test "$(dpkg-deb --field "$package_file" Version)" = "$TAYGA_DEBIAN_VERSION"; \
+    test "$(dpkg-deb --field "$package_file" Architecture)" = amd64; \
+    dpkg-deb --fsys-tarfile "$package_file" | tar -t | grep -Fqx './usr/lib/lanrith/tayga-internal'; \
+    sha256sum "$package_file" > /packages/SHA256SUMS
+
+FROM ${TAYGA_BUILDER_OCI}
+
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+      iproute2 \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list
+
+COPY --from=build /packages/ /packages/
+
+CMD ["/bin/true"]

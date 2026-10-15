@@ -1,0 +1,40 @@
+# Pinned native amd64 builder for the PAM-RSSH module embedded in the signed
+# router factory image. The source revision is verified by build-pam-rssh.sh.
+ARG PAM_RSSH_BUILDER_OCI
+FROM ${PAM_RSSH_BUILDER_OCI} AS builder
+
+ARG DEBIAN_BOOKWORM_SNAPSHOT
+ARG DEBIAN_BOOKWORM_SECURITY_SNAPSHOT
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      ca-certificates \
+ && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_BOOKWORM_SNAPSHOT} bookworm main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_BOOKWORM_SECURITY_SNAPSHOT} bookworm-security main" \
+      > /etc/apt/sources.list \
+ && printf '%s\n' \
+      'Package: *' \
+      'Pin: origin snapshot.debian.org' \
+      'Pin-Priority: 1001' \
+      > /etc/apt/preferences.d/99-router-factory-snapshot \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes --allow-downgrades --no-install-recommends \
+      ca-certificates \
+      build-essential \
+      libpam0g-dev \
+      libssl-dev \
+      pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN test "$(rustc --version)" = "rustc 1.88.0 (6b00bc388 2025-06-23)"
+
+WORKDIR /src
+COPY . .
+RUN cargo build --release --locked --jobs 1
+RUN sha256sum /src/Cargo.lock | cut -d' ' -f1 > /cargo-lock.sha256
+
+FROM scratch AS artifact
+COPY --from=builder /src/target/release/libpam_rssh.so /libpam_rssh.so
+COPY --from=builder /cargo-lock.sha256 /cargo-lock.sha256

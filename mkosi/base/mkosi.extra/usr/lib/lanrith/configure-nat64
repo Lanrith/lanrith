@@ -1,0 +1,48 @@
+#!/bin/sh
+# Configure the TAYGA tunnel and its explicit routes for the selected WAN
+# profile. This helper is intentionally limited to the well-known NAT64 prefix
+# and the dedicated dynamic IPv4 pool; it never creates a client IPv4 gateway
+# or a broad route.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+. /usr/lib/lanrith/network-checks.sh
+
+interface=$lanrith_nat64_interface
+
+remove() {
+  if ip link show dev "$interface" >/dev/null 2>&1; then
+    require_translation_tun "$interface" || return 1
+  fi
+  ip -6 route del "$lanrith_nat64_prefix" dev "$interface" 2>/dev/null || true
+  ip route del "$lanrith_nat64_ipv4_pool" dev "$interface" 2>/dev/null || true
+  if ip link show dev "$interface" >/dev/null 2>&1; then
+    ip link set "$interface" down 2>/dev/null || true
+    tayga --rmtun --config /etc/tayga.conf 2>/dev/null || true
+  fi
+}
+
+if [ "${1:-}" = remove ]; then
+  [ "$#" -eq 1 ] || { echo 'Usage: configure-nat64 [remove]' >&2; exit 64; }
+  remove
+  exit 0
+fi
+[ "$#" -eq 0 ] || { echo 'Usage: configure-nat64 [remove]' >&2; exit 64; }
+[ "$lanrith_nat64_enabled" = 1 ] || {
+  echo 'NAT64 is not enabled in the signed profile.' >&2
+  exit 1
+}
+
+if ! ip link show dev "$interface" >/dev/null 2>&1; then
+  tayga --mktun --config /etc/tayga.conf
+fi
+require_translation_tun "$interface" || { echo 'Refusing a non-TUN NAT64 interface.' >&2; exit 1; }
+ip link set "$interface" up
+# Reconcile an interrupted pre-start or an older prefix length on this TUN.
+# Service/transit routes are on other interfaces and are never flushed here.
+ip -4 address flush dev "$interface" scope global
+ip -4 route flush dev "$interface"
+ip address replace "$lanrith_nat64_ipv4_cidr" dev "$interface"
+ip -6 address replace "$lanrith_nat64_ipv6_cidr" dev "$interface"
+ip route replace "$lanrith_nat64_ipv4_pool" dev "$interface"
+ip -6 route replace "$lanrith_nat64_prefix" dev "$interface"

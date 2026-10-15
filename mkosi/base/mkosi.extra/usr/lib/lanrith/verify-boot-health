@@ -1,0 +1,28 @@
+#!/bin/sh
+# The OOB base image is accepted only after its mandatory local control-plane
+# services are active. Later signed images extend this health contract for routing,
+# FRR, and service-plane acceptance before they bless a pending boot entry.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+for unit in nftables.service ssh.service systemd-networkd.service \
+  lanrith-network-base.service lanrith-nat64.service \
+  lanrith-nat64-internal.service \
+  suricata.service unbound.service named.service chrony.service \
+  lanrith-prometheus-node-exporter.service; do
+  systemctl is-active --quiet "$unit"
+done
+
+if [ "$lanrith_dhcpv4_enabled" = 1 ]; then
+  systemctl is-active --quiet kea-dhcp4-server.service
+  /usr/lib/lanrith/verify-kea-sockets
+fi
+
+/usr/lib/lanrith/verify-host-hardening
+
+# A candidate must not become the accepted boot merely because SSH is up.  The
+# factory recovery key is part of the persistent-data recovery boundary, and
+# its explicit local acknowledgement must survive before any image is blessed.
+test -f /var/lib/lanrith-factory/recovery-key-enrolled
+/usr/lib/lanrith/verify-oob-readiness

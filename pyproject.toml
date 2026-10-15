@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lanrith"
+version = "0.1.0"
+description = "Build and verify a router image from declared network intent"
+requires-python = ">=3.11"
+dependencies = ["PyYAML==6.0.3"]
+license = "Apache-2.0"
+
+[project.scripts]
+lanrith = "lanrith.cli:main"
+
+[tool.setuptools]
+packages = ["lanrith"]

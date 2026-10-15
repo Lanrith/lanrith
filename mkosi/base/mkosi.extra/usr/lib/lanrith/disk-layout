@@ -1,0 +1,288 @@
+#!/usr/bin/python3
+"""Read GPT geometry and verify the factory USB's permitted transformation.
+
+All disk access is read-only. The caller must authenticate the reference raw
+image separately. UEFI GPT fields and CRCs follow:
+https://uefi.org/specs/UEFI/2.11/05_GUID_Partition_Table_Format.html
+"""
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import stat
+import struct
+import sys
+import uuid
+import zlib
+
+
+SECTOR_SIZES = (512, 1024, 2048, 4096)
+HEADER = struct.Struct("<8sIIIIQQQQ16sQIII")
+LINUX_FILESYSTEM = "0fc63daf-8483-4772-8e79-3d69d8477de4"
+VAR_TYPE = "4d21b016-b534-45c2-a9fb-5c16e091fd2d"
+FACTORY_TYPES = (
+    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",  # ESP
+    "41092b05-9fc8-4523-994f-2def0408b176",  # x86-64 verity signature
+    "2c7357ed-ebd2-46d9-aec1-23d437ec2bf5",  # x86-64 verity tree
+    "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",  # x86-64 root
+)
+MEDIA_LABEL = "homelab-factory-media"
+MIB = 1024 * 1024
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+class Disk:
+    def __init__(self, path, lock=False):
+        self.fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if lock:
+                # Hold the device lock across inspection and the caller's
+                # narrowly scoped update. The descriptor itself stays read-only.
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.status = os.fstat(self.fd)
+            if stat.S_ISBLK(self.status.st_mode):
+                self.sector_bytes = struct.unpack("I", fcntl.ioctl(self.fd, 0x1268, bytes(4)))[0]  # BLKSSZGET
+                self.size = struct.unpack("Q", fcntl.ioctl(self.fd, 0x80081272, bytes(8)))[0]  # BLKGETSIZE64
+            else:
+                require(stat.S_ISREG(self.status.st_mode), "disk must be a regular file or block device")
+                self.size = self.status.st_size
+                matches = [size for size in SECTOR_SIZES if self.read(size, 8) == b"EFI PART"]
+                require(len(matches) == 1, "raw file has no unambiguous GPT sector size")
+                self.sector_bytes = matches[0]
+            require(self.sector_bytes in SECTOR_SIZES, "unsupported logical sector size")
+            require(self.size % self.sector_bytes == 0, "disk size is not sector aligned")
+            self.sectors = self.size // self.sector_bytes
+            require(self.sectors >= 6, "disk is too short for GPT")
+            self.mbr = self.read(0, self.sector_bytes)
+            self.primary = self.read_header(1)
+            self.backup = self.read_header(self.sectors - 1)
+            self.validate_table()
+        except BaseException:
+            os.close(self.fd)
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *unused):
+        os.close(self.fd)
+
+    def read(self, offset, length):
+        require(0 <= offset <= self.size and 0 <= length <= self.size - offset,
+                "GPT or partition read exceeds disk bounds")
+        result = os.pread(self.fd, length, offset)
+        require(len(result) == length, "short disk read")
+        return result
+
+    def read_header(self, lba):
+        data = self.read(lba * self.sector_bytes, self.sector_bytes)
+        fields = HEADER.unpack_from(data)
+        signature, revision, size, crc, reserved, current, alternate, first, last, guid, array, count, width, array_crc = fields
+        require(signature == b"EFI PART" and revision == 0x10000, "unsupported GPT header")
+        require(size == HEADER.size and reserved == 0, "unsupported GPT header size or reserved field")
+        checked = bytearray(data[:size])
+        checked[16:20] = bytes(4)
+        require(zlib.crc32(checked) == crc, "GPT header checksum mismatch")
+        require(not any(data[size:]), "nonzero GPT header padding")
+        require(current == lba and alternate == (self.sectors - 1 if lba == 1 else 1),
+                "GPT header is not at the expected disk boundary")
+        require(1 < first <= last < self.sectors - 1, "invalid GPT usable range")
+        require(guid != bytes(16), "GPT disk identifier is empty")
+        require(1 <= count <= 4096 and width in (128, 256, 512, 1024, 2048, 4096)
+                and 16384 <= count * width <= MIB, "unsupported or excessive GPT entry array")
+        array_sectors = (count * width + self.sector_bytes - 1) // self.sector_bytes
+        if lba == 1:
+            require(1 < array and array + array_sectors <= first, "primary GPT entries overlap usable space")
+        else:
+            require(last < array and array + array_sectors <= lba, "backup GPT entries overlap usable space")
+        entries = self.read(array * self.sector_bytes, count * width)
+        require(zlib.crc32(entries) == array_crc, "GPT entry-array checksum mismatch")
+        return dict(data=data, size=size, first=first, last=last, guid=guid, array=array,
+                    count=count, width=width, array_sectors=array_sectors, entries=entries)
+
+    def validate_table(self):
+        require(self.mbr[510:512] == b"\x55\xaa", "invalid protective MBR signature")
+        entry = self.mbr[446:462]
+        require(entry[0] == 0 and entry[4] == 0xEE and struct.unpack_from("<I", entry, 8)[0] == 1,
+                "invalid protective MBR partition")
+        require(struct.unpack_from("<I", entry, 12)[0] == min(self.sectors - 1, 0xFFFFFFFF),
+                "protective MBR does not span the disk")
+        require(not any(self.mbr[462:510]) and not any(self.mbr[512:]), "unexpected MBR partition or padding")
+        for key in ("size", "first", "last", "guid", "count", "width", "entries"):
+            require(self.primary[key] == self.backup[key], "primary and backup GPT disagree")
+        self.partitions = []
+        identifiers = set()
+        for index in range(self.primary["count"]):
+            start = index * self.primary["width"]
+            data = self.primary["entries"][start:start + self.primary["width"]]
+            if data[:16] == bytes(16):
+                require(not any(data), "unused GPT entry contains unexpected data")
+                continue
+            type_id, identifier, first, last, attributes = struct.unpack_from("<16s16sQQQ", data)
+            require(identifier != bytes(16) and identifier not in identifiers, "empty or duplicate partition identifier")
+            identifiers.add(identifier)
+            require(self.primary["first"] <= first <= last <= self.primary["last"], "partition exceeds GPT usable bounds")
+            name = data[56:128].decode("utf-16-le").rstrip("\0")
+            require("\0" not in name and not any(data[128:]), "unsupported partition label or entry extension")
+            self.partitions.append(dict(number=index + 1, type=str(uuid.UUID(bytes_le=type_id)),
+                uuid=str(uuid.UUID(bytes_le=identifier)), name=name, first=first, last=last,
+                offset=first * self.sector_bytes, size=(last - first + 1) * self.sector_bytes,
+                attributes=attributes, entry=data))
+        ordered = sorted(self.partitions, key=lambda part: part["first"])
+        require(all(left["last"] < right["first"] for left, right in zip(ordered, ordered[1:])),
+                "GPT partitions overlap")
+
+    def require_factory(self):
+        require([part["number"] for part in self.partitions] == [1, 2, 3, 4]
+                and tuple(part["type"] for part in self.partitions) == FACTORY_TYPES,
+                "factory raw must contain exactly ESP, signature, verity, and root partitions")
+        require(all(left["last"] < right["first"] for left, right in zip(self.partitions, self.partitions[1:])),
+                "factory partitions are out of order")
+
+    def payload_start(self):
+        return ((self.size + MIB - 1) // MIB) * MIB // self.sector_bytes
+
+    def plan_var(self, number, target_bytes):
+        require(target_bytes > 0 and target_bytes % self.sector_bytes == 0,
+                "var target must be positive and logical-sector aligned")
+        partitions = [part for part in self.partitions if part["name"] == "var"]
+        require(len(partitions) == 1 and partitions[0]["number"] == number
+                and partitions[0]["type"] == VAR_TYPE, "var label, number, or type is inconsistent")
+        partition = partitions[0]
+        plan = {key: partition[key] for key in ("number", "uuid", "offset", "size", "first", "last")}
+        plan.update(sector_bytes=self.sector_bytes, target_bytes=target_bytes,
+                    target_sectors=target_bytes // self.sector_bytes,
+                    target_last=partition["first"] + target_bytes // self.sector_bytes - 1,
+                    last_usable=self.primary["last"], action="unchanged", reason="")
+        if partition["size"] >= target_bytes:
+            return plan  # Never shrink an existing partition.
+        if any(part["first"] > partition["first"] for part in self.partitions):
+            plan.update(action="defer", reason="var is not the final partition")
+        elif plan["target_last"] > self.primary["last"]:
+            plan.update(action="defer", reason="GPT has insufficient trailing usable space")
+        else:
+            plan["action"] = "grow"
+        return plan
+
+
+def verify_var_growth(before, after, plan):
+    """Only the selected entry's last LBA and the corresponding CRCs may change."""
+    require(before.size == after.size and before.sector_bytes == after.sector_bytes
+            and before.mbr == after.mbr, "disk geometry or MBR changed during var growth")
+    for copy in ("primary", "backup"):
+        headers = [bytearray(getattr(disk, copy)["data"]) for disk in (before, after)]
+        for header in headers:
+            header[16:20] = bytes(4)
+            header[88:92] = bytes(4)
+        require(headers[0] == headers[1], "unexpected GPT header change during var growth")
+    entries = bytearray(before.primary["entries"])
+    offset = (plan["number"] - 1) * before.primary["width"] + 40
+    struct.pack_into("<Q", entries, offset, plan["target_last"])
+    require(entries == after.primary["entries"], "unexpected partition change during var growth")
+    require(after.plan_var(plan["number"], plan["target_bytes"])["size"] == plan["target_bytes"],
+            "var partition did not reach its exact target size")
+
+
+def verify_partition_device(disk, partition, path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        status = os.fstat(descriptor)
+        require(stat.S_ISBLK(status.st_mode), "payload path is not a block device")
+        node = Path(f"/sys/dev/block/{os.major(status.st_rdev)}:{os.minor(status.st_rdev)}").resolve(strict=True)
+        require((node.parent / "dev").read_text().strip() ==
+                f"{os.major(disk.status.st_rdev)}:{os.minor(disk.status.st_rdev)}", "payload has the wrong parent disk")
+        require(int((node / "partition").read_text()) == partition["number"], "payload partition number is stale")
+        # Sysfs start/size are always in 512-byte units, including on 4Kn.
+        require(int((node / "start").read_text()) * 512 == partition["offset"]
+                and int((node / "size").read_text()) * 512 == partition["size"],
+                "kernel payload geometry differs from the verified GPT")
+        size = struct.unpack("Q", fcntl.ioctl(descriptor, 0x80081272, bytes(8)))[0]
+        require(size == partition["size"], "payload block-device capacity differs from GPT")
+    finally:
+        os.close(descriptor)
+
+
+def verify_usb(raw, usb):
+    raw.require_factory()
+    require(raw.sector_bytes == usb.sector_bytes and usb.size > raw.size, "USB geometry is incompatible with factory raw")
+    require(len(usb.partitions) == 5, "USB must contain four boot partitions and one payload partition")
+    # These are the only primary-header fields changed by backup relocation
+    # and appending the payload. Both complete GPT copies were checked above.
+    headers = [bytearray(disk.primary["data"]) for disk in (raw, usb)]
+    for header in headers:
+        for offset, size in ((16, 4), (32, 8), (48, 8), (88, 4)):
+            header[offset:offset + size] = bytes(size)
+    require(headers[0] == headers[1], "USB changed immutable GPT header fields")
+    mbrs = [bytearray(disk.mbr) for disk in (raw, usb)]
+    for mbr in mbrs:
+        mbr[451:454] = bytes(3)  # protective partition's ending CHS
+        mbr[458:462] = bytes(4)  # protective partition's length
+    require(mbrs[0] == mbrs[1], "USB changed immutable protective MBR fields")
+    require(usb.backup["array"] + usb.backup["array_sectors"] == usb.sectors - 1
+            and usb.primary["last"] == usb.backup["array"] - 1, "USB backup GPT is not at the end of usable space")
+    for original, actual in zip(raw.partitions, usb.partitions[:4]):
+        require(original["number"] == actual["number"] and original["entry"] == actual["entry"],
+                f"USB changed immutable partition {original['number']} metadata")
+        for relative in range(0, original["size"], 4 * MIB):
+            length = min(4 * MIB, original["size"] - relative)
+            offset = original["offset"] + relative
+            require(raw.read(offset, length) == usb.read(offset, length),
+                    f"USB changed immutable partition {original['number']} contents")
+    payload = usb.partitions[4]
+    require(payload["number"] == 5 and payload["type"] == LINUX_FILESYSTEM
+            and payload["name"] == MEDIA_LABEL and payload["attributes"] == 0,
+            "USB has an unexpected payload partition")
+    require(payload["first"] == raw.payload_start() and payload["last"] == usb.primary["last"],
+            "USB payload does not occupy the intended trailing space")
+    return {key: value for key, value in payload.items() if key != "entry"}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    target = subcommands.add_parser("check-target", help="check geometry before any write; print explicit sfdisk payload bounds")
+    target.add_argument("raw")
+    target.add_argument("sector_bytes", type=int, choices=SECTOR_SIZES)
+    target.add_argument("disk_bytes", type=int)
+    usb = subcommands.add_parser("verify-usb", help="verify GPT and every immutable boot partition; print payload geometry")
+    usb.add_argument("raw")
+    usb.add_argument("usb")
+    usb.add_argument("payload_device", nargs="?")
+    growth = subcommands.add_parser("plan-var", help="report a non-mutating var growth/defer plan")
+    growth.add_argument("disk")
+    growth.add_argument("number", type=int)
+    growth.add_argument("target_bytes", type=int)
+    args = parser.parse_args()
+    try:
+        if args.command == "plan-var":
+            with Disk(args.disk) as disk:
+                print(json.dumps(disk.plan_var(args.number, args.target_bytes)))
+            return 0
+        with Disk(args.raw) as raw:
+            if args.command == "check-target":
+                raw.require_factory()
+                require(args.sector_bytes == raw.sector_bytes, "target logical sector size does not match the signed raw image")
+                require(args.disk_bytes % args.sector_bytes == 0, "target capacity is not sector aligned")
+                last = args.disk_bytes // args.sector_bytes - raw.primary["array_sectors"] - 2
+                require(raw.payload_start() <= last, "target has no space for the factory payload")
+                print(f"start={raw.payload_start()}, size={last - raw.payload_start() + 1}")
+            else:
+                with Disk(args.usb) as disk:
+                    payload = verify_usb(raw, disk)
+                    if args.payload_device:
+                        verify_partition_device(disk, payload, args.payload_device)
+                    print(json.dumps(dict(sector_bytes=disk.sector_bytes, **payload)))
+    except (OSError, ValueError) as error:
+        print(f"Disk layout verification failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

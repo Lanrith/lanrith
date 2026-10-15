@@ -1,0 +1,82 @@
+#!/bin/sh
+# Read-only operator status for the immutable router.  It never changes
+# addresses, routes, firewall state, service state, or persistent data.  The
+# optional --check form verifies the accepted boot-health result. Root also
+# reruns the complete signed network assertion; an unprivileged operator relies
+# on the active root-run verifier because hardened sysctls are not all readable.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+usage() {
+  printf '%s\n' 'Usage: lanrith-status [--check] [--upstream]' >&2
+  exit 64
+}
+
+check=false
+upstream=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check) check=true ;;
+    --upstream) upstream=true ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+external_dns_state() {
+  # This is an explicit read-only operator probe, not a boot prerequisite.
+  # It passes through the router's own Unbound listener so a successful answer
+  # proves a currently usable upstream DNS path rather than merely a route.
+  if answer=$(timeout --foreground --kill-after=1s 3s \
+      dig +tcp +time=2 +tries=1 +short \
+      "@$lanrith_unbound_service_ipv4_address" example.com. A) && [ -n "$answer" ]; then
+    printf '%s\n' 'external-dns=available'
+  else
+    printf '%s\n' 'external-dns=unavailable'
+  fi
+}
+
+image_version='unknown'
+if [ -r /etc/lanrith-image-version ]; then
+  image_version=$(sed -n '1p' /etc/lanrith-image-version)
+elif [ -r /usr/lib/os-release ]; then
+  # shellcheck disable=SC1091
+  . /usr/lib/os-release
+  image_version=${IMAGE_VERSION:-unknown}
+fi
+
+failed_units=$(systemctl --failed --no-legend 2>/dev/null | awk 'NF { count++ } END { print count + 0 }')
+printf 'image=%s\n' "$image_version"
+printf 'boot-complete=%s\n' "$(systemctl is-active boot-complete.target 2>/dev/null || true)"
+printf 'failed-units=%s\n' "$failed_units"
+for unit in ssh.service nftables.service systemd-networkd.service \
+  lanrith-network-base.service unbound.service named.service chrony.service \
+  vpp.service; do
+  printf '%s=%s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || true)"
+done
+
+printf 'root='; findmnt -no SOURCE,FSTYPE,OPTIONS / 2>/dev/null || true
+printf 'var='; findmnt -no SOURCE,FSTYPE,OPTIONS /var 2>/dev/null || true
+printf 'oob='; ip -4 -o address show dev "$lanrith_oob_interface" 2>/dev/null || true
+printf 'ipv4-default='; ip -4 route show default 2>/dev/null || true
+printf 'ipv6-default='; ip -6 route show default 2>/dev/null || true
+if [ "$upstream" = true ]; then
+  external_dns_state
+else
+  printf '%s\n' 'external-dns=not-assessed'
+fi
+
+if [ "$check" = true ]; then
+  [ "$failed_units" = 0 ]
+  test "$(systemctl is-active boot-complete.target)" = active
+  test "$(systemctl is-active ssh.service)" = active
+  test "$(systemctl is-active systemd-veritysetup@root.service)" = active
+  /usr/lib/lanrith/verify-oob-readiness
+  if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+    /usr/lib/lanrith/verify-network-base
+  else
+    test "$(systemctl is-active lanrith-network-base.service)" = active
+  fi
+  printf '%s\n' 'router-status-check=passed'
+fi

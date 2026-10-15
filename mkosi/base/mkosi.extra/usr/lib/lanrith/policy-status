@@ -1,0 +1,71 @@
+#!/usr/bin/python3
+"""Read one fixed policy status endpoint as the unprivileged operator."""
+import argparse
+import json
+import os
+from pathlib import Path
+import pwd
+import socket
+import stat
+import struct
+import time
+
+
+def receive(connection, length):
+    data = bytearray()
+    while len(data) < length:
+        part = connection.recv(length - len(data))
+        if not part:
+            raise ValueError('Incomplete policy status response')
+        data.extend(part)
+    return data
+
+
+def query():
+    path = Path('/run/router-policy-ipc/status.sock')
+    info = path.lstat()
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid or stat.S_IMODE(info.st_mode) != 0o660:
+        raise ValueError('Policy status endpoint metadata differs')
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        connection.connect(str(path))
+        _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if uid:
+            raise ValueError('Policy status peer is not the root helper')
+        data = b'{"schema_version":1,"operation":"status"}'
+        connection.sendall(struct.pack('!I', len(data)) + data)
+        length, = struct.unpack('!I', receive(connection, 4))
+        if not 1 <= length <= 1024 * 1024:
+            raise ValueError('Policy status response exceeds its bound')
+        result = json.loads(receive(connection, length))
+    if result.get('schema_version') != 1 or result.get('code') or not isinstance(result.get('report'), dict):
+        raise ValueError('Policy status failed')
+    return result['report']
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--wait', type=int, default=0, choices=range(121), metavar='SECONDS')
+    wait = parser.parse_args().wait
+    if os.geteuid() != pwd.getpwnam('router-policy-operator').pw_uid:
+        raise PermissionError('Use the separate policy operator identity')
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            report = query()
+            valid = (report.get('mode') == 'enforce' and report.get('helper_state') == 'ready' and
+                     report.get('floor_state') == 'matches_pinned_contract' and not report.get('last_failure') and
+                     report.get('directory_age_ms') is not None and 0 <= report['directory_age_ms'] < 90000)
+            if valid or not wait:
+                print(json.dumps(report, sort_keys=True))
+                return 0 if valid else 1
+        except (OSError, ValueError, KeyError, TypeError):
+            if not wait:
+                raise
+        if time.monotonic() >= deadline:
+            raise TimeoutError('Policy enforcement did not become ready')
+        time.sleep(1)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

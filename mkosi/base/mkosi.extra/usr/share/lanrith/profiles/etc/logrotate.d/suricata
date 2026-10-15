@@ -1,0 +1,16 @@
+/var/log/suricata/*.log
+/var/log/suricata/*.json
+{
+    rotate 4
+    weekly
+    missingok
+    compress
+    delaycompress
+    create 0640 root root
+    sharedscripts
+    postrotate
+        if [ -s /var/run/suricata.pid ]; then
+            /bin/kill -HUP "$(cat /var/run/suricata.pid)" 2>/dev/null || true
+        fi
+    endscript
+}

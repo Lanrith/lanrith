@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Apply image-owned BIND runtime policy; input values arrive only on stdin."""
+
+import json
+import signal
+import subprocess
+import sys
+
+from bind_service import apply, load_policy
+from bind_runtime import State, read_json
+from tsig import TSIGError
+
+
+def interrupted(number, _frame):
+    raise TSIGError('BIND activation was interrupted.', 128 + number)
+
+
+for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(number, interrupted)
+try:
+    policy = load_policy()
+    if sys.argv[1:] == ['protocol']:
+        print('bind-runtime-v1')
+    elif sys.argv[1:] == ['status']:
+        state = State()
+        try:
+            state.directory(state.root)
+            pending = state.metadata()
+        except FileNotFoundError:
+            pending = None
+        print(json.dumps({'journal_present': pending is not None,
+                          'phase': pending['phase'] if pending else None,
+                          'writers': len(pending['names']) if pending else 0}))
+    elif sys.argv[1:] == ['apply']:
+        payload = sys.stdin.buffer.read(131073)
+        if len(payload) > 131072:
+            raise TSIGError('BIND runtime request exceeds its size limit.')
+        try:
+            requests = read_json(payload)
+        except (ValueError, UnicodeError) as error:
+            raise TSIGError('BIND runtime request is not valid unambiguous JSON.') from error
+        print(json.dumps(apply(policy, requests)))
+    else:
+        raise TSIGError('BIND runtime requires protocol, status, or apply.', 64)
+except TSIGError as error:
+    print(str(error), file=sys.stderr)
+    raise SystemExit(error.code)
+except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+    print('BIND runtime failed; inspect the public service status and retry managed recovery.', file=sys.stderr)
+    raise SystemExit(70)

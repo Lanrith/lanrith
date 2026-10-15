@@ -1,0 +1,185 @@
+name: Owner image build
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: owner-image-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind the trusted reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_WORKFLOW_COMMIT=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - name: Check out the pinned reusable workflow's own implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - name: Install the config parser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes python3-yaml
+      - name: Verify the platform and compile the request
+        run: |
+          python3 tools/scripts/consumer.py preflight --owner owner \
+            --bundle "$RUNNER_TEMP/platform" --request "$RUNNER_TEMP/request.json"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qualified-request
+          path: ${{ runner.temp }}/request.json
+          if-no-files-found: error
+          retention-days: 1
+  sign:
+    if: inputs.publish && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: lanrith-signing
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind the trusted reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_WORKFLOW_COMMIT=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.preflight.outputs.artifact-id }}
+          path: request
+          merge-multiple: true
+      - name: Install the config parser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes python3-yaml
+      - name: Check repository and signing environment protections
+        run: python3 tools/scripts/consumer.py check-setup --owner owner
+      - name: Reverify the request and fetch the builder before accessing keys
+        run: |
+          python3 tools/scripts/consumer.py qualify-signing --owner owner --bundle "$RUNNER_TEMP/platform" \
+            --request request/request.json
+      - name: Assemble and sign admitted inputs offline
+        env:
+          LANRITH_BOOT_KEY: ${{ secrets.LANRITH_BOOT_KEY }}
+          LANRITH_BOOT_CERTIFICATE: ${{ secrets.LANRITH_BOOT_CERTIFICATE }}
+          LANRITH_SERIAL_PASSPHRASE_HASH: ${{ secrets.LANRITH_SERIAL_PASSPHRASE_HASH }}
+        run: |
+          python3 tools/scripts/consumer.py assemble --owner owner --bundle "$RUNNER_TEMP/platform" \
+            --request request/request.json --output "$RUNNER_TEMP/release"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-owner-image
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+          retention-days: 7
+  evidence:
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: lanrith-evidence
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind the trusted reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_WORKFLOW_COMMIT=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.sign.outputs.artifact-id }}
+          path: release
+          merge-multiple: true
+      - name: Install the config parser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes python3-yaml
+      - name: Verify signing protections
+        run: python3 tools/scripts/consumer.py check-setup --owner owner
+      - name: Sign evidence without executing an image or builder
+        env:
+          LANRITH_EVIDENCE_KEY: ${{ secrets.LANRITH_EVIDENCE_KEY }}
+          LANRITH_EVIDENCE_CERTIFICATE: ${{ secrets.LANRITH_EVIDENCE_CERTIFICATE }}
+        run: python3 tools/scripts/private-evidence.py --owner owner --artifacts release
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: attested-owner-image
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: evidence
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.evidence.outputs.artifact-id }}
+          path: release
+          merge-multiple: true
+      - name: Publish the private deployment release
+        run: |
+          sequence=$(python3 -c 'import json; v=json.load(open("release/deployment.json"))["deployment_sequence"]; assert type(v) is int and 1 <= v <= 999999999; print(v)')
+          gh release create "deployment-$sequence" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Router deployment $sequence" --notes "Owner-signed image with private provenance." release/*

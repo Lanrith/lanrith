@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect secret-free router health metrics
+Requires=var.mount
+After=var.mount
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/lanrith/collect-metrics
+ExecStopPost=/usr/lib/lanrith/collect-metrics --on-stop
+TimeoutStartSec=25s
+TimeoutStopSec=2s
+KillMode=control-group

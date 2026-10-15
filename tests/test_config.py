@@ -1,0 +1,87 @@
+"""Exercise independent topologies, privacy boundaries and configuration failures."""
+
+import copy
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+from lanrith import config
+from lanrith.release import ReleaseError
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.example = config.load(ROOT / 'examples/minimal.yaml')
+
+    def test_independent_topologies_have_explicit_management_and_no_cross_network_default(self):
+        for example in ('minimal.yaml', 'segmented.yaml'):
+            value = config.load(ROOT / 'examples' / example)
+            files = config.render(value)
+            firewall = files['etc/nftables.conf']
+            self.assertIn('policy drop;', firewall)
+            self.assertIn('chain source_guard', firewall)
+            self.assertIn('iifname', firewall)
+            self.assertEqual(json.loads(files['usr/share/lanrith/resolved.json']), value)
+            for network in value['networks'].values():
+                self.assertIn(network['name'], firewall)
+            if example == 'segmented.yaml':
+                self.assertNotIn('oifname "lan.20" accept', firewall)
+                self.assertIn('iifname "lan.10" tcp dport 22 accept', firewall)
+                self.assertNotIn('iifname "lan.20" tcp dport 22 accept', firewall)
+
+    def test_explicit_connection_is_generated_without_widening_other_ports(self):
+        value = config.load(ROOT / 'examples/segmented.yaml')
+        value['access']['between_networks'] = [{'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}]
+        firewall = config.render(value)['etc/nftables.conf']
+        self.assertIn('iifname "lan.10" oifname "lan.20" tcp dport { 443 } accept', firewall)
+        self.assertNotIn('tcp dport { 80', firewall)
+
+    def test_duplicate_yaml_unknown_fields_and_recursive_yaml_are_rejected(self):
+        for data in ('schema: 1\nschema: 1\n', 'schema: &recursive [*recursive]\n'):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / 'input.yaml'
+                path.write_text(data)
+                with self.assertRaises(ReleaseError):
+                    config.load(path)
+        value = copy.deepcopy(self.example)
+        value['administration']['password'] = 'never-log-this'
+        with self.assertRaises(ReleaseError) as caught:
+            config.normalize(value)
+        self.assertNotIn('never-log-this', str(caught.exception))
+
+    def test_invalid_allocations_hardware_and_features_are_rejected(self):
+        mutations = (
+            lambda value: value['hardware'].update(architecture='arm64'),
+            lambda value: value['hardware']['interfaces']['lan']['match'].update(mac='bad\nselector'),
+            lambda value: value['networks']['home'].update(interface='wan'),
+            lambda value: value['networks']['home']['dhcp4'].update(pool=['192.168.10.1', '192.168.10.200']),
+            lambda value: value['services'].update(vpp={'enabled': True}),
+            lambda value: value['services'].update(policy={'enabled': True, 'configuration': 'missing'}),
+            lambda value: value['services'].update(dns={'enabled': False}),
+            lambda value: value['administration'].update(networks=[]),
+            lambda value: value['networks'].update(other=copy.deepcopy(value['networks']['home'])),
+            lambda value: value['hardware'].update(boot={'secure_boot': 'false'}),
+        )
+        for mutate in mutations:
+            value = copy.deepcopy(self.example)
+            mutate(value)
+            with self.subTest(mutation=mutate), self.assertRaises((ReleaseError, ValueError)):
+                config.normalize(value)
+
+    def test_output_is_exclusive_and_sudo_policy_is_protected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'rendered'
+            digest = config.write(self.example, output)
+            self.assertEqual(len(digest), 64)
+            self.assertEqual((output / 'etc/sudoers.d/60-lanrith').stat().st_mode & 0o777, 0o440)
+            self.assertIn('PermitRootLogin no', (output/'etc/ssh/sshd_config.d/00-lanrith.conf').read_text())
+            with self.assertRaises(ReleaseError):
+                config.write(self.example, output)
+
+
+if __name__ == '__main__':
+    unittest.main()

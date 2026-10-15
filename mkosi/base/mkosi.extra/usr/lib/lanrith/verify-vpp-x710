@@ -1,0 +1,54 @@
+#!/bin/sh
+# Prove that VPP owns the exact X710 while keeping its interface down and
+# without a default route. This is not an edge-routing configuration.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+. /usr/lib/lanrith/network-checks.sh
+
+bdf=$lanrith_vpp_bdf
+expected_group=$lanrith_vpp_iommu_group
+device="/sys/bus/pci/devices/$bdf"
+
+[ -d "$device" ]
+[ "$(readlink -f "$device/iommu_group")" = "/sys/kernel/iommu_groups/$expected_group" ]
+[ "$(find "/sys/kernel/iommu_groups/$expected_group/devices" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]
+[ "$(basename "$(readlink -f "$device/driver")")" = vfio-pci ]
+[ ! -d "$device/net" ]
+test -c /dev/vfio/vfio
+test -c "/dev/vfio/$expected_group"
+
+systemctl is-active --quiet lanrith-vpp-x710.service
+systemctl is-active --quiet vpp.service
+test -x /usr/bin/vppctl
+
+test -f /etc/vpp/startup.conf
+grep -Fqx "  uio-driver vfio-pci" /etc/vpp/startup.conf
+grep -Fqx "  dev $bdf {" /etc/vpp/startup.conf
+grep -Fqx "    name $lanrith_vpp_interface" /etc/vpp/startup.conf
+
+vpp_interface_is_down() {
+  require_vpp_interface_state /run/vpp/cli.sock "$lanrith_vpp_interface" down
+}
+
+# systemd marks VPP active when its process starts; its CLI socket and the
+# named DPDK interface can become ready a short time later on real hardware.
+# Wait for both inside network-base's single inherited readiness deadline.
+# Invalid VPP output and a timed-out CLI remain named non-retryable failures.
+router_wait_for vpp_interface_is_down
+
+# Loading a packaged plugin is an executable-code decision. Keep the runtime
+# set equal to the three plugins needed by the signed ownership and service
+# attachment checks. The ping plugin supplies only the bounded IPv4/IPv6
+# reachability probes; in particular, do not load the dormant VRRP parser.
+plugin_table=$(vppctl_bounded -s /run/vpp/cli.sock show plugins)
+loaded_plugins=$(printf '%s\n' "$plugin_table" | awk '
+  $1 ~ /^[0-9]+[.]$/ { print $2 }
+' | LC_ALL=C sort)
+expected_plugins=$(printf '%s\n' af_packet_plugin.so dpdk_plugin.so ping_plugin.so)
+[ "$loaded_plugins" = "$expected_plugins" ]
+
+router_wait_for require_vpp_drop_default /run/vpp/cli.sock 4
+router_wait_for require_vpp_drop_default /run/vpp/cli.sock 6
+
+echo 'VPP X710 ownership base verified.'

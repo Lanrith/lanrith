@@ -1,0 +1,89 @@
+#!/bin/sh
+# Enroll one high-entropy LUKS recovery key for the factory /var volume.
+#
+# This program is started only by the first-boot serial-console service. It accepts
+# no arguments, never reads a secret from a file or environment, and directs
+# systemd-cryptenroll's one-time recovery-key output only to the one console
+# selected serial console. The marker records completion, not the
+# key itself.
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  echo 'Recovery-key enrollment does not accept arguments.' >&2
+  exit 64
+fi
+
+case "$(tty 2>/dev/null || true)" in
+  /dev/ttyS0) ;;
+  *)
+    echo 'Recovery-key enrollment requires the motherboard serial console.' >&2
+    exit 1
+    ;;
+esac
+
+state_dir=/var/lib/lanrith-factory
+completion_marker=$state_dir/recovery-key-enrolled
+slot_marker=/var/lib/lanrith/slots-initialized
+var_device=/dev/disk/by-partlabel/var
+
+if [ -e "$completion_marker" ]; then
+  echo 'Recovery-key enrollment was already completed.' >&2
+  exit 1
+fi
+if [ ! -e "$slot_marker" ]; then
+  echo 'A/B slot initialization did not complete; recovery-key enrollment is unavailable.' >&2
+  exit 1
+fi
+if [ ! -b "$var_device" ]; then
+  echo 'The factory var partition is unavailable.' >&2
+  exit 1
+fi
+if ! cryptsetup isLuks "$var_device"; then
+  echo 'The factory var partition is not a LUKS volume.' >&2
+  exit 1
+fi
+
+has_recovery_slot() {
+  # A failed acknowledgement or power loss can happen after cryptenroll has
+  # added a key slot but before this program records its completion marker.
+  # Query LUKS token metadata before generating anything, so a retry never
+  # adds a second recovery key. The listing itself carries no key material.
+  systemd-cryptenroll "$var_device" 2>/dev/null | \
+    awk '$2 == "recovery" { found = 1 } END { exit !found }'
+}
+
+notice() {
+  printf '<6>lanrith-recovery: %s\n' "$1" > /dev/kmsg 2>/dev/null || true
+}
+
+if has_recovery_slot; then
+  printf '%s\n' 'An offline recovery key is already enrolled; no second key will be generated.'
+  notice 'an offline recovery key was already enrolled; awaiting local acknowledgement.'
+else
+  printf '%s\n' 'Generating the offline recovery key. Record it outside this router.'
+  notice 'generating the offline recovery key on the local console.'
+  # systemd-cryptenroll writes the generated high-entropy recovery key to this
+  # console. Do not redirect this command to the journal, a file, or a network
+  # session. TPM access is used only to authorize adding the recovery slot.
+  systemd-cryptenroll --unlock-tpm2-device=auto --recovery-key "$var_device"
+  notice 'offline recovery key generation completed; awaiting local acknowledgement.'
+fi
+
+printf '%s\n' 'After recording the key offline, type RECOVERY-KEY-STORED and press Enter.'
+IFS= read -r confirmation
+case "$confirmation" in
+  RECOVERY-KEY-STORED|recovery-key-stored) ;;
+  *)
+    echo 'Recovery-key enrollment was not confirmed; factory setup remains incomplete.' >&2
+    exit 1
+    ;;
+esac
+
+install -d -m 0700 "$state_dir"
+umask 077
+: > "$completion_marker"
+chmod 0600 "$completion_marker"
+logger -p authpriv.notice -t lanrith-recovery \
+  'offline recovery key enrolled for the factory var volume'
+notice 'recovery-key enrollment completed.'
+printf '%s\n' 'Recovery-key enrollment completed.'

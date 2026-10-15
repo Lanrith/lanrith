@@ -1,0 +1,42 @@
+#!/bin/sh
+# Keep the factory OOB address available even before the physical link reports
+# carrier. The image owns exactly one MAC and one IPv4 address; it never adds a
+# route, gateway, bridge, forwarding rule, or a second interface address.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+expected_mac=$lanrith_oob_mac_address
+expected_cidr=$lanrith_oob_ipv4_cidr
+interface=''
+
+for candidate in /sys/class/net/*; do
+  [ -r "$candidate/address" ] || continue
+  candidate_mac=$(tr 'A-F' 'a-f' < "$candidate/address")
+  if [ "$candidate_mac" = "$expected_mac" ]; then
+    [ -z "$interface" ] || {
+      echo 'Factory OOB activation found multiple matching interfaces.' >&2
+      exit 1
+    }
+    interface=${candidate##*/}
+  fi
+done
+
+[ -n "$interface" ] || {
+  echo 'Factory OOB activation did not detect the configured NIC MAC.' >&2
+  exit 1
+}
+
+ipv6_disable_path="/proc/sys/net/ipv6/conf/$interface/disable_ipv6"
+[ -w "$ipv6_disable_path" ] || {
+  echo 'Factory OOB activation cannot disable IPv6 on the configured NIC.' >&2
+  exit 1
+}
+# OOB is deliberately IPv4-only.  This kernel control is explicit because a
+# link-local IPv6 address can otherwise appear before networkd applies the
+# static profile, even when IPv6AcceptRA and LinkLocalAddressing are disabled.
+printf '1\n' > "$ipv6_disable_path"
+
+ip link set dev "$interface" up
+ip -4 address replace "$expected_cidr" dev "$interface"
+echo 'Factory OOB address activation completed.'

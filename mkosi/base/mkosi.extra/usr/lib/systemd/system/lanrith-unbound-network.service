@@ -1,0 +1,12 @@
+[Unit]
+Description=Enable the constrained Unbound namespace path
+Requires=lanrith-service-namespace.service nftables.service
+After=lanrith-service-namespace.service nftables.service
+Before=unbound.service
+PartOf=unbound.service lanrith-service-namespace.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/lanrith/enable-unbound-network
+ExecStop=/usr/lib/lanrith/disable-unbound-network

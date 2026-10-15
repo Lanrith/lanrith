@@ -1,0 +1,12 @@
+#!/bin/sh
+# Prepare-script bytes are part of mkosi's package-cache identity. Reserve
+# the deployed service IDs in mkosi.skeleton and reject an older cached tree
+# that allocated them differently, before signing or accessing live state.
+set -eu
+grep -Eq '^root:[x*]:0:0:' "$BUILDROOT/etc/passwd"
+grep -Eq '^root:[x*]:0:' "$BUILDROOT/etc/group"
+grep -Eq '^bind:x:109:113:' "$BUILDROOT/etc/passwd"
+grep -Eq '^prometheus:x:100:101:' "$BUILDROOT/etc/passwd"
+grep -Fxq 'prometheus:x:101:' "$BUILDROOT/etc/group"
+grep -Eq '^freerad:x:101:102:' "$BUILDROOT/etc/passwd"
+grep -Fxq 'freerad:x:102:' "$BUILDROOT/etc/group"

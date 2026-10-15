@@ -1,0 +1,31 @@
+#!/bin/sh
+# Remove only Chrony's service source address when the service stops.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+namespace=$lanrith_service_namespace
+if [ "$lanrith_wan_mode" != 'standalone_lab' ] && \
+    ip link show dev "$lanrith_wan_interface" >/dev/null 2>&1; then
+  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  for proxy_address in $(ip -6 neigh show proxy \
+      dev "$lanrith_wan_interface" | awk -v prefix="$aggregate_start:" \
+        '$1 ~ ("^" prefix) && $1 ~ /::40$/ { print $1 }'); do
+    ip -6 neigh del proxy "$proxy_address" \
+      dev "$lanrith_wan_interface" 2>/dev/null || true
+  done
+fi
+
+if ip netns list | awk -v expected="$namespace" '$1 == expected { found = 1 } END { exit !found }'; then
+  if [ "$lanrith_wan_mode" = 'standalone_lab' ]; then
+    ip -n "$namespace" -6 address del "$lanrith_chrony_lab_address" \
+      dev lo 2>/dev/null || true
+  else
+    aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+    for address in $(ip -n "$namespace" -6 -o address show dev lo scope global | \
+        awk -v prefix="$aggregate_start" \
+          '$4 ~ ("^" prefix ":") && $4 ~ /::40\/128$/ { print $4 }'); do
+      ip -n "$namespace" -6 address del "$address" dev lo 2>/dev/null || true
+    done
+  fi
+fi

@@ -1,0 +1,133 @@
+#!/bin/sh
+# Verify the signed service-state and local kernel attack-surface policy.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+. /usr/lib/lanrith/assertions.sh
+
+# Boot counting is safe only when a healthy candidate can remove its tries
+# suffix. Debian ships the integration generator, unit, and executable in the
+# systemd-boot package rather than systemd-boot-efi.
+test -x /usr/lib/systemd/system-generators/systemd-bless-boot-generator
+test -f /usr/lib/systemd/system/systemd-bless-boot.service
+test -x /usr/lib/systemd/systemd-bless-boot
+test -x /usr/sbin/sysctl
+# The serial getty cannot authenticate anyone without Debian's login program.
+test -x /usr/bin/login
+# Inert helper admission is not runtime activation. No shadow IPC endpoints
+# or helper process are permitted until a separately qualified image changes
+# this contract.
+test -x /usr/bin/router-policy-helper
+for unit in lanrith-policy-helper-shadow.service; do
+  [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
+  require_inactive_service "$unit"
+done
+if [ "${lanrith_policy_enforcement_enabled:-0}" = 1 ]; then
+  for unit in lanrith-policy-bootstrap.service lanrith-policy-helper.service lanrith-policy-reader.service lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket lanrith-policy-bindings.timer; do
+    systemctl is-active --quiet "$unit"
+  done
+  for unit in lanrith-radius-shadow.service lanrith-radius-shadow.timer; do
+    [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
+    require_inactive_service "$unit"
+  done
+  test "$(stat -c '%U:%a' /run/router-policy-reader/credentials.json)" = 'router-policy-reader:600'
+  test "$(stat -c '%U:%a' /var/lib/lanrith/policy-agent/state.json)" = 'root:600'
+  ! nft list table inet homelab_policy_boot >/dev/null 2>&1
+else
+  for unit in lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket; do
+    [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
+    require_inactive_service "$unit"
+  done
+fi
+test -x /usr/lib/lanrith/serial-idle-watchdog
+systemctl is-enabled --quiet lanrith-serial-idle-watchdog.service
+# Recovery login has its own getty; no kernel console may write to the UART.
+reject_match -Eq '^ttyS[0-9]+[[:space:]]' /proc/consoles
+test "$(systemctl show -P TTYPath serial-getty@ttyS0.service)" = /dev/ttyS0
+for setting in forward_to_console forward_to_kmsg forward_to_wall; do
+  grep -Fqw "systemd.journald.$setting=0" /proc/cmdline
+done
+grep -Fqx 'auth required pam_exec.so quiet quiet_log seteuid expose_authtok /usr/lib/lanrith/verify-serial-passphrase' /etc/pam.d/login
+grep -Fqx 'auth required pam_permit.so' /etc/pam.d/login
+
+if [ "${lanrith_discovery_enabled:-0}" = 1 ]; then
+  for unit in avahi-daemon.service avahi-daemon.socket dbus-org.freedesktop.Avahi.service discovery-bridge-publisher.service discovery-bridge-collector.service; do
+    systemctl is-active --quiet "$unit"
+  done
+else
+  for unit in avahi-daemon.service avahi-daemon.socket dbus-org.freedesktop.Avahi.service discovery-bridge-publisher.service discovery-bridge-collector.service; do
+    [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
+    require_inactive_service "$unit"
+  done
+fi
+
+if [ "${lanrith_discovery_dns_enabled:-0}" = 1 ]; then
+  systemctl is-active --quiet discovery-bridge-dns.service
+else
+  [ "$(systemctl is-enabled discovery-bridge-dns.service 2>/dev/null || true)" = masked ]
+  require_inactive_service discovery-bridge-dns.service
+fi
+
+if [ "$lanrith_radius_production_enabled" = 1 ]; then
+  [ "$(systemctl is-enabled freeradius.service 2>/dev/null || true)" = enabled ]
+  if [ -f /var/lib/lanrith/radius/production-enabled ]; then
+    systemctl is-active --quiet freeradius.service
+    radius_sockets=$(ip netns exec "$lanrith_service_namespace" ss -H -lun)
+    [ "$(printf '%s\n' "$radius_sockets" \
+      | awk -v endpoint="$lanrith_radius_listener_ipv4:$lanrith_radius_port" \
+        '$4 == endpoint { count++ } END { print count + 0 }')" -eq 1 ]
+    [ "$(printf '%s\n' "$radius_sockets" | awk '$4 ~ /:1812$/ { count++ } END { print count + 0 }')" -eq 1 ]
+    ! printf '%s\n' "$radius_sockets" | awk '$4 ~ /:(1813|3799)$/ { found=1 } END { exit !found }'
+  else
+    require_inactive_service freeradius.service
+  fi
+else
+  [ "$(systemctl is-enabled freeradius.service 2>/dev/null || true)" = masked ]
+  require_inactive_service freeradius.service
+fi
+
+if [ "$lanrith_bgp_canary_enabled" = 1 ]; then
+  [ "$(systemctl is-enabled frr.service 2>/dev/null || true)" = enabled ]
+  systemctl is-active --quiet frr.service
+else
+  [ "$(systemctl is-enabled frr.service 2>/dev/null || true)" = masked ]
+  require_inactive_service frr.service
+fi
+
+if [ "$lanrith_dhcpv4_enabled" = 1 ]; then
+  [ "$(systemctl is-enabled kea-dhcp4-server.service 2>/dev/null || true)" = enabled ]
+  systemctl is-active --quiet kea-dhcp4-server.service
+  /usr/lib/lanrith/verify-kea-sockets
+else
+  [ "$(systemctl is-enabled kea-dhcp4-server.service 2>/dev/null || true)" = masked ]
+  require_inactive_service kea-dhcp4-server.service
+fi
+
+while read -r setting expected; do
+  [ "$(/usr/sbin/sysctl -n "$setting")" = "$expected" ]
+done <<'EOF'
+kernel.unprivileged_bpf_disabled 2
+net.core.bpf_jit_harden 2
+kernel.kptr_restrict 2
+kernel.dmesg_restrict 1
+kernel.yama.ptrace_scope 2
+kernel.perf_event_paranoid 3
+kernel.unprivileged_userns_clone 0
+kernel.io_uring_disabled 2
+kernel.kexec_load_disabled 1
+dev.tty.ldisc_autoload 0
+fs.suid_dumpable 0
+fs.protected_fifos 2
+fs.protected_regular 2
+fs.protected_hardlinks 1
+fs.protected_symlinks 1
+kernel.randomize_va_space 2
+EOF
+
+for module in \
+  dccp sctp rds tipc can can_raw can_bcm can_gw bluetooth btusb \
+  af_802154 ieee802154 mac802154 nfc; do
+  reject_match -Eq "^${module}[[:space:]]" /proc/modules
+done
+
+printf '%s\n' 'Service state and host hardening verified.'

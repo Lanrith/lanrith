@@ -1,0 +1,55 @@
+#!/bin/sh
+# Confirm the factory's deliberately narrow OOB control plane before an image
+# can be accepted. Emit only fixed diagnostic categories to the serial console;
+# never print addresses, keys, or service configuration.
+set -eu
+
+. /usr/lib/lanrith/network-profile.sh
+
+expected_mac=$lanrith_oob_mac_address
+expected_cidr=$lanrith_oob_ipv4_cidr
+interface=''
+
+for candidate in /sys/class/net/*; do
+  [ -r "$candidate/address" ] || continue
+  candidate_mac=$(tr 'A-F' 'a-f' < "$candidate/address")
+  if [ "$candidate_mac" = "$expected_mac" ]; then
+    [ -z "$interface" ] || {
+      echo 'Factory OOB readiness found multiple matching interfaces.' >&2
+      exit 1
+    }
+    interface=${candidate##*/}
+  fi
+done
+
+[ -n "$interface" ] || {
+  echo 'Factory OOB readiness did not detect the configured NIC MAC.' >&2
+  exit 1
+}
+
+ipv6_disable_path="/proc/sys/net/ipv6/conf/$interface/disable_ipv6"
+[ -r "$ipv6_disable_path" ] && [ "$(cat "$ipv6_disable_path")" = '1' ] || {
+  echo 'Factory OOB readiness found IPv6 enabled on the configured NIC.' >&2
+  exit 1
+}
+if ip -6 -o address show dev "$interface" | grep -q .; then
+  echo 'Factory OOB readiness found an IPv6 address on the configured NIC.' >&2
+  exit 1
+fi
+
+ip -4 -o address show dev "$interface" | \
+  awk -v expected_cidr="$expected_cidr" '$4 == expected_cidr { found = 1 } END { exit !found }' || {
+    echo 'Factory OOB readiness did not find the configured static IPv4 address.' >&2
+    exit 1
+  }
+
+systemctl is-active --quiet ssh.service || {
+  echo 'Factory OOB readiness found SSH inactive.' >&2
+  exit 1
+}
+ss -ltnH | awk '$4 ~ /:22$/ { found = 1 } END { exit !found }' || {
+  echo 'Factory OOB readiness found no TCP SSH listener.' >&2
+  exit 1
+}
+
+echo 'Factory OOB readiness confirmed.'
