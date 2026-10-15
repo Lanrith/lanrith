@@ -51,12 +51,15 @@ def plan(manifest, installed, partitions, *, disk, active_partitions, esp_availa
             'EFI filesystem lacks candidate and recovery reserves.')
     selected = {}
     used_numbers = set()
+    used_uuids = set()
     active_labels = installed.get('active_labels')
     require(isinstance(active_labels, dict) and set(active_labels) == set(PARTITION_ROLES),
             'Installed image does not declare its active slot labels.')
     for role in PARTITION_ROLES:
         candidates = [partition for partition in partitions if partition.get('type', '').lower() == GUIDS[role]]
         require(len(candidates) == 2, 'Expected exactly two slots for each verified-root partition type.')
+        require(all(isinstance(p.get('uuid'), str) and re.fullmatch(UUID, p['uuid'].lower()) for p in candidates),
+                'Verified-root slot UUIDs are missing or invalid.')
         active = [partition for partition in candidates if partition.get('label') == active_labels[role]]
         require(len(active) == 1, 'Cannot identify exactly one active partition for each role.')
         if role in ('root', 'verity'):
@@ -76,7 +79,11 @@ def plan(manifest, installed, partitions, *, disk, active_partitions, esp_availa
         match = re.fullmatch(rf'{re.escape(image)}_{sequence}_({UUID})\.{re.escape(role)}\.raw',
                              artifacts[role]['name'])
         require(match is not None, 'Partition artifact filename differs from the signed deployment identity.')
+        require(match[1] != '00000000-0000-0000-0000-000000000000' and match[1] not in used_uuids and
+                not any(str(partition.get('uuid') or '').lower() == match[1] and partition.get('number') != number
+                        for partition in partitions), 'Candidate UUID collides with another disk partition.')
         used_numbers.add(number)
+        used_uuids.add(match[1])
         selected[role] = {'number': number, 'uuid': match[1],
                           'label': f'l_{sequence}_{role.replace("-", "_")}', 'type': GUIDS[role]}
     return {'schema': 1, 'disk': disk, 'sequence': sequence, 'image_id': image,

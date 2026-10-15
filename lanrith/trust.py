@@ -6,6 +6,7 @@ import re
 import subprocess
 
 from .release import HEX, file_record, read, require, unique
+from . import release
 
 
 REPOSITORY = 'Lanrith/lanrith'
@@ -40,6 +41,16 @@ def verify(directory, selection):
             'Platform bundle directory must be canonical.')
     require(file_record(directory / 'release.json')['sha256'] == selection['manifest_sha256'],
             'Platform manifest differs from the reviewed lock.')
+    manifest = release.document(read(directory/'release.json',65536))
+    require(manifest['purpose']=='base' and manifest['image_id']=='lanrith' and
+            manifest['architecture']=='x86-64' and manifest['deployment_sequence']==0 and
+            manifest['platform_version']==selection['version'][1:], 'Unsupported platform manifest identity.')
+    for artifact in manifest['artifacts']:
+        require(selection['files'].get(artifact['name'])==artifact['sha256'] and
+                file_record(directory/artifact['name'])['size']==artifact['size'],
+                'Platform role differs from the reviewed artifact inventory.')
+    inputs = next(a for a in manifest['artifacts'] if a['role']=='inputs')
+    require(inputs['sha256']==manifest['configuration_sha256'], 'Platform input identity differs from its manifest.')
     for name, expected in selection['files'].items():
         require(file_record(directory / name)['sha256'] == expected, 'Platform input differs from the reviewed lock.')
         bundle = directory / (name + '.intoto.jsonl')

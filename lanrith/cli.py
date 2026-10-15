@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+from contextlib import ExitStack
 
 from . import admission, build, config, release, trust
 
@@ -21,6 +23,7 @@ def main(arguments=None):
     verify.add_argument('directory', type=Path)
     verify.add_argument('--certificate', type=Path, required=True)
     verify.add_argument('--image-id', default='lanrith')
+    verify.add_argument('--purpose', choices=('update','factory'), default='update')
     verify.add_argument('--minimum-sequence', type=int, default=0)
     sign = commands.add_parser('sign')
     sign.add_argument('directory', type=Path)
@@ -34,6 +37,7 @@ def main(arguments=None):
     image.add_argument('--initrd-base', type=Path, required=True)
     image.add_argument('--workspace', type=Path, required=True)
     image.add_argument('--output', type=Path, required=True)
+    image.add_argument('--factory-output', type=Path)
     image.add_argument('--platform-lock', type=Path)
     image.add_argument('--platform-bundle', type=Path)
     image.add_argument('--version', required=True)
@@ -55,7 +59,7 @@ def main(arguments=None):
             digest = config.write(config.load(args.configuration), args.output)
             print(json.dumps({'configuration_sha256': digest}))
         elif args.command == 'verify':
-            value = release.verify(args.directory.resolve(), args.certificate, purpose='update',
+            value = release.verify(args.directory.resolve(), args.certificate, purpose=args.purpose,
                                    image_id=args.image_id, minimum_sequence=args.minimum_sequence)
             print(json.dumps({'verified': True, 'deployment_sequence': value['deployment_sequence']}))
         elif args.command == 'sign':
@@ -76,6 +80,7 @@ def main(arguments=None):
                 trust.verify(args.platform_bundle.resolve(), selection)
                 trust.verify_builder(selection, args.platform_bundle / 'builder.intoto.jsonl')
                 admission.assess(args.platform_bundle, selection)
+                release.require(args.version==selection['version'][1:], 'Image version differs from its admitted platform.')
                 release.require(args.base.name in selection['files'] and
                                 release.file_record(args.base)['sha256'] == selection['files'][args.base.name],
                                 'Selected base differs from admitted platform inputs.')
@@ -89,16 +94,33 @@ def main(arguments=None):
                     release.require(isinstance(pin, dict) and set(pin) == {'directory', 'sha256'},
                                     'Invalid integration selection.')
                     integrations[name] = (Path(pin['directory']).absolute(), pin['sha256'])
-            identity = build.assembly(config.load(args.configuration), args.base.resolve(), args.workspace.resolve(),
-                                      version=args.version, sequence=args.sequence,
-                                      certificate=args.certificate, private_key=args.key, integrations=integrations,
-                                      serial_hash=args.serial_passphrase_hash, initrd_base=args.initrd_base.resolve())
-            build.run(args.workspace.resolve())
-            build.update_payload(args.workspace.resolve(), identity, args.output.resolve())
-            if args.key is not None:
-                release.sign(args.output.resolve(), args.key)
-                release.verify(args.output.resolve(), args.certificate, purpose='update', image_id=identity['image_id'])
-            print(json.dumps({**identity, 'signed': args.key is not None, 'qualified': False}))
+            with ExitStack() as resources:
+                if args.qualification:
+                    release.require(args.certificate is None, 'Qualification uses an ephemeral test authority only.')
+                    private=Path(resources.enter_context(tempfile.TemporaryDirectory(prefix='lanrith-qualification.',dir='/dev/shm')))
+                    args.key, args.certificate=private/'test.key', private/'test.crt'
+                    subprocess.run(['openssl','req','-x509','-newkey','rsa:3072','-nodes','-days','1',
+                        '-subj','/CN=Lanrith Disposable Qualification Authority','-keyout',str(args.key),
+                        '-out',str(args.certificate)],check=True,capture_output=True)
+                    args.key.chmod(0o600)
+                release.require(args.key is not None and args.certificate is not None, 'Signed image assembly requires owner authority.')
+                identity = build.assembly(config.load(args.configuration), args.base.resolve(), args.workspace.resolve(),
+                                          version=args.version, sequence=args.sequence,
+                                          certificate=args.certificate, private_key=args.key, integrations=integrations,
+                                          serial_hash=args.serial_passphrase_hash, initrd_base=args.initrd_base.resolve())
+                build.run(args.workspace.resolve())
+                build.update_payload(args.workspace.resolve(), identity, args.output.resolve())
+                if args.key is not None:
+                    release.sign(args.output.resolve(), args.key)
+                    release.verify(args.output.resolve(), args.certificate, purpose='update', image_id=identity['image_id'])
+                if args.factory_output:
+                    output=args.factory_output.resolve()
+                    release.require(output != args.output.resolve() and args.output.resolve() not in output.parents and
+                                    output not in args.output.resolve().parents, 'Factory and update outputs must be separate.')
+                    build.factory_payload(args.workspace.resolve(),identity,args.output.resolve(),output)
+                    release.sign(output,args.key)
+                    release.verify(output,args.certificate,purpose='factory',image_id=identity['image_id'])
+                print(json.dumps({**identity, 'signed': True, 'qualification_only': args.qualification, 'qualified': False}))
     except (release.ReleaseError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(str(error) if isinstance(error, release.ReleaseError) else 'Build or verification operation failed.',
               file=sys.stderr)

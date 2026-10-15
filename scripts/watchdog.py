@@ -14,10 +14,10 @@ def gh(*arguments):
 
 releases = json.loads(gh('api', 'repos/'+repository+'/releases?per_page=100'))
 import re
-supported = [r for r in releases if not r['draft'] and not r['prerelease'] and
+supported = [r for r in releases if not r['draft'] and
              re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', r['tag_name'])]
 if not supported:
-    print('No supported production release exists; qualification admission remains closed.')
+    print('No published platform release exists; qualification admission remains closed.')
     raise SystemExit(0)
 latest = max(datetime.datetime.fromisoformat(r['published_at'].replace('Z','+00:00')) for r in supported)
 result = json.loads(gh('run', 'list', '--repo', repository, '--workflow', 'security-audit.yml',

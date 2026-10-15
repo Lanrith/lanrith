@@ -207,7 +207,12 @@ def normalize(value):
                 1 <= len(rule['ports']) <= 64 and
                 all(type(port) is int and 1 <= port <= 65535 for port in rule['ports']), 'Invalid connection ports.')
     administration = value['administration']
-    fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial'}, {'networks', 'authorized_keys'})
+    fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial', 'host_key_state'},
+           {'networks', 'authorized_keys'})
+    host_key_state = administration.setdefault('host_key_state', '/var/lib/lanrith/ssh-host-keys')
+    require(isinstance(host_key_state, str) and re.fullmatch(r'/var/lib/[A-Za-z0-9_/-]+', host_key_state) and
+            all(part not in ('.', '..') for part in Path(host_key_state).parts) and
+            not host_key_state.endswith('/'), 'Host keys require a protected persistent state directory.')
     username = administration.setdefault('username', 'admin')
     require(isinstance(username, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,30}', username) and
             username not in ('root', 'nobody', 'daemon'), 'Invalid administrator account.')
@@ -277,7 +282,7 @@ def render(value):
              'etc/sysctl.d/90-lanrith-routing.conf': 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n',
              'etc/ssh/sshd_config.d/00-lanrith.conf':
                  'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n'
-                 f'AllowUsers {user}\nHostKey /var/lib/lanrith/ssh-host-keys/ssh_host_ed25519_key\n'
+                 f'AllowUsers {user}\nHostKey {value["administration"]["host_key_state"]}/ssh_host_ed25519_key\n'
                  f'Port {value["administration"].get("ssh_port", 22)}\n',
              f'home/{user}/.ssh/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n',
              'etc/security/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n',

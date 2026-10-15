@@ -36,3 +36,18 @@ for pattern in ('etc/systemd/system/*.wants/*', 'etc/systemd/system/*.requires/*
             path.unlink()
 (root/'etc/resolv.conf').unlink(missing_ok=True)
 (root/'etc/resolv.conf').write_text('nameserver 127.0.0.1\nnameserver ::1\n')
+# Prevent D-Bus, socket or dependency activation of an unselected optional daemon.
+optional = {'unbound.service','chrony.service','named.service','freeradius.service','frr.service',
+            'kea-dhcp4-server.service',
+            'suricata.service','tayga.service','avahi-daemon.service','avahi-daemon.socket',
+            'prometheus-node-exporter.service','alloy.service','snmpd.service','vpp.service',
+            'discovery-bridge.service','discovery-bridge-dns.service'}
+for path in (root/'usr/lib/systemd/system').iterdir():
+    if path.name.startswith(('lanrith-policy-', 'lanrith-radius-', 'lanrith-nat', 'lanrith-vpp-', 'lanrith-unbound-')):
+        optional.add(path.name)
+for name in optional:
+    mask = root/'etc/systemd/system'/name
+    if mask.exists() or mask.is_symlink():
+        mask.unlink()
+    mask.parent.mkdir(parents=True,exist_ok=True)
+    mask.symlink_to('/dev/null')

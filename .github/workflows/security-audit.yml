@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      retained: ${{ steps.scan.outputs.retained }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -29,9 +30,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install --yes dpkg
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-      - name: Reassess retained inventories
+      - id: scan
+        name: Reassess retained inventories
         run: python3 scripts/security-audit.py --output "$RUNNER_TEMP/assessments"
       - id: upload
+        if: steps.scan.outputs.retained == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: assessed-inventories
@@ -39,6 +42,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   attest:
+    if: needs.assess.outputs.retained == 'true'
     needs: assess
     runs-on: ubuntu-24.04
     permissions:

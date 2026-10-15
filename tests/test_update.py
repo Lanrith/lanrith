@@ -17,10 +17,11 @@ class UpdatePlanTests(unittest.TestCase):
                              {'role': 'uki', 'name': 'lanrith_9.efi', 'size': 1024}]}
         self.partitions = []
         for index, role in enumerate(update.PARTITION_ROLES):
-            uuid = f'00000000-0000-0000-0000-{index:012d}'
+            uuid = f'20000000-0000-0000-0000-{index:012d}'
             self.manifest['artifacts'].append({'role': role, 'name': f'lanrith_9_{uuid}.{role}.raw', 'size': 2048})
             for active in (True, False):
                 self.partitions.append({'disk': '/dev/vda', 'number': index * 2 + (1 if active else 2),
+                                        'uuid': f'10000000-0000-0000-0000-{index*2+(1 if active else 2):012d}',
                                         'type': update.GUIDS[role], 'label': 'current-' + role if active else 'previous-' + role,
                                         'size': 4096, 'mounted': False})
 
@@ -47,6 +48,8 @@ class UpdatePlanTests(unittest.TestCase):
             lambda: self.installed['active_labels'].update(root='previous-root'),
             lambda: self.manifest.update(deployment_sequence=8),
             lambda: self.manifest['artifacts'][0].update(name='other.efi'),
+            lambda: self.manifest['artifacts'][1].update(
+                name=f'lanrith_9_{self.partitions[0]["uuid"]}.verity-sig.raw'),
         )
         for mutate in cases:
             partitions, manifest, installed = (copy.deepcopy(self.partitions), copy.deepcopy(self.manifest),

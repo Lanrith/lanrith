@@ -11,7 +11,7 @@ for path in (root/'.github/workflows').glob('*.yml'):
     value = yaml.safe_load(text)
     assert isinstance(value, dict) and 'permissions' in value, path.name
     assert 'pull_request_target' not in text, path.name
-    for action in re.findall(r'^\s+uses:\s+(\S+)', text, re.MULTILINE):
+    for action in re.findall(r'^\s+(?:-\s+)?uses:\s+(\S+)', text, re.MULTILINE):
         assert action.startswith('./.github/workflows/') or re.fullmatch(r'[^@ ]+@[0-9a-f]{40}', action), (path.name, action)
     for name, job in value.get('jobs', {}).items():
         if name in ('attest', 'sign', 'publish'):

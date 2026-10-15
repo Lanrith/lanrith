@@ -1,28 +1,43 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/python3
+"""Retain one protected SSH host identity across verified-root updates."""
 
-key_dir=/var/lib/lanrith/ssh-host-keys
-key_file="$key_dir/ssh_host_ed25519_key"
-public_file="$key_file.pub"
-source_key=/etc/ssh/ssh_host_ed25519_key
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
 
-umask 077
-install -d -o root -g root -m 0700 "$key_dir"
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
 
-if [ -e "$key_file" ]; then
-    test -f "$key_file"
-    test ! -L "$key_file"
-else
-    # Preserve the current identity during the first persistent-key rollout.
-    # New factory installs have no usable root key and generate one here.
-    if [ -f "$source_key" ] && [ ! -L "$source_key" ]; then
-        install -o root -g root -m 0600 "$source_key" "$key_file"
-    else
-        ssh-keygen -q -t ed25519 -N '' -f "$key_file"
-    fi
-fi
-
-public_tmp="$key_dir/.ssh_host_ed25519_key.pub.$$"
-ssh-keygen -y -f "$key_file" >"$public_tmp"
-install -o root -g root -m 0644 "$public_tmp" "$public_file"
-rm -f "$public_tmp"
+require(os.geteuid()==0, 'Host-key provisioning requires root.')
+policy=json.loads(Path('/usr/share/lanrith/resolved.json').read_text())['administration']
+directory=Path(policy['host_key_state'])
+require(directory.is_absolute() and directory.parts[:3]==('/', 'var', 'lib') and '..' not in directory.parts,
+        'Invalid host-key state directory.')
+current=Path('/')
+for component in directory.parts[1:]:
+    current=current/component
+    if not current.exists() and not current.is_symlink():
+        current.mkdir(mode=0o700)
+    info=current.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid==0 and not info.st_mode&0o022, 'Unsafe host-key state directory.')
+directory.chmod(0o700)
+key=directory/'ssh_host_ed25519_key'
+if not key.exists() and not key.is_symlink():
+    subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(key)],check=True,stdin=subprocess.DEVNULL)
+info=key.lstat()
+require(stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and stat.S_IMODE(info.st_mode)==0o600,
+        'Unsafe private host-key file.')
+public=subprocess.run(['ssh-keygen','-y','-f',str(key)],check=True,capture_output=True).stdout
+name=directory/('.public-'+str(os.getpid()))
+try:
+    descriptor=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
+    with os.fdopen(descriptor,'wb') as stream:
+        stream.write(public)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(name,directory/'ssh_host_ed25519_key.pub')
+finally:
+    name.unlink(missing_ok=True)

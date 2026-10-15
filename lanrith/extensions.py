@@ -15,9 +15,15 @@ PROTECTED = (
     'usr/lib/repart.d/', 'boot/', 'efi/', 'etc/systemd/system/boot-complete.target',
     'etc/systemd/system/lanrith-', 'usr/lib/systemd/system/lanrith-',
     'etc/sudoers', 'etc/pam.d/', 'etc/ssh/', 'root/',
+    'etc/systemd/system/systemd-', 'usr/lib/systemd/system/systemd-',
+    'etc/systemd/system/ssh.', 'usr/lib/systemd/system/ssh.',
+    'etc/systemd/system/multi-user.', 'usr/lib/systemd/system/multi-user.',
+    'etc/systemd/system/boot-complete.', 'usr/lib/systemd/system/boot-complete.',
 )
 REPLACEABLE = ('etc/nftables.conf', 'etc/systemd/network/', 'etc/kea/', 'etc/unbound/',
-               'etc/chrony/', 'etc/sysctl.d/90-lanrith-routing.conf')
+               'etc/chrony/', 'etc/sysctl.d/90-lanrith-routing.conf', 'etc/frr/', 'etc/freeradius/',
+               'etc/suricata/', 'etc/snmp/', 'etc/alloy/', 'etc/discovery-bridge/', 'etc/router-policy/',
+               'etc/avahi/', 'etc/tayga.conf')
 
 
 def admit(directory, expected):
@@ -37,7 +43,7 @@ def admit(directory, expected):
                 for item in value['features']) and len(set(value['features'])) == len(value['features']),
             'Invalid integration features.')
     require(isinstance(value['health_units'], list) and len(value['health_units']) <= 64 and
-            all(isinstance(item, str) and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(service|target)', item)
+            all(isinstance(item, str) and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(service|target|socket|timer|path)', item)
                 for item in value['health_units']), 'Invalid integration health units.')
     require(isinstance(value['files'], dict) and 0 < len(value['files']) <= 4096, 'Invalid integration inventory.')
     replaces = value.get('replaces', [])
@@ -74,7 +80,7 @@ def admit(directory, expected):
     return value
 
 
-def overlay(configuration, selected, destination):
+def overlay(configuration, selected, destination, base_files=None):
     require(set(selected) == set(configuration['extensions']), 'Integration selections differ from configuration.')
     units, digests, written = [], {}, set()
     for identity in sorted(selected):
@@ -84,7 +90,10 @@ def overlay(configuration, selected, destination):
         for feature, settings in configuration['services'].items():
             if settings.get('enabled') and settings.get('configuration') == identity:
                 require(feature in value['features'], 'Integration does not implement its selected feature.')
+                require(value['health_units'], 'An enabled integration must declare its runtime health requirements.')
         for name, record in value['files'].items():
+            require(base_files is None or name not in base_files or name in value.get('replaces', []),
+                    'Integration attempts to replace a base package file without an admitted configuration replacement.')
             require(name not in written, 'Integrations conflict on a file.')
             target = destination / name
             require(not target.is_symlink() and (not target.exists() or name in value.get('replaces', [])),

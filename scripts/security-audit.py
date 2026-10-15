@@ -29,7 +29,12 @@ def main():
                               capture_output=True, text=True).stdout)
     versions = [item for item in releases if not item['draft'] and
                 __import__('re').fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
-    require(versions, 'No published platform exists to assess.')
+    if os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'],'a') as stream:
+            stream.write('retained='+('true' if versions else 'false')+'\n')
+    if not versions:
+        print('No published platform exists yet; no retained assessment is required.')
+        return
     args.output.mkdir(mode=0o755)
     for item in versions[:3]:
         with tempfile.TemporaryDirectory(prefix='lanrith-rescan.') as temporary:

@@ -55,3 +55,13 @@ state migration and withdrawal behavior. Adding a package to an owner image
 also needs pinned package and vulnerability evidence; a configuration flag is
 not package approval. The public base already includes the supported core
 package universe, so ordinary configuration changes do not rebuild packages.
+
+`administration.host_key_state` selects the protected persistent SSH identity directory.
+The default is `/var/lib/lanrith/ssh-host-keys`; an owner migrating existing state
+can select its existing root-owned directory. Every parent must be root-owned
+and protected from writes by other users. An update keeps an existing key.
+
+Extensions cannot overwrite base package binaries. Existing service configuration
+files need an explicit admitted `replaces` entry. Selected health requirements
+activate the corresponding units; unselected optional daemons remain masked,
+including activation through D-Bus or sockets.

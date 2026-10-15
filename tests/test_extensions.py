@@ -54,3 +54,11 @@ class IntegrationTests(unittest.TestCase):
             for selected in ({}, {'routing': (root, pin)}):
                 with self.assertRaises(ReleaseError):
                     extensions.overlay(config, selected, root / 'output')
+
+    def test_base_binaries_cannot_be_replaced_as_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pin = self.make(root, 'usr/bin/openssl')
+            config = {'extensions': ['routing'], 'services': {}}
+            with self.assertRaises(ReleaseError):
+                extensions.overlay(config, {'routing': (root, pin)}, root/'output', base_files={'usr/bin/openssl'})

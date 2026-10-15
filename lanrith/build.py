@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tarfile
 
 from . import config, extensions, release
 from .release import require
@@ -32,7 +33,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     destination.mkdir(mode=0o700, parents=True)
     overlay = destination / 'mkosi.extra'
     digest = config.write(value, overlay)
-    integration = extensions.overlay(value, integrations or {}, overlay)
+    base_files = set()
+    if integrations:
+        with tarfile.open(base) as archive:
+            base_files = {m.name.removeprefix('./').rstrip('/') for m in archive if not m.isdir()}
+    integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files)
     # The effective intent includes every admitted integration, even when it adds no network fields.
     digest = hashlib.sha256(release.canonical({'configuration': value,
                                              'integrations': integration['digests'],
@@ -122,6 +127,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         path = wants / directory / unit
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/' + unit)
+    for unit in required:
+        # Replace the base's inactive mask only for explicitly selected health requirements.
+        path = wants/unit
+        require(not path.exists() and not path.is_symlink(), 'Integration conflicts with a selected service activation.')
+        path.symlink_to('/usr/lib/systemd/system/'+unit)
     if value['administration']['serial']['enabled']:
         tty = value['administration']['serial'].get('tty', 'ttyS0')
         (units/'lanrith-serial-idle-watchdog.service').write_text(
@@ -145,7 +155,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     storage = value['hardware']['storage']
     (repart / '00-esp.conf').write_text(
         '[Partition]\nType=esp\nFormat=vfat\nCopyFiles=/efi:/\nCopyFiles=/boot:/\n'
-        f'SizeMinBytes={storage.get("esp_mib", 1024)}M\n')
+        f'SizeMinBytes={storage["esp_mib"]}M\nSizeMaxBytes={storage["esp_mib"]}M\n')
     for index, role in enumerate(('verity-sig', 'verity', 'root'), 10):
         part = 'root' if role == 'root' else 'root-' + role
         verity = {'root': 'data', 'verity': 'hash', 'verity-sig': 'signature'}[role]
@@ -239,6 +249,14 @@ def storage_definitions(value, sequence):
 
 
 def run(destination):
+    if (destination/'mkosi.extra/usr/share/lanrith/owner.crt').exists():
+        manager = Path('/usr/lib/shim/mmx64.efi.signed')
+        require(manager.is_file(), 'The admitted builder lacks the signed MOK enrollment manager.')
+        result = subprocess.run(['sbverify','--list',str(manager)],capture_output=True,timeout=15)
+        require(result.returncode==0, 'MOK enrollment manager signature metadata is unavailable.')
+        target=destination/'mkosi.extra/efi/EFI/BOOT/mmx64.efi'
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(manager,target)
     result = subprocess.run(['mkosi', '--directory', str(destination),
                              '--cache-directory', str(destination/'cache'), '--cache-only=always', 'build'],
                             stdin=subprocess.DEVNULL, timeout=3600)

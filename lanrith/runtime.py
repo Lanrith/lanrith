@@ -16,6 +16,19 @@ from . import factory
 INSTALLED = Path('/usr/share/lanrith/installed.json')
 
 
+def status():
+    require(INSTALLED.stat().st_uid==0 and not INSTALLED.stat().st_mode & 0o022,
+            'Installed image metadata is not protected.')
+    value=json.loads(read(INSTALLED,65536))
+    observation=Path('/run/lanrith/boot.json')
+    boot=None
+    if observation.exists():
+        require(observation.stat().st_uid==0 and not observation.stat().st_mode & 0o022,
+                'Boot observation is not protected.')
+        boot=json.loads(read(observation,65536))
+    return {key:value[key] for key in ('image_id','platform_version','deployment_sequence')} | {'boot':boot}
+
+
 def installed():
     require(os.geteuid() == 0, 'Runtime administration requires root.')
     require(INSTALLED.stat().st_uid == 0 and not INSTALLED.stat().st_mode & 0o022,
@@ -102,6 +115,7 @@ def main(arguments=None):
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('health')
     commands.add_parser('publish')
+    commands.add_parser('status')
     commands.add_parser('initialize')
     commands.add_parser('recovery')
     commands.add_parser('accept').add_argument('sequence', type=int)
@@ -109,7 +123,9 @@ def main(arguments=None):
     commands.add_parser('promote').add_argument('directory', type=Path)
     args = parser.parse_args(arguments)
     try:
-        if args.command == 'health':
+        if args.command == 'status':
+            print(json.dumps(status(),sort_keys=True))
+        elif args.command == 'health':
             health()
             print('Local boot health checks passed.')
         elif args.command == 'publish':
