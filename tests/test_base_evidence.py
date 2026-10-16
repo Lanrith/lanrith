@@ -103,7 +103,8 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
     def test_initrd_cannot_reintroduce_build_tools_or_a_second_kernel(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)/'initrd.tar.gz'
-            for extra in ('usr/bin/dpkg', 'boot/vmlinuz-test', '../escape', 'etc/ssl/private/owner.key'):
+            for extra in ('usr/bin/dpkg', 'boot/vmlinuz-test', '../escape', 'etc/ssl/private/owner.key',
+                          'usr/share/info/dir'):
                 with self.subTest(path=extra):
                     with tarfile.open(path, 'w:gz') as archive:
                         for name in ('usr/lib/systemd/systemd', 'usr/bin/python3', extra):

@@ -24,6 +24,7 @@ def initrd_configuration(snapshot):
         '[Output]\nFormat=tar\nOutput=lanrith-initrd-base\nOutputDirectory=/work/output\n'
         'CompressOutput=gz\nManifestFormat=json\n'
         '[Content]\nWithRecommends=no\nWithDocs=no\nCleanPackageMetadata=yes\nRemovePackages=\n'
-        'RemoveFiles=/usr/share/locale /usr/lib/python3.*/test /usr/lib/python3.*/idlelib '
+        'RemoveFiles=/usr/share/locale /usr/share/man /usr/share/info /usr/share/groff /usr/share/gtk-doc '
+        '/usr/lib/python3.*/test /usr/lib/python3.*/idlelib '
         '/boot /vmlinuz* /initrd.img* **/__pycache__ /usr/bin/dpkg* /usr/sbin/dpkg* /usr/lib/dpkg /usr/share/dpkg\n'
         'Packages=\nPackages='+','.join(packages)+'\n')
