@@ -193,6 +193,8 @@ def main():
     run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
         '-v', str(args.output)+':/output', builder, 'python3', '/source/scripts/base-evidence.py',
         '--directory', '/output', '--version', version)
+    # The canonical scan archive retains this subject; the raw handoff is temporary.
+    (args.output/'alloy-beyla.scan').unlink()
     import tarfile
     with tarfile.open(args.output/'tools.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT) as archive:
         for name in ('lanrith', 'scripts', 'security', 'mkosi', 'pyproject.toml', 'requirements.txt', 'LICENSE'):
