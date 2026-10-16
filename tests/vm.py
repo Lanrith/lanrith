@@ -632,6 +632,14 @@ systemctl start kea-dhcp4-server.service
 ''')
         guest.ready()
         state = root(guest, STATE).stdout
+        leases = json.loads(state.splitlines()[3])
+        release.require(leases == {'192.168.10.123': {
+            'address': '192.168.10.123', 'hwaddr': '02:00:00:00:02:01', 'client_id': '',
+            'valid_lifetime': '3600', 'expire': '4102444800', 'subnet_id': '1',
+            'fqdn_fwd': '0', 'fqdn_rev': '0', 'hostname': 'synthetic', 'state': '0',
+            'user_context': '', 'pool_id': '0'}},
+            'Qualification did not seed the expected persistent DHCP lease.')
+        print('Native VM: installed boot accepted and populated state verified.', flush=True)
         root(guest, '''for unit in frr.service freeradius.service suricata.service snmpd.service alloy.service \
 chrony.service chronyd-restricted.service chrony-wait.service \
 discovery-bridge.service discovery-bridge-collector.service discovery-bridge-publisher.service \
