@@ -67,13 +67,23 @@ def normalize(value):
     require(isinstance(hostname, str) and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', hostname),
             'Hostname must be a simple DNS label.')
     hardware = value['hardware']
-    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id'}, {'interfaces'})
+    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id', 'watchdog'}, {'interfaces'})
     if 'machine_id' in hardware:
         require(isinstance(hardware['machine_id'], str) and
                 re.fullmatch(r'[0-9a-f]{32}', hardware['machine_id']) and hardware['machine_id'] != '0'*32,
                 'Machine identity must be a nonzero 32-digit lowercase hexadecimal ID.')
     require(hardware.get('architecture', 'x86-64') == 'x86-64',
             'This release qualifies x86-64; additional architectures require a supported build profile.')
+    watchdog = hardware.setdefault('watchdog', {})
+    fields(watchdog, {'mode', 'device', 'timeout_seconds'})
+    watchdog.setdefault('mode', 'auto')
+    watchdog.setdefault('device', '/dev/watchdog0')
+    watchdog.setdefault('timeout_seconds', 60)
+    require(watchdog['mode'] in ('auto', 'required', 'disabled') and
+            isinstance(watchdog['device'], str) and
+            re.fullmatch(r'/dev/watchdog(?:[0-9]|[12][0-9]|3[01])', watchdog['device']) and
+            type(watchdog['timeout_seconds']) is int and 10 <= watchdog['timeout_seconds'] <= 3600,
+            'Invalid hardware watchdog policy.')
     boot = hardware.setdefault('boot', {'secure_boot': True, 'tpm': 'required'})
     fields(boot, {'secure_boot', 'tpm', 'console', 'recovery_console'})
     require(type(boot.get('secure_boot', True)) is bool and boot.get('tpm', 'required') in ('required', 'disabled'),

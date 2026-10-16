@@ -36,6 +36,26 @@ def installed():
     return json.loads(read(INSTALLED, 65536))
 
 
+def watchdog_health(policy, *, sysfs=Path('/sys/class/watchdog'), manager_fds=Path('/proc/1/fd')):
+    if not policy or policy['mode'] == 'disabled':
+        return
+    device = Path(policy['device'])
+    observed = sysfs/device.name
+    if not observed.exists():
+        require(policy['mode'] == 'auto', 'Required hardware watchdog is absent.')
+        return
+    require((observed/'state').read_text().strip() == 'active',
+            'Configured hardware watchdog is not active.')
+    for descriptor in manager_fds.iterdir():
+        try:
+            if descriptor.readlink() == device:
+                return
+        except OSError:
+            # Unrelated manager descriptors can close while being observed.
+            continue
+    require(False, 'System manager does not own the configured hardware watchdog.')
+
+
 def health():
     value = installed()
     require(Path('/etc/machine-id').read_text().strip() == value['machine_id'],
@@ -50,6 +70,7 @@ def health():
         require(Path('/proc/sys', key.replace('.', '/')).read_text().strip() == str(setting),
                 'Required kernel hardening is not active.')
     factory.secure_boot(value['boot'].get('secure_boot', True))
+    watchdog_health(value.get('watchdog'))
     factory.initialize(value)
     require(Path(value['state_directory'], 'recovery-key-enrolled').is_file(),
             'Offline recovery-key storage is not acknowledged.')

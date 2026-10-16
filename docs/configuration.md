@@ -12,6 +12,7 @@ selectors and undeclared management networks fail validation. See the
 | `hardware.storage` | Optional `/dev/disk/by-id` install target and ESP, root and state budgets in MiB |
 | `hardware.machine_id` | Permanent device identity, generated once before installation; retain it across updates and recovery |
 | `hardware.boot` | Secure Boot, TPM requirement and boot/recovery consoles |
+| `hardware.watchdog` | `auto` (default), `required` or `disabled`; device and timeout in seconds |
 | `hardware.acceleration` | Explicit PCI ownership and hugepage allocation |
 | `uplink` | DHCP/static IPv4, RA/static IPv6, gateways and optional CAKE upload rate |
 | `networks` | Tagged or untagged attachments, gateway addresses, RA, DNS and DHCP pools |
@@ -29,6 +30,17 @@ passphrase; it is never embedded in an image. Record the separate recovery key
 offline before boot acceptance. Serial login is disabled unless enabled with a
 private provisioning hash and a selected console. Kernel and journal output
 must not disclose secrets on that console.
+
+Hardware watchdog defaults are `mode: auto`, `device: /dev/watchdog0` and
+`timeout_seconds: 60`. Root and initrd use the same systemd watchdog policy.
+`auto` works without a watchdog; when the selected device exists, boot acceptance
+requires it to be active and owned by the system manager. `required` also rejects
+missing hardware. Device selection accepts `/dev/watchdog0` through
+`/dev/watchdog31`; timeouts accept integers from 10 to 3600 seconds. Hardware
+may round the timeout to a supported value. `disabled` stops systemd from
+opening a watchdog, including during reboot. It does not disarm a watchdog
+already started by firmware or another owner. Qualify watchdog handover and
+recovery on the selected hardware before deployment.
 
 DNS, DHCP and NTP have built-in configuration. Discovery, RADIUS/directory
 policy, FRR, translation, IDS, metrics, logs, SNMP and VPP use integration

@@ -41,6 +41,9 @@ class IntegrationTests(unittest.TestCase):
         for name in ('etc/ssh/sshd_config', 'etc/sudoers.d/root', 'etc/passwd', 'etc/group', 'usr/bin/lanrith-runtime',
                      'usr/share/lanrith/owner.crt', 'usr/lib/repart.d/10-root.conf',
                      'usr/lib/systemd/system-generators/owner-hook', 'etc/ld.so.preload',
+                     'etc/systemd/system.conf.d/99-owner.conf',
+                     'usr/lib/systemd/system.conf.d/60-lanrith-watchdog.conf',
+                     'usr/local/lib/systemd/system.conf.d/99-owner.conf',
                      'usr/lib/systemd/system/var.mount', 'etc/systemd/system/efi.automount.d/owner.conf'):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)

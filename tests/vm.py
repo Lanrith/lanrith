@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -66,10 +67,55 @@ def connect(path, process):
     raise release.ReleaseError('Qualification socket did not become ready.')
 
 
+class SerialReader:
+    """Drain console output while SSH, image assembly or staging is blocked."""
+
+    LIMIT = 4*1024*1024
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.data = b''
+        self.closed = False
+        self.condition = threading.Condition()
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.receive, daemon=True)
+        self.thread.start()
+
+    def receive(self):
+        while not self.stopping.is_set():
+            try:
+                data = self.stream.recv(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                data = b''
+            with self.condition:
+                if not data:
+                    self.closed = True
+                    self.condition.notify_all()
+                    return
+                self.data = (self.data+data)[-self.LIMIT:]
+                self.condition.notify_all()
+
+    def close(self):
+        self.stopping.set()
+        try:
+            self.stream.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.thread.join(timeout=5)
+        self.stream.close()
+        release.require(not self.thread.is_alive(), 'Qualification console reader did not stop.')
+        with self.condition:
+            self.closed = True
+            self.data = b''
+
+
 class Guest:
     def __init__(self, work, secret, disk, *, medium=None, tpm=True):
         self.work, self.secret = work, secret
         self.process = self.tpm = self.serial = self.qmp = None
+        self.console = None
         self.buffer = b''
         self.last_diagnostic = None
         self.qmp_events = []
@@ -83,8 +129,22 @@ class Guest:
             '--enroll-cert', str(secret/'test.crt'), '--add-mok', OWNER, str(secret/'test.crt'), '--secure-boot')
         self.disk, self.medium, self.tpm_enabled = regular(disk), regular(medium) if medium else None, tpm
 
+    @property
+    def buffer(self):
+        if self.console is None:
+            return b''
+        with self.console.condition:
+            return self.console.data
+
+    @buffer.setter
+    def buffer(self, data):
+        if self.console is not None:
+            with self.console.condition:
+                self.console.data = data
+
     def start(self):
         release.require(self.process is None or self.process.poll() is not None, 'Guest is already running.')
+        self.qmp_events = []
         for name in ('qmp.sock', 'serial.sock', 'tpm.sock'):
             (self.work/name).unlink(missing_ok=True)
         arguments = ['qemu-system-x86_64', '-machine', 'q35,smm=on,accel=tcg', '-cpu', 'max',
@@ -125,6 +185,7 @@ class Guest:
             self.process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL,
                                             stdout=subprocess.DEVNULL, stderr=errors)
         self.serial, self.qmp = connect(self.work/'serial.sock', self.process), connect(self.work/'qmp.sock', self.process)
+        self.console = SerialReader(self.serial)
         self.qmp.recv(65536)
         self.control('qmp_capabilities')
         self.control('cont')
@@ -153,25 +214,23 @@ class Guest:
         deadline = time.monotonic()+timeout
         expressions = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
         while time.monotonic() < deadline:
-            for index, expression in enumerate(expressions):
-                match = expression.search(self.buffer)
-                if match:
-                    self.last_diagnostic = self.diagnostic()
-                    self.buffer = self.buffer[match.end():]
-                    return index
-            release.require(self.process.poll() is None, 'Guest stopped before the expected console event.')
-            try:
-                data = self.serial.recv(65536)
-                release.require(data, 'Guest console closed before the expected event.')
-                self.buffer = (self.buffer+data)[-4*1024*1024:]
-            except socket.timeout:
-                pass
+            with self.console.condition:
+                for index, expression in enumerate(expressions):
+                    match = expression.search(self.console.data)
+                    if match:
+                        self.last_diagnostic = self.diagnostic()
+                        self.console.data = self.console.data[match.end():]
+                        return index
+                release.require(self.process.poll() is None, 'Guest stopped before the expected console event.')
+                release.require(not self.console.closed, 'Guest console closed before the expected event.')
+                self.console.condition.wait(timeout=min(1, max(0, deadline-time.monotonic())))
         raise release.ReleaseError('Guest console event timed out: '+self.diagnostic())
 
     def diagnostic(self):
         # Emit only fixed public error literals and identifiers, never console
         # lines: the buffer can contain a disposable recovery key.
-        flags = {name: marker.lower() in self.buffer.lower() for name, marker in (
+        buffer = self.buffer
+        flags = {name: marker.lower() in buffer.lower() for name, marker in (
             ('secure-boot-rejection', b'Security Violation'), ('kernel-started', b'Linux version'),
             ('emergency-mode', b'emergency mode'), ('recovery-prompt', b'RECOVERY-KEY-STORED'),
             ('bootloader-menu', b'Linux Boot Manager'), ('kernel-panic', b'Kernel panic'),
@@ -197,16 +256,16 @@ class Guest:
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'require' and len(node.args)>1:
                     message = node.args[1]
-                    if isinstance(message, ast.Constant) and isinstance(message.value, str) and message.value.encode() in self.buffer:
+                    if isinstance(message, ast.Constant) and isinstance(message.value, str) and message.value.encode() in buffer:
                         literals.add(message.value)
-        clean = re.sub(rb'\x1b\[[0-9;?]*[ -/]*[@-~]', b'', self.buffer)
+        clean = re.sub(rb'\x1b\[[0-9;?]*[ -/]*[@-~]', b'', buffer)
         units = set()
         for line in clean.splitlines():
             if b'fail' in line.lower() or b'timed out' in line.lower():
                 units.update(match.decode() for match in re.findall(
                     rb'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', line))
         return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
-            'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(self.buffer).hexdigest()},sort_keys=True)
+            'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(buffer).hexdigest()},sort_keys=True)
 
     def ssh_arguments(self, command, *, agent=True):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -219,12 +278,7 @@ class Guest:
     def wait_shutdown(self, timeout=180):
         deadline = time.monotonic()+timeout
         while time.monotonic()<deadline and self.process.poll() is None:
-            try:
-                data = self.serial.recv(65536)
-                if data:
-                    self.buffer = (self.buffer+data)[-4*1024*1024:]
-            except socket.timeout:
-                pass
+            time.sleep(0.1)
         release.require(self.process.poll() is not None, 'Factory VM did not power off: '+self.diagnostic())
 
     def ssh(self, command, *, success=True, timeout=180, agent=True):
@@ -250,18 +304,14 @@ class Guest:
                 # A first boot can finish recovery enrollment before sshd and
                 # PAM are ready. Retry within the overall bounded boot window.
                 pass
-            try:
-                data = self.serial.recv(65536)
-                if data:
-                    self.buffer = (self.buffer+data)[-4*1024*1024:]
-            except socket.timeout:
-                pass
             time.sleep(2)
         raise release.ReleaseError('Guest did not pass its native health check over SSH: '+self.diagnostic())
 
     def close(self):
         stop(self.process)
         self.process = None
+        if self.console:
+            self.console.close()
         for client in (self.serial, self.qmp):
             if client:
                 client.close()

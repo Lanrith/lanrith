@@ -1,6 +1,7 @@
 """Assembly consumes an existing package tree and emits bounded boot policy."""
 
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,24 @@ from lanrith.release import ReleaseError
 
 
 class AssemblyTests(unittest.TestCase):
+    def test_watchdog_policy_survives_initrd_handover_and_explicit_disable(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            for mode in ('auto', 'required', 'disabled'):
+                value['hardware']['watchdog'] = {'mode': mode, 'device': '/dev/watchdog1', 'timeout_seconds': 90}
+                build.assembly(value, base, root/mode, version='0.1.0', sequence=9)
+                relative = 'usr/lib/systemd/system.conf.d/60-lanrith-watchdog.conf'
+                main = (root/mode/'mkosi.extra'/relative).read_text()
+                initrd = (root/mode/'mkosi.images/initrd/mkosi.extra'/relative).read_text()
+                self.assertEqual(main, initrd)
+                self.assertIn('WatchdogDevice=/dev/watchdog1\n', main)
+                self.assertIn('RuntimeWatchdogSec='+('off' if mode == 'disabled' else '90s')+'\n', main)
+                installed = json.loads((root/mode/'mkosi.extra/usr/share/lanrith/installed.json').read_bytes())
+                self.assertEqual(installed['watchdog']['mode'], mode)
+
     def test_selected_serial_administration_activates_its_recovery_guarded_watchdog(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
         with tempfile.TemporaryDirectory() as temporary:

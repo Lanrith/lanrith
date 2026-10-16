@@ -65,6 +65,11 @@ class ConfigTests(unittest.TestCase):
             lambda value: value['administration'].update(networks=[]),
             lambda value: value['networks'].update(other=copy.deepcopy(value['networks']['home'])),
             lambda value: value['hardware'].update(boot={'secure_boot': 'false'}),
+            lambda value: value['hardware'].update(watchdog={'mode': 'arbitrary'}),
+            lambda value: value['hardware'].update(watchdog={'device': '/dev/watchdog0\nOtherSetting=yes'}),
+            lambda value: value['hardware'].update(watchdog={'device': '/dev/disk/by-id/target'}),
+            lambda value: value['hardware'].update(watchdog={'timeout_seconds': True}),
+            lambda value: value['hardware'].update(watchdog={'timeout_seconds': 0}),
         )
         for mutate in mutations:
             value = copy.deepcopy(self.example)

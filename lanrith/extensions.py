@@ -21,6 +21,8 @@ PROTECTED = (
     'etc/systemd/system/ssh.', 'usr/lib/systemd/system/ssh.',
     'etc/systemd/system/multi-user.', 'usr/lib/systemd/system/multi-user.',
     'etc/systemd/system/boot-complete.', 'usr/lib/systemd/system/boot-complete.',
+    'etc/systemd/system.conf', 'usr/lib/systemd/system.conf.d/',
+    'usr/local/lib/systemd/system.conf.d/',
     'usr/lib/kernel/', 'usr/lib/dracut/', 'etc/dracut.conf', 'etc/dracut.conf.d/',
     'usr/share/initramfs-tools/', 'etc/initramfs-tools/',
     'etc/systemd/system-generators/', 'usr/lib/systemd/system-generators/',

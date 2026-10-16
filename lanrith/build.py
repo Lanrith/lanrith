@@ -65,7 +65,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'payload_limits': {'root': value['hardware']['storage']['root_mib']*1024*1024,
                     'verity': max(64, value['hardware']['storage']['root_mib']//16)*1024*1024,
                     'verity-sig': 16384, 'uki': (value['hardware']['storage']['esp_mib']-32)*1024*1024},
-                 'boot': value['hardware']['boot'],
+                 'boot': value['hardware']['boot'], 'watchdog': value['hardware']['watchdog'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
     metadata = overlay / 'usr/share/lanrith'
@@ -221,6 +221,14 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     initrd_overlay = initrd/'mkosi.extra'
     (initrd_overlay/'etc').mkdir(parents=True)
     (initrd_overlay/'etc/machine-id').write_text(machine_id+'\n')
+    watchdog = value['hardware']['watchdog']
+    timeout = 'off' if watchdog['mode'] == 'disabled' else str(watchdog['timeout_seconds'])+'s'
+    for tree in (overlay, initrd_overlay):
+        path = tree/'usr/lib/systemd/system.conf.d/60-lanrith-watchdog.conf'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('[Manager]\nWatchdogDevice='+watchdog['device']+'\n'
+                        'RuntimeWatchdogSec='+timeout+'\n'+
+                        ('RebootWatchdogSec=off\n' if watchdog['mode'] == 'disabled' else ''))
     initrd_masks = initrd_overlay/'etc/systemd/system'
     initrd_masks.mkdir(parents=True)
     (initrd_masks/'systemd-repart.service').symlink_to('/dev/null')
