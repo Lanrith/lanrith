@@ -217,6 +217,7 @@ def provision():
     installed = json.loads(read(Path('/sysroot/usr/share/lanrith/installed.json'), 65536))
     secure_boot(installed['boot'].get('secure_boot', True))
     disk, active = verified_root('/sysroot')
+    command(['udevadm', 'settle', '--timeout=30'])
     table = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PKNAME,PARTLABEL']))
     pending, media = list(table['blockdevices']), []
     while pending:

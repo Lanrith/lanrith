@@ -2,6 +2,7 @@
 """Qualify real UEFI boots and A/B updates using disposable regular-file disks."""
 
 import argparse
+import ast
 from contextlib import ExitStack
 import datetime
 import hashlib
@@ -69,6 +70,7 @@ class Guest:
         self.work, self.secret = work, secret
         self.process = self.tpm = self.serial = self.qmp = None
         self.buffer = b''
+        self.last_diagnostic = None
         self.environment = {key: value for key, value in os.environ.items()
                             if key not in ('SSH_AUTH_SOCK', 'SSH_AGENT_PID')}
         self.environment['SSH_AUTH_SOCK'] = str(secret/'agent.sock')
@@ -152,6 +154,7 @@ class Guest:
             for index, expression in enumerate(expressions):
                 match = expression.search(self.buffer)
                 if match:
+                    self.last_diagnostic = self.diagnostic()
                     self.buffer = self.buffer[match.end():]
                     return index
             release.require(self.process.poll() is None, 'Guest stopped before the expected console event.')
@@ -161,13 +164,31 @@ class Guest:
                 self.buffer = (self.buffer+data)[-4*1024*1024:]
             except socket.timeout:
                 pass
-        # Console data can contain a disposable recovery key. Never export it.
+        raise release.ReleaseError('Guest console event timed out: '+self.diagnostic())
+
+    def diagnostic(self):
+        # Emit only fixed public error literals and identifiers, never console
+        # lines: the buffer can contain a disposable recovery key.
         flags = {name: marker.lower() in self.buffer.lower() for name, marker in (
             ('secure-boot-rejection', b'Security Violation'), ('kernel-started', b'Linux version'),
             ('emergency-mode', b'emergency mode'), ('recovery-prompt', b'RECOVERY-KEY-STORED'),
             ('bootloader-menu', b'Linux Boot Manager'))}
-        raise release.ReleaseError('Guest console event timed out: '+json.dumps(flags,sort_keys=True)+
-            ' (diagnostic sha256 '+hashlib.sha256(self.buffer).hexdigest()+').')
+        literals = set()
+        for module in ('factory', 'update', 'release'):
+            tree = ast.parse((PROJECT/'lanrith'/(module+'.py')).read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'require' and len(node.args)>1:
+                    message = node.args[1]
+                    if isinstance(message, ast.Constant) and isinstance(message.value, str) and message.value.encode() in self.buffer:
+                        literals.add(message.value)
+        clean = re.sub(rb'\x1b\[[0-9;?]*[ -/]*[@-~]', b'', self.buffer)
+        units = set()
+        for line in clean.splitlines():
+            if b'fail' in line.lower() or b'timed out' in line.lower():
+                units.update(match.decode() for match in re.findall(
+                    rb'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', line))
+        return json.dumps({'flags':flags,'literal_errors':sorted(literals)[:32],
+            'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(self.buffer).hexdigest()},sort_keys=True)
 
     def ssh_arguments(self, command, *, agent=True):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -176,6 +197,17 @@ class Guest:
             '-o', 'HostKeyAlias=lanrith-qualification',
             '-o', 'UserKnownHostsFile='+str(self.secret/'known-hosts'),
             '-p', str(self.port), 'admin@127.0.0.1', command]
+
+    def wait_shutdown(self, timeout=180):
+        deadline = time.monotonic()+timeout
+        while time.monotonic()<deadline and self.process.poll() is None:
+            try:
+                data = self.serial.recv(65536)
+                if data:
+                    self.buffer = (self.buffer+data)[-4*1024*1024:]
+            except socket.timeout:
+                pass
+        release.require(self.process.poll() is not None, 'Factory VM did not power off: '+self.diagnostic())
 
     def ssh(self, command, *, success=True, timeout=180):
         result = subprocess.run(self.ssh_arguments(command), stdin=subprocess.DEVNULL,
@@ -319,10 +351,12 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
         if medium:
             print('Native VM: booting the disposable factory installation medium.',flush=True)
             guest.start()
-            guest.expect(rb'Type ERASE-AND-INSTALL .* to continue: ',
-                         'ERASE-AND-INSTALL /dev/disk/by-id/virtio-lanrith-qa-disk')
+            event = guest.expect_any([rb'Type ERASE-AND-INSTALL .* to continue: ',
+                                     rb'(?:You are in|Entering) emergency mode'])
+            release.require(event == 0, 'Factory initrd entered emergency mode: '+guest.last_diagnostic)
+            guest.serial.sendall(b'ERASE-AND-INSTALL /dev/disk/by-id/virtio-lanrith-qa-disk\r')
             guest.expect(rb'Installation read-back passed')
-            guest.process.wait(timeout=180)
+            guest.wait_shutdown()
             guest.close()
             guest.medium = None
         print('Native VM: booting the installed '+('manual' if manual else 'TPM2')+' state profile.',flush=True)

@@ -223,8 +223,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     entry.chmod(0o755)
     (initrd_units/'lanrith-factory.service').write_text(
         '[Unit]\nDescription=Verify factory media and explicitly provision the selected disk\n'
-        'DefaultDependencies=no\nRequires=initrd-root-fs.target\nAfter=initrd-root-fs.target\n'
-        'Before=initrd-switch-root.target\nOnFailure=emergency.target\n'
+        'DefaultDependencies=no\nRequires=initrd-root-fs.target\nAfter=initrd-root-fs.target systemd-udev-trigger.service\n'
+        'Before=initrd-udevadm-cleanup-db.service initrd-cleanup.service initrd-switch-root.target shutdown.target\n'
+        'Conflicts=shutdown.target\n'
+        'OnFailure=emergency.target\n'
         '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-factory provision\n'
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
         'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n')
