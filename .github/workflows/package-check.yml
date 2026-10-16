@@ -7,7 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: package-qualification-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   build:
     name: Unsigned base and package checks
@@ -34,11 +34,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/build-base.py --work "$RUNNER_TEMP/lanrith-work" --output "$RUNNER_TEMP/lanrith-output"
       - name: Retain qualification outputs
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-package-qualification
           path: |
-            ${{ runner.temp }}/lanrith-output/*.json
-            ${{ runner.temp }}/lanrith-output/*.txt
-          if-no-files-found: error
+            ${{ runner.temp }}/lanrith-output/*
+          if-no-files-found: warn
           retention-days: 7

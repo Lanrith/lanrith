@@ -264,8 +264,11 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
     from .release import document, canonical
     manifest = document(canonical(manifest))
     require(manifest['purpose'] == 'update', 'Only update payloads can be promoted.')
-    limits = installed.get('payload_limits', {'root': 2048*1024*1024, 'verity': 300*1024*1024,
-                                             'verity-sig': 16384, 'uki': 256*1024*1024})
+    esp = Path(installed['esp'])
+    require(esp.is_mount(), 'EFI filesystem must be mounted before upload admission.')
+    disk, active = root_disk()
+    limits = upload_limits(manifest, installed, geometry(disk), disk=disk,
+                           active_partitions=active, esp_available=shutil.disk_usage(esp).free)
     members = {'release.json': 65536, 'release.json.sig': 16384}
     for artifact in manifest['artifacts']:
         require(artifact['size'] <= limits[artifact['role']], 'Upload exceeds installed payload capacity.')
@@ -306,3 +309,21 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
             os.rename(root, destination)
             root.mkdir(mode=0o700)  # Preserve TemporaryDirectory's cleanup ownership.
     return stage(destination, installed_path)
+
+
+def upload_limits(manifest, installed, partitions, *, disk, active_partitions, esp_available):
+    """Bound upload copies to actual inactive slots and explicit owner policy."""
+    value = plan(manifest, installed, partitions, disk=disk, active_partitions=active_partitions,
+                 esp_available=esp_available)
+    limits = {role: next(part['size'] for part in partitions if part['number'] == target['number'])
+              for role, target in value['partitions'].items()}
+    limits['uki'] = esp_available-32*1024*1024
+    policy = installed.get('payload_limits')
+    if policy is not None:
+        require(isinstance(policy, dict) and set(policy) == set(limits) and
+                all(type(size) is int and size > 0 for size in policy.values()),
+                'Installed upload capacity policy is malformed.')
+        limits = {role: min(limit, policy[role]) for role, limit in limits.items()}
+    require(all(artifact['size'] <= limits[artifact['role']] for artifact in manifest['artifacts']),
+            'Upload exceeds installed payload capacity.')
+    return limits

@@ -49,6 +49,19 @@ class UpdatePlanTests(unittest.TestCase):
         self.assertIn('TriesLeft=3', transfers['59-uki.transfer'])
         self.assertNotIn('current-', ''.join(transfers.values()))
 
+    def test_upload_capacity_comes_from_real_slots_and_owner_policy(self):
+        root = next(artifact for artifact in self.manifest['artifacts'] if artifact['role'] == 'root')
+        root['size'] = 3*1024**3
+        for part in self.partitions:
+            if part['type'] == update.GUIDS['root']:
+                part['size'] = 4*1024**3
+        arguments = {'disk': '/dev/vda', 'active_partitions': {3, 5}, 'esp_available': 64*1024**2}
+        limits = update.upload_limits(self.manifest, self.installed, self.partitions, **arguments)
+        self.assertEqual(limits['root'], 4*1024**3)
+        self.installed['payload_limits'] = {**limits, 'root': 2*1024**3}
+        with self.assertRaises(ReleaseError):
+            update.upload_limits(self.manifest, self.installed, self.partitions, **arguments)
+
     def test_ambiguous_mounted_small_or_foreign_disk_targets_are_rejected(self):
         cases = (
             lambda: self.partitions.pop(),

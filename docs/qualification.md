@@ -36,3 +36,15 @@ the matching builder's `systemd-repart`. It verifies that the second slot and
 state appear without moving or changing signed data, hashes or signatures.
 It uses regular files and a disposable test authority. TPM and encrypted-state
 boot behavior remain separate qualification requirements.
+
+`tests/vm.py` is the native UEFI qualification runner used by the full base
+build. It creates regular-file disks, a disposable TPM, its own SSH agent and
+a test signing authority in tmpfs. Restricted guest networking permits only
+loopback administration. It exercises installation read-back, Secure Boot,
+verity, TPM and manual state encryption, recovery acknowledgment, SSH/PAM,
+one-shot updates, explicit acceptance, replay and tamper rejection,
+interrupted staging, failed-health fallback and populated state. Only the
+bounded JSON result is retained publicly; test disk images, recovery keys,
+serial transcripts and test credentials are not release artifacts. Adding
+this runner does not establish a passing result: the actual candidate must
+complete it before production admission can be enabled.
