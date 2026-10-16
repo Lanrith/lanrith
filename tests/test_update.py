@@ -32,25 +32,44 @@ class UpdatePlanTests(unittest.TestCase):
                         update.select_boot_once(entry)
                     command.assert_not_called()
 
-    def test_one_shot_requires_the_pending_counter_and_exact_firmware_readback(self):
+    def test_one_shot_resolves_the_admitted_file_and_checks_exact_firmware_readback(self):
         with tempfile.TemporaryDirectory() as temporary:
             entry = Path(temporary)/'lanrith_10+3-0.efi'
             variable = Path(temporary)/'variable'
             entry.write_bytes(b'synthetic pending image')
-            flushed = []
             fsync = os.fsync
-            def flush(descriptor):
-                fsync(descriptor)
-                flushed.append(os.fstat(descriptor).st_ino)
-            def select(arguments):
-                self.assertEqual(arguments, ['bootctl', 'set-oneshot', entry.name])
-                self.assertEqual(flushed, [entry.stat().st_ino, entry.parent.stat().st_ino])
-                variable.write_bytes(b'\x07\x00\x00\x00'+(entry.name+'\0').encode('utf-16-le'))
-            with patch.object(update.os, 'fsync', side_effect=flush), patch.object(update, 'command', side_effect=select):
+            for identifier in ('lanrith_10.efi', entry.name):
+                flushed = []
+                def flush(descriptor):
+                    fsync(descriptor)
+                    flushed.append(os.fstat(descriptor).st_ino)
+                def select(arguments):
+                    self.assertEqual(flushed, [entry.stat().st_ino, entry.parent.stat().st_ino])
+                    if arguments == ['bootctl', '--json=short', 'list']:
+                        return json.dumps([{'type':'type2','source':'esp','path':str(entry),'id':identifier}])
+                    self.assertEqual(arguments, ['bootctl', 'set-oneshot', identifier])
+                    variable.write_bytes(b'\x07\x00\x00\x00'+(identifier+'\0').encode('utf-16-le'))
+                with self.subTest(identifier=identifier), patch.object(update.os, 'fsync', side_effect=flush), \
+                        patch.object(update, 'command', side_effect=select):
+                    update.select_boot_once(entry, variable=variable)
+            variable.write_bytes(b'\x07\x00\x00\x00'+('lanrith_99.efi\0').encode('utf-16-le'))
+            inventory=json.dumps([{'type':'type2','source':'esp','path':str(entry),'id':'lanrith_10.efi'}])
+            with patch.object(update, 'command', return_value=inventory), self.assertRaisesRegex(ReleaseError, 'one-shot entry'):
                 update.select_boot_once(entry, variable=variable)
-            variable.write_bytes(b'\x07\x00\x00\x00'+('lanrith_10.efi\0').encode('utf-16-le'))
-            with patch.object(update, 'command'), self.assertRaisesRegex(ReleaseError, 'one-shot entry'):
-                update.select_boot_once(entry, variable=variable)
+
+    def test_boot_inventory_cannot_select_a_foreign_or_ambiguous_image(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            entry=Path(temporary)/'lanrith_10+3-0.efi'
+            entry.write_bytes(b'synthetic pending image')
+            valid={'type':'type2','source':'esp','path':str(entry),'id':'lanrith_10.efi'}
+            invalid=[[], [valid,valid], [{**valid,'id':'lanrith_99.efi'}],
+                     [{**valid,'path':str(entry.parent/'other.efi')}],
+                     [{**valid,'source':'xbootldr'}], [{**valid,'type':'auto'}], {}]
+            for inventory in invalid:
+                with self.subTest(inventory=inventory), patch.object(update,'command',return_value=json.dumps(inventory)) as command:
+                    with self.assertRaises(ReleaseError):
+                        update.select_boot_once(entry)
+                    command.assert_called_once_with(['bootctl','--json=short','list'])
 
     @unittest.skipUnless(Path('/usr/lib/systemd/systemd-sysupdate').is_file() and
                          platform.freedesktop_os_release().get('ID') == 'debian' and

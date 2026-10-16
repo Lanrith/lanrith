@@ -262,11 +262,20 @@ def select_boot_once(entry, *, variable=Path('/sys/firmware/efi/efivars/LoaderEn
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-    # systemd-boot matches the pending Type-2 filename including its boot
-    # counter. The counter-free name does not exist until blessing succeeds.
-    command(['bootctl', 'set-oneshot', entry.name])
+    # Resolve the installed bootloader's ID for this exact admitted file.
+    # Debian's loader normalizes boot counters out of the entry ID.
+    entries = json.loads(command(['bootctl', '--json=short', 'list']))
+    require(isinstance(entries, list), 'Boot loader entry inventory is malformed.')
+    matches = [item for item in entries if isinstance(item, dict) and
+               item.get('type') == 'type2' and item.get('source') == 'esp' and
+               item.get('path') == str(entry)]
+    stable = re.sub(r'[+][0-9]+(?:-[0-9]+)?(?=[.]efi$)', '', entry.name)
+    require(len(matches) == 1 and matches[0].get('id') in (entry.name, stable),
+            'Boot loader does not identify exactly the admitted pending image.')
+    identifier = matches[0]['id']
+    command(['bootctl', 'set-oneshot', identifier])
     data = read(variable, 4096)
-    require(6 <= len(data) and data[4:].decode('utf-16-le').rstrip('\x00') == entry.name,
+    require(6 <= len(data) and data[4:].decode('utf-16-le').rstrip('\x00') == identifier,
             'Boot loader did not retain the requested one-shot entry.')
 
 

@@ -34,8 +34,9 @@ ambiguous or foreign targets fail. The inactive signature/hash/root are written
 before the boot-counted UKI. The accepted default is retained and only a
 one-shot boot is selected. Staging does not itself reboot.
 The admitted pending UKI and its directory are flushed before the boot choice
-is published. One-shot selection uses the pending filename, including its boot
-counter; the counter-free name exists only after a successful boot is blessed.
+is published. One-shot selection resolves the bootloader's reported entry ID
+for that exact pending file and checks the resulting firmware choice. The
+pending file keeps its boot counter until a successful boot is blessed.
 
 The EFI partition is discovered from the running boot, verified as a FAT
 partition on the verified-root disk, and accessed through its mounted filesystem.
