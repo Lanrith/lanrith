@@ -1,7 +1,7 @@
 name: Package qualification
 on:
   pull_request:
-    paths: ['builders/**', 'scripts/**', 'security/**', 'mkosi/**', 'lanrith/**', 'build-inputs.json', '.github/workflows/package-check.yml']
+    paths: ['builders/**', 'scripts/**', 'security/**', 'mkosi/**', 'lanrith/**', 'tests/**', 'build-inputs.json', 'VERSION', '.github/workflows/**']
   workflow_dispatch:
 permissions:
   contents: read
