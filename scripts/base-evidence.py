@@ -30,6 +30,24 @@ def runtime_paths(names):
                 'Base contains unnecessary package-manager, build or cache payload.')
 
 
+def initrd_paths(path):
+    names = set()
+    with tarfile.open(path) as archive:
+        for member in archive:
+            name = member.name.removeprefix('./').rstrip('/')
+            require(not name.startswith('/') and '..' not in Path(name).parts and name not in names and
+                    not member.isdev() and not member.isfifo(), 'Initrd has an unsafe or duplicate path.')
+            require(not name.startswith(('boot/', 'vmlinuz', 'initrd.img')),
+                    'Initrd contains a redundant boot image.')
+            require(not name.startswith(('root/.ssh/', 'etc/ssh/ssh_host_', 'var/lib/lanrith/')) and
+                    not (member.isfile() and name.startswith('etc/ssl/private/')),
+                    'Initrd contains owner identity or private material.')
+            names.add(name)
+    require({'usr/lib/systemd/systemd', 'usr/bin/python3'} <= names,
+            'Initrd is missing required factory runtime components.')
+    runtime_paths(names)
+
+
 def binary_subjects(custom):
     try:
         stamp = datetime.datetime.fromisoformat(custom['assessed_at'])
@@ -75,6 +93,7 @@ def main():
     inventory = json.loads((directory/'inventory.json').read_text())
     custom = json.loads((directory/'custom-security.json').read_text())
     subjects = binary_subjects(custom)
+    initrd_paths(directory/'lanrith-initrd-base.tar.gz')
     subprocess.run([sys.executable, str(ROOT/'security/audit-package-manifest.py'),
                     '--manifest', str(directory/'inventory.json'), '--policy', str(ROOT/'security/policy.json'),
                     '--release', args.version, '--status', str(directory/'package-policy.json')], check=True)

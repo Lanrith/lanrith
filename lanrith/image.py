@@ -25,5 +25,5 @@ def initrd_configuration(snapshot):
         'CompressOutput=gz\nManifestFormat=json\n'
         '[Content]\nWithRecommends=no\nWithDocs=no\nCleanPackageMetadata=yes\nRemovePackages=\n'
         'RemoveFiles=/usr/share/locale /usr/lib/python3.*/test /usr/lib/python3.*/idlelib '
-        '/boot/initrd.img-* **/__pycache__ /usr/bin/dpkg* /usr/sbin/dpkg* /usr/lib/dpkg /usr/share/dpkg\n'
+        '/boot /vmlinuz* /initrd.img* **/__pycache__ /usr/bin/dpkg* /usr/sbin/dpkg* /usr/lib/dpkg /usr/share/dpkg\n'
         'Packages=\nPackages='+','.join(packages)+'\n')

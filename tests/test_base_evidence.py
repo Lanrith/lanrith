@@ -34,6 +34,11 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
         alloy = b'synthetic executable prefix'+subject+b'suffix'
         (directory/'apt-metadata').write_bytes(metadata)
         (directory/'alloy-beyla.scan').write_bytes(subject)
+        with tarfile.open(directory/'lanrith-initrd-base.tar.gz', 'w:gz') as archive:
+            for name in ('usr/lib/systemd/systemd', 'usr/bin/python3'):
+                member = tarfile.TarInfo(name)
+                member.size = 7
+                archive.addfile(member, io.BytesIO(b'fixture'))
         with tarfile.open(directory/'lanrith-base.tar.gz', 'w:gz') as archive:
             names = ['usr/lib/systemd/systemd', 'usr/bin/python3']
             names += ['usr/bin/'+name for name in ('alloy', 'prometheus-node-exporter', 'discovery-bridge',
@@ -94,6 +99,17 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
                 ReleaseError, 'Installed custom binary differs'):
             self.run_fixture(Path(temporary), prefix='./', altered_binary=True)
+
+    def test_initrd_cannot_reintroduce_build_tools_or_a_second_kernel(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'initrd.tar.gz'
+            for extra in ('usr/bin/dpkg', 'boot/vmlinuz-test', '../escape', 'etc/ssl/private/owner.key'):
+                with self.subTest(path=extra):
+                    with tarfile.open(path, 'w:gz') as archive:
+                        for name in ('usr/lib/systemd/systemd', 'usr/bin/python3', extra):
+                            archive.addfile(tarfile.TarInfo(name))
+                    with self.assertRaises(ReleaseError):
+                        evidence.initrd_paths(path)
 
     def test_repackaging_cannot_refresh_an_expired_or_invalid_custom_assessment(self):
         with tempfile.TemporaryDirectory() as temporary:
