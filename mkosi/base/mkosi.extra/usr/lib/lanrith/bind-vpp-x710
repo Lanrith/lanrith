@@ -3,7 +3,7 @@
 # standalone LAN, and OOB are intentionally never considered here.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 bdf=$lanrith_vpp_bdf
 expected_group=$lanrith_vpp_iommu_group

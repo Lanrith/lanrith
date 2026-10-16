@@ -4,7 +4,7 @@
 # owns only the host-vpp-services interface and never the physical X710 here.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 socket=/run/vpp/cli.sock
 interface=$lanrith_vpp_service_interface

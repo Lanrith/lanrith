@@ -140,6 +140,11 @@ def main():
     build = args.work / 'image'
     build.mkdir()
     shutil.copytree(PROJECT / 'mkosi/base', build, dirs_exist_ok=True)
+    version = (PROJECT / 'VERSION').read_text().strip()
+    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
+    platform = build/'mkosi.extra/usr/share/lanrith'
+    platform.mkdir(parents=True,exist_ok=True)
+    (platform/'platform-version').write_text(version+'\n')
     shutil.copytree(packages, build / 'mkosi.packages')
     pam = build / 'mkosi.extra/usr/lib/x86_64-linux-gnu/security/pam_rssh.so'
     pam.parent.mkdir(parents=True, exist_ok=True)
@@ -147,8 +152,6 @@ def main():
     notices = build/'mkosi.extra/usr/share/doc/pam-rssh/THIRD-PARTY-NOTICES'
     notices.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(packages/'pam-rssh.notices.txt', notices)
-    version = (PROJECT / 'VERSION').read_text().strip()
-    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
     package_list = json.loads((PROJECT / 'mkosi/packages.json').read_text())['packages']
     (build / 'mkosi.conf').write_text(
         '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'

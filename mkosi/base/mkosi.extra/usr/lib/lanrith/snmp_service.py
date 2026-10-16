@@ -18,7 +18,7 @@ from systemd_service import Service as SystemdService
 
 
 ROOT = Path('/var/lib/lanrith/snmp')
-POLICY = Path('/usr/lib/lanrith/snmp-runtime-policy.json')
+POLICY = Path('/etc/lanrith/integrations/snmp-runtime-policy.json')
 WORK = Path('/run/lanrith-snmp')
 PERSISTENT = Path('/var/lib/snmp')
 FILENAME = 'snmpd.conf'

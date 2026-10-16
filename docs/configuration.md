@@ -50,6 +50,14 @@ Place custom runtime helpers under `/usr/lib/lanrith/integrations/` or an
 owner-specific directory, and integration data under `/etc/` or
 `/usr/share/lanrith/integrations/`.
 
+Optional namespace, translation, OOB and acceleration helpers read the
+owner's `/etc/lanrith/integrations/network-profile.sh`; its settings use the
+`lanrith_` prefix. SNMP reads
+`/etc/lanrith/integrations/snmp-runtime-policy.json`. These files are absent
+from the neutral base and can be supplied by an admitted integration without
+overwriting protected runtime code. Keep the associated units disabled until
+that integration's configuration and hardware have been qualified.
+
 Extensions are executable runtime code and policy supplied by the owner. Review
 all bytes and qualify the resulting network behavior, disabled combinations,
 state migration and withdrawal behavior. Adding a package to an owner image

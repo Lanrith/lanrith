@@ -3,7 +3,7 @@
 # by Unbound's required network unit and is deliberately not changed.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 namespace=$lanrith_service_namespace
 

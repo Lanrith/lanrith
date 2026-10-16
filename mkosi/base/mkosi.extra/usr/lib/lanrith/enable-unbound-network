@@ -4,7 +4,7 @@
 # provider /48; the DHCP/PD profile derives a stable service /64 at runtime.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 namespace=$lanrith_service_namespace
 host_link=$lanrith_service_host_link

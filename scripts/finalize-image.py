@@ -10,6 +10,16 @@ import tempfile
 root = Path(os.environ['BUILDROOT']).resolve()
 root.chmod(0o755)
 profile = json.loads((root/'usr/share/lanrith/resolved.json').read_text())
+installed = json.loads((root/'usr/share/lanrith/installed.json').read_text())
+os_release = root/'usr/lib/os-release'
+lines = os_release.read_text().splitlines()
+branding = {'NAME':'Lanrith','PRETTY_NAME':'Lanrith '+installed['platform_version'],
+            'ID':'lanrith','ID_LIKE':'debian','VERSION':installed['platform_version'],
+            'VERSION_ID':installed['platform_version'],'IMAGE_ID':installed['image_id'],
+            'IMAGE_VERSION':installed['platform_version'],
+            'LANRITH_DEPLOYMENT_SEQUENCE':str(installed['deployment_sequence'])}
+lines = [line for line in lines if line.partition('=')[0] not in branding]
+os_release.write_text('\n'.join(lines+[key+'='+json.dumps(value) for key,value in branding.items()])+'\n')
 username = profile['administration']['username']
 if username != 'admin':
     if any(line.split(':')[0] == username for line in (root/'etc/passwd').read_text().splitlines()):

@@ -4,7 +4,7 @@
 # FRR, and service-plane acceptance before they bless a pending boot entry.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 for unit in nftables.service ssh.service systemd-networkd.service \
   lanrith-network-base.service lanrith-nat64.service \

@@ -3,7 +3,7 @@
 # interface up, bind a PCI device, add an address, or change a route.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 check_interface() {
   expected_name=$1

@@ -342,8 +342,11 @@ logger -t lanrith-qualification synthetic-persistent-state
 journalctl --sync
 ''')
         state = root(guest, STATE).stdout
-        root(guest, '''for unit in frr freeradius suricata snmpd alloy discovery-bridge router-policy-reader; do
-! systemctl is-active --quiet "$unit.service" || exit 1
+        root(guest, '''for unit in frr.service freeradius.service suricata.service snmpd.service alloy.service \
+discovery-bridge.service lanrith-policy-reader.service lanrith-policy-helper.service \
+lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket lanrith-radius-runtime.service \
+lanrith-vpp-service-attachment.service lanrith-nat64.service lanrith-nat64-internal.service lanrith-nat46.service; do
+! systemctl is-active --quiet "$unit" || exit 1
 done''')
         if manual:
             guest.close()

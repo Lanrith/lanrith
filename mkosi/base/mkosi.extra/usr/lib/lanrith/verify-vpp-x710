@@ -3,7 +3,7 @@
 # without a default route. This is not an edge-routing configuration.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/network-checks.sh
 
 bdf=$lanrith_vpp_bdf

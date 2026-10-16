@@ -2,6 +2,6 @@
 # Use the shared owner for service namespace creation and cleanup.
 set -eu
 set -a
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 set +a
 exec python3 /usr/lib/lanrith/service_namespace.py start

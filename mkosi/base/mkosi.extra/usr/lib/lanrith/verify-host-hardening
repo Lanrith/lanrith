@@ -2,7 +2,7 @@
 # Verify the signed service-state and local kernel attack-surface policy.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/assertions.sh
 
 # Boot counting is safe only when a healthy candidate can remove its tries

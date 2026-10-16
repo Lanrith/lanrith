@@ -9,7 +9,7 @@ Before=lanrith-boot-health.service boot-complete.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-Environment=HOMELAB_ROUTER_BOOT_TIMEOUT_SECONDS=120
+Environment=LANRITH_BOOT_TIMEOUT_SECONDS=120
 # The script shares this 120-second readiness deadline with nested verifiers.
 # Systemd allows ten seconds to terminate a stuck child after that deadline.
 TimeoutStartSec=130s

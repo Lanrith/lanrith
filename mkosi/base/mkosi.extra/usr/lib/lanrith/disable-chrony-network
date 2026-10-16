@@ -2,7 +2,7 @@
 # Remove only Chrony's service source address when the service stops.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 namespace=$lanrith_service_namespace
 if [ "$lanrith_wan_mode" != 'standalone_lab' ] && \

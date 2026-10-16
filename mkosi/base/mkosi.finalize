@@ -10,6 +10,16 @@ import subprocess
 root = Path(os.environ['BUILDROOT'])
 metadata = root/'usr/share/lanrith'
 metadata.mkdir(parents=True, exist_ok=True)
+version = (metadata/'platform-version').read_text().strip()
+os_release = root/'usr/lib/os-release'
+lines = os_release.read_text().splitlines()
+branding = {'NAME':'Lanrith','PRETTY_NAME':'Lanrith '+version,'ID':'lanrith','ID_LIKE':'debian',
+            'VERSION':version,'VERSION_ID':version,'IMAGE_ID':'lanrith','IMAGE_VERSION':version,
+            'HOME_URL':'https://github.com/Lanrith/lanrith',
+            'SUPPORT_URL':'https://github.com/Lanrith/lanrith/blob/main/docs/operations.md',
+            'BUG_REPORT_URL':'https://github.com/Lanrith/lanrith/security'}
+lines = [line for line in lines if line.partition('=')[0] not in branding]
+os_release.write_text('\n'.join(lines+[key+'='+json.dumps(value) for key,value in branding.items()])+'\n')
 result = subprocess.run(['chroot', str(root), 'apt-cache', 'dumpavail'],
                         check=True, capture_output=True, timeout=60)
 (metadata/'apt-metadata').write_bytes(result.stdout)

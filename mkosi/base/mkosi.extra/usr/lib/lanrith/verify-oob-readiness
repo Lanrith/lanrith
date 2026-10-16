@@ -4,7 +4,7 @@
 # never print addresses, keys, or service configuration.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 expected_mac=$lanrith_oob_mac_address
 expected_cidr=$lanrith_oob_ipv4_cidr

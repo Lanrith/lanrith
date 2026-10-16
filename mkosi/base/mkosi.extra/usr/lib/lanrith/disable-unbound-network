@@ -4,7 +4,7 @@
 # addresses belonging to the other namespace services are preserved.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 
 namespace=$lanrith_service_namespace
 host_link=$lanrith_service_host_link
