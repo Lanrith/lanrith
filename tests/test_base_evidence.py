@@ -1,0 +1,68 @@
+"""Read actual tar headers while retaining neutral-image privacy checks."""
+
+import importlib.util
+import io
+import json
+from pathlib import Path
+import sys
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from lanrith.release import ReleaseError
+
+source = Path(__file__).resolve().parents[1] / 'scripts/base-evidence.py'
+spec = importlib.util.spec_from_file_location('base_evidence', source)
+evidence = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(evidence)
+
+
+class BaseArchiveEvidenceTests(unittest.TestCase):
+    def run_fixture(self, directory, *, prefix, state=False, duplicate=False):
+        metadata = b'Package: synthetic\nVersion: 1\n\n'
+        with tarfile.open(directory/'lanrith-base.tar.gz', 'w:gz') as archive:
+            names = ['usr/lib/systemd/systemd', 'usr/bin/python3', 'usr/share/lanrith/apt-metadata']
+            names += ['usr/bin/'+name for name in ('alloy', 'prometheus-node-exporter', 'discovery-bridge',
+                'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
+                'router-policy-check', 'router-policy-status', 'router-policy-recover')]
+            names += ['usr/share/doc/alloy/security/beyla']
+            for name in names:
+                data = metadata if name.endswith('apt-metadata') else b'synthetic fixture'
+                member = tarfile.TarInfo(prefix+name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+            if state:
+                member = tarfile.TarInfo(prefix+'var/lib/lanrith/ssh-host-keys')
+                member.type = tarfile.DIRTYPE
+                archive.addfile(member)
+            if duplicate:
+                member = tarfile.TarInfo('usr/share/lanrith/apt-metadata')
+                member.size = len(metadata)
+                archive.addfile(member, io.BytesIO(metadata))
+        (directory/'inventory.json').write_text(json.dumps({'packages': []}))
+        (directory/'custom-security.json').write_text(json.dumps({'result': 'pass'}))
+
+        def audited(arguments, **_):
+            status = Path(arguments[arguments.index('--status')+1])
+            status.write_text('{}' if status.name == 'package-policy.json' else 'Synthetic audit passed\n')
+            if '--source-map-output' in arguments:
+                Path(arguments[arguments.index('--source-map-output')+1]).write_text('{}')
+
+        with patch.object(sys, 'argv', ['base-evidence.py', '--directory', str(directory), '--version', '0.1.0']), \
+                patch.object(evidence.subprocess, 'run', side_effect=audited), \
+                patch.object(evidence.sbom, 'document', return_value={'synthetic': True}):
+            evidence.main()
+        self.assertEqual((directory/'apt-metadata').read_bytes(), metadata)
+        self.assertFalse(json.loads((directory/'security.json').read_text())['production_qualified'])
+
+    def test_metadata_uses_the_real_header_for_both_native_tar_spellings(self):
+        for prefix in ('', './'):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as temporary:
+                self.run_fixture(Path(temporary), prefix=prefix)
+
+    def test_owner_state_and_normalized_duplicate_headers_remain_rejected(self):
+        for change in ({'state': True}, {'duplicate': True}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                with self.assertRaises(ReleaseError):
+                    self.run_fixture(Path(temporary), prefix='./', **change)

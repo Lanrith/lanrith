@@ -222,10 +222,21 @@ class Guest:
         while time.monotonic() < deadline:
             release.require(self.process.poll() is None, 'Guest exited before SSH became ready.')
             command = 'sudo -n lanrith-runtime publish' if healthy else 'sudo -n id -u'
-            if self.ssh(command, success=False, timeout=20).returncode == 0:
-                return
+            try:
+                if self.ssh(command, success=False, timeout=20).returncode == 0:
+                    return
+            except subprocess.TimeoutExpired:
+                # A first boot can finish recovery enrollment before sshd and
+                # PAM are ready. Retry within the overall bounded boot window.
+                pass
+            try:
+                data = self.serial.recv(65536)
+                if data:
+                    self.buffer = (self.buffer+data)[-4*1024*1024:]
+            except socket.timeout:
+                pass
             time.sleep(2)
-        raise release.ReleaseError('Guest did not pass its native health check over SSH.')
+        raise release.ReleaseError('Guest did not pass its native health check over SSH: '+self.diagnostic())
 
     def close(self):
         stop(self.process)

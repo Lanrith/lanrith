@@ -30,12 +30,12 @@ def main():
                     '--release', args.version, '--status', str(directory/'package-policy.json')], check=True)
     # Inspect the archive without extracting it or following its symlinks.
     with tarfile.open(directory/'lanrith-base.tar.gz') as archive:
-        names = set()
+        names = {}
         for member in archive:
             name = member.name.removeprefix('./').rstrip('/')
             require(not name.startswith('/') and '..' not in Path(name).parts and name not in names,
                     'Base archive has an unsafe or duplicate path.')
-            names.add(name)
+            names[name] = member
             require(not member.isdev() and not member.isfifo(), 'Base contains a device or FIFO.')
             require(not name.startswith(('root/.ssh/', 'etc/ssh/ssh_host_', 'var/lib/lanrith/')),
                     'Base contains owner identity or deployment state.')
@@ -50,7 +50,7 @@ def main():
                             'Base contains private-key material in a text file.')
         require('usr/lib/systemd/systemd' in names and 'usr/bin/python3' in names,
                 'Base is missing required runtime components.')
-        metadata = archive.getmember('usr/share/lanrith/apt-metadata') if 'usr/share/lanrith/apt-metadata' in names else archive.getmember('./usr/share/lanrith/apt-metadata')
+        metadata = names['usr/share/lanrith/apt-metadata']
         require(metadata.isfile() and 0 < metadata.size < 256 * 1024 * 1024, 'Base APT metadata is missing or oversized.')
         (directory/'apt-metadata').write_bytes(archive.extractfile(metadata).read())
         scan_names = {'alloy', 'prometheus-node-exporter', 'discovery-bridge', 'router-policy-helper',
