@@ -6,6 +6,7 @@ import ast
 from contextlib import ExitStack
 import datetime
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -399,19 +400,96 @@ def upload(guest, directory):
     return target
 
 
+def lease_snapshot(filename):
+    """Read logical IPv4 leases in Kea's completed/previous/input/current order."""
+    import csv
+    import ipaddress
+    from pathlib import Path
+    import time
+
+    path = Path(filename)
+    completed, previous, pending = [Path(str(path)+suffix) for suffix in ('.completed', '.2', '.1')]
+    paths = (completed, previous, pending, path)
+    required = {'address', 'hwaddr', 'client_id', 'valid_lifetime', 'expire', 'subnet_id',
+                'fqdn_fwd', 'fqdn_rev', 'hostname', 'state', 'user_context'}
+    numeric = ('valid_lifetime', 'expire', 'subnet_id', 'fqdn_fwd', 'fqdn_rev', 'state', 'pool_id')
+
+    def fingerprint():
+        result = []
+        for item in paths:
+            if item.is_symlink():
+                raise ValueError('Lease snapshot contains a linked file.')
+            try:
+                info = item.stat()
+            except FileNotFoundError:
+                continue
+            result.append((item.name, info.st_ino, info.st_size, info.st_mtime_ns))
+        return result
+
+    # Cleanup atomically rotates these files. Compare only a stable generation.
+    for attempt in range(20):
+        before = fingerprint()
+        leases = {}
+        selected = [completed] if completed.exists() else [previous, pending]
+        try:
+            for item in [*selected, path]:
+                if item != path and not item.exists():
+                    continue
+                with item.open(newline='') as stream:
+                    rows = csv.DictReader(stream)
+                    fields = rows.fieldnames or []
+                    if len(fields) != len(set(fields)) or not required <= set(fields) or \
+                            set(fields)-required-{'pool_id'}:
+                        raise ValueError('Lease snapshot has an unsupported CSV header.')
+                    for row in rows:
+                        if None in row or any(value is None for value in row.values()):
+                            raise ValueError('Lease snapshot has an incomplete row.')
+                        row.setdefault('pool_id', '0')
+                        row['address'] = str(ipaddress.IPv4Address(row['address']))
+                        for field in numeric:
+                            number = int(row[field])
+                            if not 0 <= number <= 2**32-1:
+                                raise ValueError('Lease snapshot has an invalid numeric field.')
+                            row[field] = str(number)
+                        if row['valid_lifetime'] == '0':
+                            leases.pop(row['address'], None)
+                        else:
+                            leases[row['address']] = row
+        except FileNotFoundError:
+            pass
+        else:
+            if before == fingerprint():
+                return leases
+        time.sleep(0.1)
+    raise ValueError('Lease files did not stabilize for persistence verification.')
+
+
 STATE = '''set -eu
 test "$(cat /etc/machine-id)" = 0123456789abcdef0123456789abcdef
 test "$(findmnt -n -o FSTYPE /)" = erofs
 findmnt -n -o OPTIONS / | tr , '\\n' | grep -qx ro
 cryptsetup status "$(findmnt -n -o SOURCE /var)" | grep -q 'type:.*LUKS2'
-sha256sum /var/lib/lanrith/ssh-host-keys/ssh_host_ed25519_key.pub /var/lib/kea/kea-leases4.csv \
+sha256sum /var/lib/lanrith/ssh-host-keys/ssh_host_ed25519_key.pub \
   /var/lib/lanrith/qualification-state/credentials /var/lib/lanrith/qualification-state/enrollment
+''' + "python3 - <<'PY'\n" + inspect.getsource(lease_snapshot) + '''
+import json
+print(json.dumps(lease_snapshot('/var/lib/kea/kea-leases4.csv'), sort_keys=True, separators=(',', ':')))
+PY
 journalctl --quiet --no-pager -t lanrith-qualification | grep -q synthetic-persistent-state
 '''
 
 
 def root(guest, script, **kwargs):
     return guest.ssh('sudo sh -c '+shlex.quote(script), **kwargs)
+
+
+def check_state(guest, expected, message):
+    observed = root(guest, STATE).stdout
+    labels = ('ssh-identity', 'credentials', 'enrollment', 'dhcp-leases')
+    before, after = expected.splitlines(), observed.splitlines()
+    changed = [label for index, label in enumerate(labels) if
+               index >= len(before) or index >= len(after) or before[index] != after[index]]
+    release.require(observed == expected, message+' Changed categories: '+', '.join(changed))
 
 
 def boot(guest, *, manual=False, first=False):
@@ -537,13 +615,16 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
         guest.ssh('sudo lanrith-runtime accept 9')
         root(guest, '''set -eu
 mkdir -p /var/lib/lanrith/qualification-state /var/lib/kea
+systemctl stop kea-dhcp4-server.service
 printf 'address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\\n192.168.10.123,02:00:00:00:02:01,,3600,4102444800,1,0,0,synthetic,0,\\n' > /var/lib/kea/kea-leases4.csv
 printf synthetic-credential > /var/lib/lanrith/qualification-state/credentials
 printf synthetic-enrollment > /var/lib/lanrith/qualification-state/enrollment
 chmod 0600 /var/lib/lanrith/qualification-state/*
 logger -t lanrith-qualification synthetic-persistent-state
 journalctl --sync
+systemctl start kea-dhcp4-server.service
 ''')
+        guest.ready()
         state = root(guest, STATE).stdout
         root(guest, '''for unit in frr.service freeradius.service suricata.service snmpd.service alloy.service \
 chrony.service chronyd-restricted.service chrony-wait.service \
@@ -557,7 +638,7 @@ done''')
         if manual:
             guest.close()
             boot(guest, manual=True)
-            release.require(root(guest, STATE).stdout == state, 'Manual encryption boot changed persistent state.')
+            check_state(guest, state, 'Manual encryption boot changed persistent state.')
             return {'profile': 'manual-encryption', 'result': 'pass', 'checks': [
                 'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
                 'ssh-pam-administration', 'automatic-boot-observation',
@@ -578,7 +659,7 @@ done''')
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'One-shot update did not boot the new deployment.')
-        release.require(root(guest, STATE).stdout == state, 'Update changed populated state or host identity.')
+        check_state(guest, state, 'Update changed populated state or host identity.')
         rejected = guest.ssh('sudo lanrith-runtime promote '+third_path, success=False, timeout=900)
         release.require(rejected.returncode != 0 and b'Accept the running boot as default' in rejected.stderr,
                         'An unaccepted update could overwrite the last accepted fallback.')
@@ -615,8 +696,9 @@ done''')
         release.require(interrupted, 'Did not observe the inactive-slot write before interruption.')
         guest.close()
         boot(guest)
-        release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10 and
-                        root(guest, STATE).stdout == state, 'Accepted update or populated state did not persist.')
+        release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
+                        'Accepted update did not persist.')
+        check_state(guest, state, 'Interrupted staging changed populated state.')
         guest.ssh('sudo lanrith-runtime promote '+third_path, timeout=900)
         guest.close()
         guest.start()
@@ -626,8 +708,9 @@ done''')
                         'A failed-health candidate was accepted.')
         guest.close()
         boot(guest)
-        release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10 and
-                        root(guest, STATE).stdout == state, 'Failed candidate did not fall back with populated state intact.')
+        release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
+                        'Failed candidate did not fall back to the accepted deployment.')
+        check_state(guest, state, 'Failed candidate fallback changed populated state.')
         guest.close()
         # The accepted synthetic disk is no longer needed. Reclaim it before
         # constructing the independent provisioning-failure probe.
