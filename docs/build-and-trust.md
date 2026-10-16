@@ -50,6 +50,17 @@ the selected source revision changes. Proposals do not merge themselves or
 grant security exceptions. A source branch that is no longer supported blocks
 the resolver until its migration is reviewed.
 
+The proposal job uses a GitHub App installed only on this repository, with
+Contents and Pull requests read/write access and no protection bypass. Store
+its numeric App ID as `LANRITH_UPDATE_APP_ID` and its existing private key as
+`LANRITH_UPDATE_APP_PRIVATE_KEY` in the `lanrith-updates` environment. Restrict
+that environment to protected `main`; it contains no image-signing authority.
+The action requests a short-lived token for this repository only. App-authored
+proposals trigger normal PR checks and still need an independent review.
+Keep default workflow permissions read-only and GitHub's shared option to
+create and approve PRs disabled. Missing App credentials block proposals
+clearly; they do not weaken protection or silently skip security updates.
+
 Admission also requires complete current scanner coverage, an inventory-bound
 successful assessment within 24 hours, no selected revoked digest, and passing
 native and SLSA qualification. Retained releases are rescanned independently.
