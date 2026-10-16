@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build:
-    if: github.repository == 'Lanrith/lanrith'
+    if: github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
       packages: write

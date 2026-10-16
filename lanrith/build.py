@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import tarfile
+import uuid
 
 from . import config, extensions, release
 from .release import require
@@ -53,6 +54,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'certificate': '/usr/share/lanrith/owner.crt', 'esp': '/efi',
                  'integration_health_units': integration['health_units'],
                  'configuration_sha256': digest, 'storage': value['hardware']['storage'],
+                 'payload_limits': {'root': value['hardware']['storage']['root_mib']*1024*1024,
+                    'verity': max(64, value['hardware']['storage']['root_mib']//16)*1024*1024,
+                    'verity-sig': 16384, 'uki': (value['hardware']['storage']['esp_mib']-32)*1024*1024},
                  'boot': value['hardware']['boot'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
@@ -168,6 +172,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         part = 'root' if role == 'root' else 'root-' + role
         verity = {'root': 'data', 'verity': 'hash', 'verity-sig': 'signature'}[role]
         text = f'[Partition]\nType={part}\nLabel=l_{sequence}_{role.replace("-", "_")}\n'
+        if role == 'verity-sig':
+            # Permanent machine identity must not give successive deployments the
+            # same signature-partition UUID as the still-active accepted slot.
+            text += 'UUID='+str(uuid.uuid5(uuid.UUID(machine_id), f'{image_id}/{sequence}/{role}'))+'\n'
         text += f'Verity={verity}\nVerityMatchKey=root\nSplitName={role}\n'
         if role == 'root':
             text += 'Format=erofs\nCopyFiles=/\nExcludeFilesTarget=/var/\nMinimize=yes\n'

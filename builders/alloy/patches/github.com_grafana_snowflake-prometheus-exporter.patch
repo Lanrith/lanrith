@@ -1,0 +1,22 @@
+--- a/collector/collector.go
++++ b/collector/collector.go
+@@ -21,7 +21,7 @@
+ 	"sync"
+ 
+ 	"github.com/prometheus/client_golang/prometheus"
+-	_ "github.com/snowflakedb/gosnowflake" // Import the snowflake DB driver
++	_ "github.com/snowflakedb/gosnowflake/v2" // Import the snowflake DB driver
+ )
+ 
+ const (
+--- a/collector/config.go
++++ b/collector/config.go
+@@ -22,7 +22,7 @@
+ 	"fmt"
+ 	"os"
+ 
+-	"github.com/snowflakedb/gosnowflake"
++	"github.com/snowflakedb/gosnowflake/v2"
+ 	"github.com/youmark/pkcs8"
+ )
+ 

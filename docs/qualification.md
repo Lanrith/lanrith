@@ -23,3 +23,10 @@ package inventory, artifacts and profile.
 Qualification prereleases remain ineligible for production until these gates
 pass. Private owner topologies and their evidence stay in the owner's repository.
 Do not transplant qualification claims from an earlier repository or release.
+
+`tests/packets.py` exercises the generated firewall using real IPv4 and IPv6
+connections in disposable namespaces. It checks management access, unsolicited
+uplink traffic, inter-network isolation, directional port grants, disabled
+service ports, spoof rejection, NAT44 and IPv6 source preservation. These
+results cover the generic compiler policy. Advanced integrations and physical
+hardware still need their own candidate-specific tests.

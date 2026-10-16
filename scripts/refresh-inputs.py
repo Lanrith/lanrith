@@ -50,7 +50,7 @@ def main():
                 '--pattern', manifest_name, '--pattern', manifest_name+'.intoto.jsonl')
             run('gh', 'attestation', 'verify', str(work/manifest_name), '--bundle', str(work/(manifest_name+'.intoto.jsonl')),
                 '--repo', repository, '--signer-workflow', repository+'/.github/workflows/build-release.yml',
-                '--source-digest', revision, '--signer-digest', revision, '--deny-self-hosted-runners')
+                '--source-digest', revision, '--signer-digest', revision, '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners')
             manifest = json.loads((work/manifest_name).read_text())
             require(manifest['source_commit'] == revision and manifest['version'] == chosen['tag_name'][1:],
                     'Component metadata differs from its signed release.')
@@ -76,17 +76,21 @@ def main():
     path = ROOT/'builders/build-inputs.lock'
     text = path.read_text()
     for key, archive, suite in (('DEBIAN_RELEASE_SHA256', 'debian', 'trixie'),
-                                 ('DEBIAN_SECURITY_RELEASE_SHA256', 'debian-security', 'trixie-security')):
+                                 ('DEBIAN_SECURITY_RELEASE_SHA256', 'debian-security', 'trixie-security'),
+                                 ('DEBIAN_BOOKWORM_RELEASE_SHA256', 'debian', 'bookworm'),
+                                 ('DEBIAN_BOOKWORM_SECURITY_RELEASE_SHA256', 'debian-security', 'bookworm-security')):
         url = f'https://snapshot.debian.org/archive/{archive}/{stamp}/dists/{suite}/Release'
         with urllib.request.urlopen(url, timeout=60) as response:
             data = response.read(2*1024*1024+1)
         require(0 < len(data) <= 2*1024*1024 and b'\nSHA256:\n' in data, 'Invalid proposed Debian Release metadata.')
         digest = hashlib.sha256(data).hexdigest()
         text = re.sub(r'^'+key+r'=[0-9a-f]{64}$', key+'='+digest, text, flags=re.MULTILINE)
-        field = 'security_release_sha256' if 'SECURITY' in key else 'debian_release_sha256'
-        selection[field] = digest
-    text = re.sub(r'^(DEBIAN_(?:SECURITY_)?SNAPSHOT)=[0-9TZ]+$', r'\g<1>='+stamp, text, flags=re.MULTILINE)
+        if 'BOOKWORM' not in key:
+            field = 'security_release_sha256' if 'SECURITY' in key else 'debian_release_sha256'
+            selection[field] = digest
+    text = re.sub(r'^(DEBIAN_(?:BOOKWORM_)?(?:SECURITY_)?SNAPSHOT)=[0-9TZ]+$', r'\g<1>='+stamp, text, flags=re.MULTILINE)
     path.write_text(text)
+    run(sys.executable, str(ROOT/'scripts/refresh-tools.py'))
     selection['debian_snapshot'] = selection['security_snapshot'] = stamp
     selection['custom_package_inputs'] = {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted((ROOT/'builders').rglob('*')) if path.is_file() and '__pycache__' not in path.parts}

@@ -30,11 +30,13 @@ jobs:
           commit-message: Propose reviewed router build input updates
           body: |
             Refreshes public snapshot and qualified component selections. Review package versions,
-            upstream advisories, locked patches and source changes. Production signing remains gated
+            supported toolchain proposals, upstream source candidates, advisories and locked patches.
+            Source upgrades need their own patch and behavior review. Production signing remains gated
             by fresh security admission and native qualification. This PR does not approve itself.
           add-paths: |
             build-inputs.json
-            builders/build-inputs.lock
+            builders/**
+            docs/upstream-proposals.json
             security/policy.json
       - name: Explicitly run checks for the bot proposal
         if: steps.proposal.outputs.pull-request-number

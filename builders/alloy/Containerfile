@@ -1,0 +1,27 @@
+ARG GO_IMAGE
+ARG NODE_IMAGE
+ARG DEBIAN_IMAGE
+FROM ${GO_IMAGE} AS go
+FROM ${NODE_IMAGE} AS node
+FROM ${DEBIAN_IMAGE}
+
+ARG DEBIAN_SNAPSHOT
+ARG DEBIAN_SECURITY_SNAPSHOT
+ENV DEBIAN_FRONTEND=noninteractive
+COPY --from=go /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+ && printf '%s\n' 'Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";' \
+      > /etc/apt/apt.conf.d/99-lanrith-tls \
+ && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list \
+ && apt-get -o APT::Update::Error-Mode=any update \
+ && apt-get install --yes --no-install-recommends ca-certificates build-essential pkg-config libsystemd-dev git curl python3 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=go /usr/local/go /usr/local/go
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+ENV PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+ENV GOTOOLCHAIN=local GOENV=off

@@ -20,6 +20,21 @@ matching builder digest. `gh attestation verify` enforces the repository,
 trusted workflow, exact source/signer commits, GitHub OIDC issuer and hosted
 runners. Replacing a mutable tag does not replace those trusted bytes.
 
+Alloy is built with its complete component registry, embedded UI and matching
+Beyla source. Reviewed dependency patches, supported compiler versions and
+unstripped Go symbols keep the binary scanner's coverage precise. The embedded
+Beyla executable is also retained as an independent scan subject. UI, Cargo,
+Java and upstream-source advisory checks supplement Go and Debian coverage.
+The SBOM records these dependency graphs; package notices retain upstream
+licenses, including any reviewed correction for an omitted archive notice.
+
+Daily proposals refresh immutable Debian snapshots, qualified components and
+supported toolchain patches. Upstream source candidates appear in
+`docs/upstream-proposals.json`; their patches and behavior need review before
+the selected source revision changes. Proposals do not merge themselves or
+grant security exceptions. A source branch that is no longer supported blocks
+the resolver until its migration is reviewed.
+
 Admission also requires complete current scanner coverage, an inventory-bound
 successful assessment within 24 hours, no selected revoked digest, and passing
 native and SLSA qualification. Retained releases are rescanned independently.

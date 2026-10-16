@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tomllib
 
@@ -14,7 +15,8 @@ def licenses(root):
     for base, directories, files in os.walk(root):
         directories[:] = [d for d in directories if d not in ('.git', 'target', 'node_modules', '__pycache__')]
         for name in sorted(files):
-            if name.lower().split('.')[0] in ('license', 'licence', 'copying', 'notice', 'authors', 'copyright'):
+            if re.match(r'^(?:[a-z0-9]+[-_.])?(?:license|licence|copying|notice|authors|copyright)(?:[._-]|$)',
+                        name, re.IGNORECASE):
                 path = Path(base)/name
                 if path.is_file() and not path.is_symlink() and path.stat().st_size <= 4*1024*1024:
                     result.append((path.relative_to(root).as_posix(), path.read_text(errors='replace')))

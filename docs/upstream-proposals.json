@@ -1,0 +1,56 @@
+{
+  "candidates": {
+    "alloy": {
+      "release": "https://github.com/grafana/alloy/releases/tag/v1.20.1",
+      "repository": "grafana/alloy",
+      "review": "source, patches, native behavior and security",
+      "tag": "v1.20.1"
+    },
+    "beyla": {
+      "release": "https://github.com/grafana/beyla/releases/tag/v3.38.0",
+      "repository": "grafana/beyla",
+      "review": "source, patches, native behavior and security",
+      "tag": "v3.38.0"
+    },
+    "mkosi": {
+      "release": "https://github.com/systemd/mkosi/releases/tag/v27.1",
+      "repository": "systemd/mkosi",
+      "review": "source, patches, native behavior and security",
+      "tag": "v27.1"
+    },
+    "node-exporter": {
+      "release": "https://github.com/prometheus/node_exporter/releases/tag/v1.12.1",
+      "repository": "prometheus/node_exporter",
+      "review": "source, patches, native behavior and security",
+      "tag": "v1.12.1"
+    },
+    "pam-rssh": {
+      "release": "https://github.com/z4yx/pam_rssh/releases/tag/v1.2.1",
+      "repository": "z4yx/pam_rssh",
+      "review": "source, patches, native behavior and security",
+      "tag": "v1.2.1"
+    },
+    "tayga": {
+      "release": "https://github.com/apalrd/tayga/releases/tag/0.9.6",
+      "repository": "apalrd/tayga",
+      "review": "source, patches, native behavior and security",
+      "tag": "0.9.6"
+    },
+    "unbound": {
+      "release": "https://github.com/NLnetLabs/unbound/releases/tag/release-1.26.1",
+      "repository": "NLnetLabs/unbound",
+      "review": "source, patches, native behavior and security",
+      "tag": "release-1.26.1"
+    },
+    "vpp": {
+      "repository": "FDio/vpp",
+      "review": "no stable release feed; inspect pinned source advisories"
+    },
+    "vulnerability-scanner": {
+      "module": "golang.org/x/vuln",
+      "review": "scanner source, coverage changes and native scan fixtures",
+      "version": "v1.9.0"
+    }
+  },
+  "schema": 1
+}

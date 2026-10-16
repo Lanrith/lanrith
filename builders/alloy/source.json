@@ -1,0 +1,70 @@
+{
+  "beyla": {
+    "commit": "fd4b139d9e899ab1a09b0f0fc006d8b749fd3961",
+    "fixed_releases": {
+      "v0.8.0": "f6f3bfaaa73b1fef62712243296be924d1daad79",
+      "v0.9.0": "e92b0c2dd4d88b90d28b7b706eacbac2fabd2623"
+    },
+    "java_agent": {
+      "dependencies": [
+        {
+          "name": "net.bytebuddy:byte-buddy",
+          "version": "1.18.13"
+        },
+        {
+          "name": "net.bytebuddy:byte-buddy-agent",
+          "version": "1.18.13"
+        }
+      ],
+      "path": ".obi-src/pkg/internal/java/embedded/obi-java-agent.jar",
+      "sha256": "1a234a91467694f119587f876671554255769f6678223c8649c6970edf239b5f",
+      "source_manifest": ".obi-src/pkg/internal/java/agent/build.gradle.kts",
+      "source_manifest_sha256": "d56ace79d0eb12397ee1dc1c12d6efd8b8f9b83532160a3cd4408c9a41e94736"
+    },
+    "obi_commit": "861d9070c1ac8e2bccabbbc897e5895b0243c214",
+    "version": "3.35.0"
+  },
+  "commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
+  "go_image": "docker.io/library/golang@sha256:55395706e9703db746cc507abfc4eb2aea75918f8a8024e4848e2cb81004f5ad",
+  "go_version": "1.27.2",
+  "modules": [
+    {
+      "directory": "github.com_burningalchemist_sql_exporter",
+      "module": "github.com/burningalchemist/sql_exporter",
+      "patch": "patches/github.com_burningalchemist_sql_exporter.patch",
+      "sum": "h1:wFCxkFRnRG894o22UBcAD7gE7qyMHWfU/N4kir3JbV0=",
+      "version": "v0.0.0-20260312184457-9bf25f71582f"
+    },
+    {
+      "directory": "github.com_grafana_snowflake-prometheus-exporter",
+      "module": "github.com/grafana/snowflake-prometheus-exporter",
+      "patch": "patches/github.com_grafana_snowflake-prometheus-exporter.patch",
+      "sum": "h1:IGERXtIJz2SIOo633czigByviJXFlydtv+Iu5Pk4/Z0=",
+      "version": "v0.0.0-20260428133429-b41d19e3211f"
+    },
+    {
+      "directory": "github.com_influxdata_telegraf",
+      "module": "github.com/influxdata/telegraf",
+      "patch": "patches/github.com_influxdata_telegraf.patch",
+      "sum": "h1:mYr0I/suEw9+UM4KrCFuYuzJuq/e99cINniIwqO6ykw=",
+      "version": "v1.37.2"
+    }
+  ],
+  "node_image": "docker.io/library/node@sha256:7f7f17f773027e7f0475fa829fc0d793d75918fda85b9e517c9cc5aa46200406",
+  "node_version": "24.22.0",
+  "package_version": "1.20.1-1+lanrith1",
+  "schema": 1,
+  "supplemental_notices": {
+    "github.com/dennwc/ioctl@v1.0.0": {
+      "basis": "Upstream license commit contains exactly the same compiled Go source as v1.0.0.",
+      "compiled_files": {
+        "ioctl.go": "64e7b2c548d2b4f2d33f8befa527d68b4980eba7854e62efdb6256121fb1159a"
+      },
+      "path": "licenses/ioctl-LICENSE",
+      "sha256": "27d4be84d5a5e09f13ddda42f80d4fe846b2f65cf830f70d21a2bf4b623ab885",
+      "upstream_commit": "01780425206817ff049d3eef4327d3f28e04450f"
+    }
+  },
+  "upstream_deb_sha256": "3faed6cc381ad9886903c33ac27c5b443200684b447a9b25cc637b92422d55df",
+  "version": "1.20.1"
+}

@@ -13,6 +13,7 @@ import copy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
+from lanrith import sbom
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -50,15 +51,16 @@ def main():
             found = set()
             for member in archive.getmembers():
                 path = Path(member.name.removeprefix('./'))
-                if path.parent.as_posix() == 'usr/bin' and path.name in scan_names:
+                if (path.parent.as_posix() == 'usr/bin' and path.name in scan_names or
+                        path.as_posix() == 'usr/share/doc/alloy/security/beyla'):
                     require(member.isfile(), 'A scan subject is not a regular binary.')
                     content = archive.extractfile(member)
                     scan_member = copy.copy(member)
-                    scan_member.name = path.name
+                    scan_member.name = 'alloy-beyla' if path.name == 'beyla' else path.name
                     scan_member.mode = 0o644
                     binaries.addfile(scan_member, content)
-                    found.add(path.name)
-            require(found == scan_names, 'Fresh binary scan coverage is incomplete.')
+                    found.add(scan_member.name)
+            require(found == scan_names | {'alloy-beyla'}, 'Fresh binary scan coverage is incomplete.')
     subprocess.run([sys.executable, str(ROOT/'security/audit-debian-vulnerabilities.py'),
                     '--manifest', str(directory/'inventory.json'), '--policy', str(ROOT/'security/policy.json'),
                     '--release', args.version, '--suite', 'trixie', '--apt-metadata', str(directory/'apt-metadata'),
@@ -67,25 +69,13 @@ def main():
                     '--tracker-url', 'https://security-tracker.debian.org/tracker/data/json',
                     '--status', str(directory/'debian-security.txt')], check=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    packages = []
-    for index, entry in enumerate(inventory['packages']):
-        packages.append({'SPDXID': f'SPDXRef-Package-{index}', 'name': entry['name'],
-                         'versionInfo': entry['version'], 'downloadLocation': 'NOASSERTION',
-                         'filesAnalyzed': False, 'licenseConcluded': 'NOASSERTION',
-                         'licenseDeclared': 'NOASSERTION', 'copyrightText': 'NOASSERTION'})
     digest = file_record(directory/'inventory.json')['sha256']
-    sbom = {'spdxVersion': 'SPDX-2.3', 'dataLicense': 'CC0-1.0', 'SPDXID': 'SPDXRef-DOCUMENT',
-            'name': 'Lanrith '+args.version,
-            'documentNamespace': 'https://lanrith.org/spdx/' + digest,
-            'creationInfo': {'creators': ['Tool: Lanrith'], 'created': stamp.replace('+00:00', 'Z')},
-            'packages': packages, 'relationships': [
-                {'spdxElementId': 'SPDXRef-DOCUMENT', 'relationshipType': 'DESCRIBES',
-                 'relatedSpdxElement': p['SPDXID']} for p in packages]}
-    (directory/'sbom.spdx.json').write_bytes(canonical(sbom))
+    custom = json.loads((directory/'custom-security.json').read_text())
+    (directory/'sbom.spdx.json').write_bytes(canonical(sbom.document(inventory, custom, args.version, digest, stamp)))
     security = {'schema': 1, 'assessed_at': stamp, 'inventory_sha256': digest,
                 'policy_sha256': file_record(ROOT/'security/policy.json')['sha256'],
                 'package_policy': json.loads((directory/'package-policy.json').read_text()),
-                'custom': json.loads((directory/'custom-security.json').read_text()),
+                'custom': custom,
                 'debian': (directory/'debian-security.txt').read_text(),
                 'package_sources_sha256': file_record(directory/'package-sources.json')['sha256'],
                 'production_qualified': False}

@@ -60,7 +60,7 @@ def verify(directory, selection):
             '--repo', REPOSITORY, '--signer-workflow', WORKFLOW,
             '--signer-digest', selection['signer_commit'], '--source-digest', selection['source_commit'],
             '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com',
-            '--deny-self-hosted-runners', '--predicate-type', 'https://slsa.dev/provenance/v1',
+            '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners', '--predicate-type', 'https://slsa.dev/provenance/v1',
         ], capture_output=True, timeout=60)
         require(result.returncode == 0, 'Platform provenance verification failed.')
     if (directory/'security-assessment.json').exists():
@@ -70,7 +70,7 @@ def verify(directory, selection):
             '--signer-workflow', REPOSITORY+'/.github/workflows/security-audit.yml',
             '--signer-digest', selection['security_workflow_commit'],
             '--source-digest', selection['security_workflow_commit'],
-            '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--deny-self-hosted-runners',
+            '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners',
             '--predicate-type', 'https://slsa.dev/provenance/v1'], capture_output=True, timeout=60)
         require(result.returncode == 0, 'Fresh security assessment provenance verification failed.')
     return selection['builder'] + '@sha256:' + selection['builder_digest']
@@ -82,7 +82,7 @@ def verify_builder(selection, bundle):
         'gh', 'attestation', 'verify', 'oci://' + reference, '--bundle', str(bundle),
         '--repo', REPOSITORY, '--signer-workflow', WORKFLOW,
         '--signer-digest', selection['signer_commit'], '--source-digest', selection['source_commit'],
-        '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--deny-self-hosted-runners',
+        '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners',
     ], capture_output=True, timeout=60)
     require(result.returncode == 0, 'Builder provenance verification failed.')
     return reference

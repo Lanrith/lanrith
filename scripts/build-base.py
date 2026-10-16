@@ -87,7 +87,7 @@ def components(selection, destination):
             run('gh', 'attestation', 'verify', str(directory / name), '--bundle', str(directory / (name+'.intoto.jsonl')),
                 '--repo', pin['repository'], '--signer-workflow', pin['repository']+'/.github/workflows/build-release.yml',
                 '--source-digest', pin['source_commit'], '--signer-digest', pin['workflow_commit'],
-                '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--deny-self-hosted-runners')
+                '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners')
         require(any(path.suffix == '.deb' for path in directory.iterdir()), 'Component selection contains no packages.')
         for path in directory.glob('*.deb'):
             shutil.copyfile(path, destination / path.name)

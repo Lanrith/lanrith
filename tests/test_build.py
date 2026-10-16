@@ -9,6 +9,20 @@ from lanrith.release import ReleaseError
 
 
 class AssemblyTests(unittest.TestCase):
+    def test_successive_deployments_have_distinct_signature_partition_identities(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            identities = []
+            for sequence in (9, 10):
+                workspace = root/str(sequence)
+                build.assembly(value, base, workspace, version='0.1.0', sequence=sequence)
+                lines = (workspace/'mkosi.repart/10-verity-sig.conf').read_text().splitlines()
+                identities.append(next(line for line in lines if line.startswith('UUID=')))
+            self.assertNotEqual(*identities)
+
     def test_offline_configuration_only_assembly(self):
         value = config.load(Path(__file__).resolve().parents[1] / 'examples/minimal.yaml')
         with tempfile.TemporaryDirectory() as temporary:
