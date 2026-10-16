@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Propose public inputs; this tool never merges or approves them."""
 
+import argparse
 import datetime
 import hashlib
 import json
@@ -31,11 +32,31 @@ def source(repository, tag):
     raise ValueError('Release tag nesting exceeds the limit.')
 
 
-def main():
-    selection = json.loads((ROOT/'build-inputs.json').read_text())
+def snapshot(value=None, *, now=None):
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    require(now.tzinfo is not None and now.utcoffset() is not None,
+            'Snapshot selection requires a timezone-aware clock.')
+    now = now.astimezone(datetime.timezone.utc)
+    if value is None:
+        return now.replace(minute=0, second=0, microsecond=0).strftime('%Y%m%dT%H%M%SZ')
+    require(isinstance(value, str) and re.fullmatch(r'[0-9]{8}T[0-9]{6}Z', value),
+            'Snapshot must be a UTC timestamp in YYYYMMDDTHHMMSSZ format.')
+    try:
+        selected = datetime.datetime.strptime(value, '%Y%m%dT%H%M%SZ').replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        raise ValueError('Snapshot timestamp is not a valid calendar date.') from None
+    require(selected <= now, 'Snapshot must not be in the future.')
+    return value
+
+
+def refresh_components(selection):
     for component in ('discovery-bridge', 'router-policy-agent'):
         repository = 'Lanrith/'+component
-        releases = json.loads(run('gh', 'api', 'repos/'+repository+'/releases?per_page=100'))
+        pages = json.loads(run('gh', 'api', '--paginate', '--slurp',
+                               'repos/'+repository+'/releases?per_page=100'))
+        require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
+                'Component release enumeration is incomplete.')
+        releases = [item for page in pages for item in page]
         candidates = [item for item in releases if not item['draft'] and not item['prerelease'] and
                       re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
         if not candidates:
@@ -64,6 +85,18 @@ def main():
             require(any(name.endswith('.deb') for name in files), 'Qualified component has no admitted native packages.')
             selection['component_releases'][component] = {'repository': repository, 'tag': chosen['tag_name'],
                 'source_commit': revision, 'workflow_commit': revision, 'files': files}
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--snapshot', help='Reviewed UTC archive timestamp; defaults to the current UTC hour')
+    parser.add_argument('--debian-only', action='store_true',
+                        help='Propose Debian inputs without changing component or toolchain selections')
+    args = parser.parse_args()
+    stamp = snapshot(args.snapshot)
+    selection = json.loads((ROOT/'build-inputs.json').read_text())
+    require(all(stamp >= selection[key] for key in ('debian_snapshot', 'security_snapshot')),
+            'Input refresh must not move the selected Debian snapshot backwards.')
+    if not args.debian_only:
+        refresh_components(selection)
     policy = json.loads((ROOT/'security/policy.json').read_text())
     for component, pin in selection['component_releases'].items():
         names = ['discovery-bridge'] if component == 'discovery-bridge' else [
@@ -72,7 +105,6 @@ def main():
             policy['required_exact_packages'][name] = pin['tag'][1:]
             policy['local_package_sources'][name]['version'] = pin['tag'][1:]
     # Snapshot metadata is a proposal. apt verifies Debian archive signatures in the actual build.
-    stamp = (datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=1)).strftime('%Y%m%dT120000Z')
     path = ROOT/'builders/build-inputs.lock'
     text = path.read_text()
     for key, archive, suite in (('DEBIAN_RELEASE_SHA256', 'debian', 'trixie'),
@@ -90,13 +122,14 @@ def main():
             selection[field] = digest
     text = re.sub(r'^(DEBIAN_(?:BOOKWORM_)?(?:SECURITY_)?SNAPSHOT)=[0-9TZ]+$', r'\g<1>='+stamp, text, flags=re.MULTILINE)
     path.write_text(text)
-    run(sys.executable, str(ROOT/'scripts/refresh-tools.py'))
+    if not args.debian_only:
+        run(sys.executable, str(ROOT/'scripts/refresh-tools.py'))
     selection['debian_snapshot'] = selection['security_snapshot'] = stamp
     selection['custom_package_inputs'] = {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted((ROOT/'builders').rglob('*')) if path.is_file() and '__pycache__' not in path.parts}
     (ROOT/'build-inputs.json').write_text(json.dumps(selection, sort_keys=True, indent=2)+'\n')
     (ROOT/'security/policy.json').write_text(json.dumps(policy, sort_keys=True, indent=2)+'\n')
-    print('Proposed public snapshot and qualified component pins. Review source/patch, package and security diffs before merging.')
+    print('Proposed Debian snapshot '+stamp+'. Review package and security diffs before merging.')
 
 
 if __name__ == '__main__':

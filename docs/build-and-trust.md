@@ -50,6 +50,14 @@ the selected source revision changes. Proposals do not merge themselves or
 grant security exceptions. A source branch that is no longer supported blocks
 the resolver until its migration is reviewed.
 
+The Debian proposal uses the current UTC hour so security fixes do not wait for
+the next day's snapshot. Missing archive metadata blocks the proposal. For a
+focused security update, use `scripts/refresh-inputs.py --debian-only --snapshot
+YYYYMMDDTHHMMSSZ`; this retains component and toolchain selections. Future and
+backwards snapshot proposals are rejected. The build still authenticates the
+archive signatures and assesses the actual installed package inventory before
+an image can be published.
+
 The proposal job uses a GitHub App installed only on this repository, with
 Contents and Pull requests read/write access and no protection bypass. Store
 its numeric App ID as `LANRITH_UPDATE_APP_ID` and its existing private key as
