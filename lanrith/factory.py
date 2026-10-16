@@ -257,14 +257,19 @@ def provision():
             command(['sfdisk', '--relocate', 'gpt-bak-std', chosen])
             if installed['boot'].get('tpm', 'required') == 'disabled':
                 repartition(installed, chosen, installed_root=False)
-            print('Installation read-back passed. Remove the factory medium after power-off.')
-            command(['systemctl', '--no-block', 'poweroff'])
-            # Never return into initrd-switch-root on the removable installation medium.
-            while True:
-                import time
-                time.sleep(60)
         finally:
             command(['umount', str(mount)])
+    command(['sync'])
+    print('Installation read-back passed. Remove the factory medium after power-off.', flush=True)
+    # The installer holds initrd-switch-root while awaiting confirmation. Ask
+    # the manager to terminate processes and unmount filesystems directly,
+    # without waiting for that unfinished initrd boot transaction to complete.
+    # All target writes are synced and the read-only payload is unmounted first.
+    command(['systemctl', '--force', 'poweroff'])
+    # Never return into initrd-switch-root on the removable installation medium.
+    while True:
+        import time
+        time.sleep(60)
 
 
 def main(arguments=None):
