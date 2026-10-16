@@ -126,12 +126,16 @@ def main():
         run('curl', '--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', str(path),
             f'https://snapshot.debian.org/archive/{archive}/{snapshot}/dists/{suite}/Release')
         require(file_record(path)['sha256'] == inputs[key], 'Debian snapshot Release differs from the reviewed lock.')
+    builder = image('mkosi', args.work, inputs)
+    # Exercise the pinned updater interface before the expensive source builds.
+    run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
+        '-w', '/source', builder, 'python3', '-m', 'unittest', 'discover',
+        '-s', 'tests', '-p', 'test_update.py', '-v')
     # Non-Debian packages and native PAM are produced and scanned by the same run.
     run(sys.executable, str(PROJECT / 'scripts/custom-packages.py'), '--output', str(packages),
         '--evidence', str(args.work / 'custom-security.json'))
     for component in ('vpp', 'unbound', 'tayga'):
         extract_packages(image(component, args.work, inputs), packages)
-    builder = image('mkosi', args.work, inputs)
     # Retain public package outputs and the exact tools before filesystem
     # assembly, so a later failure can be reproduced without recompilation.
     checkpoint = {'schema':1,'qualification_only':True,'source_commit':os.environ.get('GITHUB_SHA'),

@@ -104,14 +104,14 @@ def transfers(value, root, esp):
         target = value['partitions'][role]
         result[f'{index}-{role}.transfer'] = (
             f'[Transfer]\nProtectVersion={value["protected_sequence"]}\n\n'
-            f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=explicit\nMatchPattern={image}_@v_@u.{role}.raw\n'
+            f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=root\nMatchPattern={image}_@v_@u.{role}.raw\n'
             f'\n[Target]\nType=partition\nPath={value["disk"]}\n'
             f'MatchPattern=l_@v_{role.replace("-", "_")}\n'
             f'MatchPartitionType={target["type"]}\nReadOnly=yes\n')
     result['59-uki.transfer'] = (
         f'[Transfer]\nProtectVersion={value["protected_sequence"]}\n\n'
-        f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=explicit\nMatchPattern={image}_@v.efi\n'
-        f'\n[Target]\nType=regular-file\nPath={esp}/EFI/Linux\nPathRelativeTo=explicit\n'
+        f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=root\nMatchPattern={image}_@v.efi\n'
+        f'\n[Target]\nType=regular-file\nPath={esp}/EFI/Linux\nPathRelativeTo=root\n'
         f'MatchPattern={image}_@v+@l-@d.efi {image}_@v+@l.efi {image}_@v.efi\n'
         'TriesLeft=3\nTriesDone=0\nInstancesMax=2\n')
     return result

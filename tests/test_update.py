@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
 import unittest
 import tempfile
 from unittest.mock import patch
@@ -12,6 +13,23 @@ from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    @unittest.skipUnless(Path('/usr/lib/systemd/systemd-sysupdate').is_file(),
+                         'Requires the pinned Debian updater for native transfer parsing.')
+    def test_native_sysupdate_discovers_an_absolute_source_without_transfer_path_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            upload, esp, definitions = root/'upload', root/'esp', root/'definitions'
+            upload.mkdir()
+            (esp/'EFI/Linux').mkdir(parents=True)
+            definitions.mkdir()
+            (upload/'lanrith_9.efi').write_bytes(b'synthetic local update payload')
+            value = self.plan()
+            (definitions/'59-uki.transfer').write_text(update.transfers(value, upload, esp)['59-uki.transfer'])
+            result = subprocess.run(['/usr/lib/systemd/systemd-sysupdate', '--definitions='+str(definitions),
+                                     '--verify=no', 'list'], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('9', result.stdout)
+
     def test_missing_command_reports_only_the_tool_name(self):
         with patch.object(update.subprocess, 'run', side_effect=FileNotFoundError(
                 2, 'sensitive exception detail', '/private/example-secret')):
