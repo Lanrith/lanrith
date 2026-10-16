@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
 import socket
@@ -71,6 +72,7 @@ class Guest:
         self.process = self.tpm = self.serial = self.qmp = None
         self.buffer = b''
         self.last_diagnostic = None
+        self.qmp_events = []
         self.environment = {key: value for key, value in os.environ.items()
                             if key not in ('SSH_AUTH_SOCK', 'SSH_AGENT_PID')}
         self.environment['SSH_AUTH_SOCK'] = str(secret/'agent.sock')
@@ -172,7 +174,23 @@ class Guest:
         flags = {name: marker.lower() in self.buffer.lower() for name, marker in (
             ('secure-boot-rejection', b'Security Violation'), ('kernel-started', b'Linux version'),
             ('emergency-mode', b'emergency mode'), ('recovery-prompt', b'RECOVERY-KEY-STORED'),
-            ('bootloader-menu', b'Linux Boot Manager'))}
+            ('bootloader-menu', b'Linux Boot Manager'), ('kernel-panic', b'Kernel panic'),
+            ('guest-reboot', b'Rebooting'), ('guest-shutdown', b'systemd-shutdown'),
+            ('pid1-freeze', b'Freezing execution'))}
+        if self.qmp:
+            while select.select([self.qmp], [], [], 0)[0]:
+                data = self.qmp.recv(65536)
+                if not data:
+                    break
+                for line in data.splitlines():
+                    try:
+                        event = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if event.get('event') in ('SHUTDOWN', 'RESET', 'STOP', 'GUEST_PANICKED'):
+                        reason = event.get('data', {}).get('reason', '')
+                        self.qmp_events.append({'event': event['event'],
+                            'reason': reason if re.fullmatch(r'[a-z-]{0,64}', reason) else 'unknown'})
         literals = set()
         for module in ('factory', 'update', 'release'):
             tree = ast.parse((PROJECT/'lanrith'/(module+'.py')).read_text())
@@ -187,7 +205,7 @@ class Guest:
             if b'fail' in line.lower() or b'timed out' in line.lower():
                 units.update(match.decode() for match in re.findall(
                     rb'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', line))
-        return json.dumps({'flags':flags,'literal_errors':sorted(literals)[:32],
+        return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
             'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(self.buffer).hexdigest()},sort_keys=True)
 
     def ssh_arguments(self, command, *, agent=True):
@@ -220,10 +238,13 @@ class Guest:
     def ready(self, *, healthy=True):
         deadline = time.monotonic()+600
         while time.monotonic() < deadline:
-            release.require(self.process.poll() is None, 'Guest exited before SSH became ready.')
-            command = 'sudo lanrith-runtime publish' if healthy else 'sudo id -u'
+            release.require(self.process.poll() is None, 'Guest exited before SSH became ready (status '+
+                            str(self.process.returncode)+'): '+self.diagnostic())
+            command = ('sudo sh -c '+shlex.quote(
+                'test -s /run/lanrith/boot.json && lanrith-runtime health >/dev/null')
+                if healthy else 'sudo id -u')
             try:
-                if self.ssh(command, success=False, timeout=20).returncode == 0:
+                if self.ssh(command, success=False, timeout=min(120, max(1, deadline-time.monotonic()))).returncode == 0:
                     return
             except subprocess.TimeoutExpired:
                 # A first boot can finish recovery enrollment before sshd and
@@ -365,8 +386,10 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
             event = guest.expect_any([rb'Type ERASE-AND-INSTALL .* to continue: ',
                                      rb'(?:You are in|Entering) emergency mode'])
             release.require(event == 0, 'Factory initrd entered emergency mode: '+guest.last_diagnostic)
+            print('Native VM: confirmed the disposable installation target.',flush=True)
             guest.serial.sendall(b'ERASE-AND-INSTALL /dev/disk/by-id/virtio-lanrith-qa-disk\r')
             guest.expect(rb'Installation read-back passed')
+            print('Native VM: signed factory installation read-back passed.',flush=True)
             guest.wait_shutdown()
             guest.close()
             guest.medium = None
@@ -390,7 +413,10 @@ journalctl --sync
 ''')
         state = root(guest, STATE).stdout
         root(guest, '''for unit in frr.service freeradius.service suricata.service snmpd.service alloy.service \
-discovery-bridge.service lanrith-policy-reader.service lanrith-policy-helper.service \
+chrony.service chronyd-restricted.service chrony-wait.service \
+discovery-bridge.service discovery-bridge-collector.service discovery-bridge-publisher.service \
+discovery-bridge-dns.service dpdk.service lanrith-policy-reader.service lanrith-policy-helper.service \
+systemd-sysupdate.service systemd-sysupdate.timer systemd-sysupdate-reboot.service systemd-sysupdate-reboot.timer \
 lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket lanrith-radius-runtime.service \
 lanrith-vpp-service-attachment.service lanrith-nat64.service lanrith-nat64-internal.service lanrith-nat46.service; do
 ! systemctl is-active --quiet "$unit" || exit 1
@@ -401,7 +427,8 @@ done''')
             release.require(root(guest, STATE).stdout == state, 'Manual encryption boot changed persistent state.')
             return {'profile': 'manual-encryption', 'result': 'pass', 'checks': [
                 'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
-                'ssh-pam-administration', 'persistent-state-reboot', 'optional-services-inactive']}
+                'ssh-pam-administration', 'automatic-boot-observation',
+                'persistent-state-reboot', 'optional-services-inactive']}
         second_assembly, _, second = image(value, base, initrd, work, secret, 10)
         shutil.rmtree(second_assembly)
         # This signed candidate keeps administration reachable but cannot pass
@@ -470,6 +497,7 @@ done''')
                         root(guest, STATE).stdout == state, 'Failed candidate did not fall back with populated state intact.')
         return {'profile': 'tpm2-ab', 'result': 'pass', 'checks': ['factory-install-readback',
             'secure-boot', 'dm-verity', 'tpm2-state-encryption', 'recovery-enrollment', 'ssh-pam-administration',
+            'automatic-boot-observation',
             'optional-services-inactive', 'one-shot-upgrade', 'fallback-protection', 'unaccepted-reboot-fallback',
             'explicit-acceptance', 'replay-rejection', 'tamper-rejection', 'interrupted-staging',
             'failed-health-fallback', 'populated-state-upgrade-and-rollback']}

@@ -19,11 +19,12 @@ REQUIREMENTS = {'appropriate-platform', 'consistent-process', 'distributed-prove
                 'external-parameters', 'security-practices'}
 CHECKS = {
     'tpm2-ab': {'factory-install-readback', 'secure-boot', 'dm-verity', 'tpm2-state-encryption',
-        'recovery-enrollment', 'ssh-pam-administration', 'optional-services-inactive', 'one-shot-upgrade',
+        'recovery-enrollment', 'ssh-pam-administration', 'automatic-boot-observation',
+        'optional-services-inactive', 'one-shot-upgrade',
         'fallback-protection', 'unaccepted-reboot-fallback', 'explicit-acceptance', 'replay-rejection',
         'tamper-rejection', 'interrupted-staging', 'failed-health-fallback', 'populated-state-upgrade-and-rollback'},
     'manual-encryption': {'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
-        'ssh-pam-administration', 'persistent-state-reboot', 'optional-services-inactive'},
+        'ssh-pam-administration', 'automatic-boot-observation', 'persistent-state-reboot', 'optional-services-inactive'},
 }
 
 

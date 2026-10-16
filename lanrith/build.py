@@ -109,8 +109,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Service]\nType=oneshot\nTimeoutStartSec=60s\nExecStart=/usr/bin/lanrith-runtime health\n'
         '\n[Install]\nRequiredBy=boot-complete.target\n')
     (units / 'lanrith-observation.service').write_text(
-        '[Unit]\nDescription=Publish accepted boot observation\nRequires=boot-complete.target\n'
-        'After=boot-complete.target systemd-bless-boot.service\n'
+        '[Unit]\nDescription=Publish accepted boot observation\nDefaultDependencies=no\n'
+        'Requires=boot-complete.target\nAfter=boot-complete.target systemd-bless-boot.service\n'
+        'Conflicts=shutdown.target\nBefore=shutdown.target\n'
         '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-runtime publish\n'
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
@@ -136,8 +137,13 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
         'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n'
         '\n[Install]\nRequiredBy=multi-user.target\n')
-    for name in ('lanrith-slot-initialization.service', 'lanrith-recovery-key.service', 'boot-complete.target'):
-        path = wants/'multi-user.target.requires'/name
+    # The standard boot check runs after multi-user.target. Pull acceptance in
+    # through the observer without ordering multi-user after its own completion
+    # check. The observer has explicit dependencies so it does not add an
+    # implicit Before=multi-user.target edge. Only its boot observation admits
+    # the running slot; reaching multi-user.target alone never accepts an image.
+    for name in ('lanrith-slot-initialization.service', 'lanrith-recovery-key.service'):
+        path = units/'multi-user.target.requires'/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/'+name)
     if recovery_console != 'tty0':
@@ -146,9 +152,12 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         dropin.write_text('[Unit]\nAfter=lanrith-recovery-key.service\n'
                           'ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n')
     for directory, unit in [('boot-complete.target.requires', 'lanrith-health.service'),
+                            ('boot-complete.target.requires', 'systemd-boot-check-no-failures.service'),
                             ('multi-user.target.wants', 'lanrith-observation.service')] + [
                                 ('multi-user.target.wants', unit) for unit in required]:
-        path = wants / directory / unit
+        # Vendor activation is part of the signed owner policy. Reapplying
+        # distribution presets must not remove a required acceptance check.
+        path = units / directory / unit
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/' + unit)
     for unit in sorted(set(required) | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
@@ -168,7 +177,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             '\n[Service]\nType=exec\nExecStart=/usr/lib/lanrith/serial-idle-watchdog\n'
             'Restart=always\nRestartSec=2s\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n')
         unit = 'serial-getty@'+tty+'.service'
-        path = wants/'multi-user.target.wants'/unit
+        path = units/'multi-user.target.wants'/unit
         path.symlink_to('/usr/lib/systemd/system/'+unit)
     if certificate is not None:
         require(certificate.is_file() and private_key.is_file(), 'Signing inputs are unavailable.')

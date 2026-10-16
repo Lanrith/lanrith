@@ -83,15 +83,17 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(artifact['size'], (directory/'security.json').stat().st_size)
 
     def test_incomplete_stale_and_wrong_subject_native_reports_are_rejected(self):
-        for alteration in ('subject', 'stale', 'missing-failure-path'):
+        for alteration in ('subject', 'stale', 'missing-failure-path', 'missing-automatic-observation'):
             with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
                 directory, project, now, native = self.fixture(Path(temporary))
                 if alteration == 'subject':
                     native['filesystem_sha256'] = 'f'*64
                 elif alteration == 'stale':
                     native['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
-                else:
+                elif alteration == 'missing-failure-path':
                     native['profiles'][0]['checks'].remove('interrupted-staging')
+                else:
+                    native['profiles'][0]['checks'].remove('automatic-boot-observation')
                 (directory/'native-qualification.json').write_bytes(release.canonical(native))
                 with self.assertRaises(release.ReleaseError):
                     qualification.qualify(directory, project, {}, now=now)

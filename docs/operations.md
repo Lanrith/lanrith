@@ -13,6 +13,13 @@ as its seed. systemd binds automatic `/var` discovery to this identity; never
 derive it from a release, rotating key, hostname or changing network settings.
 See [systemd's partition discovery rules](https://github.com/systemd/systemd/blob/main/man/systemd-gpt-auto-generator.xml).
 
+TPM state enrollment explicitly binds to PCR 7, and boot health checks every
+TPM token for that policy. Keep the offline recovery key before changing
+firmware or Secure Boot policy. Automatic pcrlock policy generation stays
+disabled unless a reviewed signed-image integration supplies its profile and
+`/usr/share/lanrith/enable-pcrlock-policy` marker. See the pinned
+[systemd enrollment interface](https://github.com/systemd/systemd/blob/v257/man/systemd-cryptenroll.xml).
+
 The signed manifest declares purpose, image identity, platform version,
 sequence, effective configuration/integration digest, architecture and the
 exact artifact names, lengths and SHA-256 digests. Unknown fields, extra files,
@@ -26,6 +33,12 @@ slots; it does not guess a disk from device naming. Undersized, mounted,
 ambiguous or foreign targets fail. The inactive signature/hash/root are written
 before the boot-counted UKI. The accepted default is retained and only a
 one-shot boot is selected. Staging does not itself reboot.
+
+The EFI partition is discovered from the running boot, verified as a FAT
+partition on the verified-root disk, and accessed through its mounted filesystem.
+Either `/boot` or `/efi` is supported, including systemd automounts. Distribution
+automatic update and reboot timers are masked; the approved staging and
+deployment workflow owns those actions.
 
 Staging also requires the running slot to be the explicitly accepted persistent
 default. Accept a healthy candidate before staging another update, so its

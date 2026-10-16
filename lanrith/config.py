@@ -283,6 +283,8 @@ def render(value):
     value = normalize(value)
     user = value['administration']['username']
     files = {'etc/hostname': value['hostname'] + '\n',
+             'etc/hosts': '127.0.0.1 localhost\n127.0.1.1 '+value['hostname']+'\n'
+                 '::1 localhost ip6-localhost ip6-loopback\n',
              'etc/sysctl.d/90-lanrith-routing.conf': 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n',
              'etc/ssh/sshd_config.d/00-lanrith.conf':
                  'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n'

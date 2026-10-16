@@ -63,11 +63,15 @@ optional = {'unbound.service','chrony.service','named.service','freeradius.servi
             'kea-dhcp4-server.service',
             'suricata.service','tayga.service','avahi-daemon.service','avahi-daemon.socket',
             'prometheus-node-exporter.service','alloy.service','snmpd.service','vpp.service',
-            'discovery-bridge.service','discovery-bridge-dns.service'}
+            'discovery-bridge.service','discovery-bridge-dns.service','dpdk.service',
+            # Only the authenticated staging helper owns image updates and
+            # reboot selection. Package presets must not schedule either.
+            'systemd-sysupdate.service','systemd-sysupdate.timer',
+            'systemd-sysupdate-reboot.service','systemd-sysupdate-reboot.timer'}
 for path in (root/'usr/lib/systemd/system').iterdir():
     # Every bundled advanced integration is inactive until owner assembly
     # explicitly selects its health units. This includes dependency activation.
-    if path.name.startswith('lanrith-'):
+    if path.name.startswith(('lanrith-', 'discovery-bridge-', 'router-policy-', 'chrony', 'frr@')):
         optional.add(path.name)
 for name in optional:
     mask = root/'etc/systemd/system'/name

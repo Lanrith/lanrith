@@ -76,7 +76,7 @@ class AssemblyTests(unittest.TestCase):
             self.assertNotIn('[Distribution]', (workspace/'mkosi.images/initrd/mkosi.conf').read_text())
             self.assertEqual((workspace/'mkosi.extra/etc/systemd/system/systemd-repart.service').readlink(), Path('/dev/null'))
             self.assertEqual(identity['deployment_sequence'], 9)
-            self.assertTrue((workspace / 'mkosi.extra/etc/systemd/system/boot-complete.target.requires/lanrith-health.service').is_symlink())
+            self.assertTrue((workspace / 'mkosi.extra/usr/lib/systemd/system/boot-complete.target.requires/lanrith-health.service').is_symlink())
             with self.assertRaises(ReleaseError):
                 build.assembly(value, base, workspace, version='0.1.0', sequence=10)
 

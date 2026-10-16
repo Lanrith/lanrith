@@ -11,6 +11,16 @@ from lanrith.update import GUIDS
 
 
 class FactorySelectionTests(unittest.TestCase):
+    def test_unbound_or_different_tpm_policy_is_rejected_even_with_a_valid_token(self):
+        valid = {'type': 'systemd-tpm2', 'tpm2-pcrs': [7]}
+        self.assertEqual(factory.enrollment_tokens({'tokens': {'0': valid}}, tpm_required=True), ['systemd-tpm2'])
+        self.assertEqual(factory.enrollment_tokens({'tokens': {}}, tpm_required=False), [])
+        for tokens in ({}, [], {'0': None}, {'0': {'type': 'systemd-recovery'}},
+                       *({'0': valid, '1': {**valid, 'tpm2-pcrs': pcrs}}
+                         for pcrs in (None, [], [0], [7, 11], ['7']))):
+            with self.subTest(tokens=tokens), self.assertRaises(ReleaseError):
+                factory.enrollment_tokens({'tokens': tokens}, tpm_required=True)
+
     def test_boot_disk_readonly_mount_holders_and_sector_constraints(self):
         disk = {'name': '/dev/synthetic-disk', 'type': 'disk', 'ro': False,
                 'log-sec': 512, 'size': 128*1024**3, 'mountpoints': [None],

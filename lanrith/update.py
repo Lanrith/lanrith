@@ -182,9 +182,10 @@ def boot_esp(installed, *, disk=None):
             'EFI mount path is unsafe.')
     # Crossing the automount first ensures findmnt observes vfat, not autofs.
     require((esp/'EFI').is_dir() and esp.is_mount(), 'EFI filesystem must be mounted.')
-    mount = json.loads(command(['findmnt', '--json', '--mountpoint', str(esp), '--output', 'SOURCE,FSTYPE']))
+    mount = json.loads(command(['findmnt', '--json', '--target', str(esp/'EFI'),
+                                '--output', 'SOURCE,FSTYPE,TARGET']))
     rows = mount.get('filesystems', [])
-    require(len(rows) == 1 and rows[0].get('fstype') == 'vfat' and
+    require(len(rows) == 1 and rows[0].get('target') == str(esp) and rows[0].get('fstype') == 'vfat' and
             isinstance(rows[0].get('source'), str) and rows[0]['source'].startswith('/dev/'),
             'EFI filesystem is not a mounted FAT block partition.')
     device = str(Path(rows[0]['source']).resolve())

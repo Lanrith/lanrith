@@ -76,7 +76,14 @@ if integration_identities.exists():
         members = {username if name == 'admin' else name for name in item.get('members', [])}
         if groups.get(item['name']) != {'gid': item['gid'], 'members': members}:
             raise ValueError('An integration service group changed during assembly.')
-required = ['multi-user.target', 'boot-complete.target', 'lanrith-health.service', 'lanrith-observation.service']
+for parent, unit in (('boot-complete.target.requires', 'lanrith-health.service'),
+                     ('boot-complete.target.requires', 'systemd-boot-check-no-failures.service'),
+                     ('multi-user.target.wants', 'lanrith-observation.service')):
+    link = root/'usr/lib/systemd/system'/parent/unit
+    if not link.is_symlink() or link.readlink() != Path('/usr/lib/systemd/system')/unit:
+        raise ValueError('Final assembly lost a required boot-acceptance activation.')
+required = ['default.target', 'multi-user.target', 'boot-complete.target',
+            'systemd-boot-check-no-failures.service', 'lanrith-health.service', 'lanrith-observation.service']
 required.extend(json.loads((root/'usr/share/lanrith/installed.json').read_text())['integration_health_units'])
 with tempfile.TemporaryDirectory(prefix='boot-transaction.', dir=root/'run') as temporary:
     fixture = Path(temporary)

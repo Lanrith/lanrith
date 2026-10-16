@@ -96,6 +96,19 @@ def target(installed, boot_disk):
     return device
 
 
+def enrollment_tokens(luks, *, tpm_required):
+    entries = luks.get('tokens', {})
+    require(isinstance(entries, dict) and all(isinstance(item, dict) for item in entries.values()),
+            'State encryption token metadata is malformed.')
+    tokens = [item.get('type') for item in entries.values()]
+    if tpm_required:
+        require('systemd-tpm2' in tokens, 'State lacks its required TPM enrollment.')
+        require(all(item.get('tpm2-pcrs') == [7] for item in entries.values()
+                    if item.get('type') == 'systemd-tpm2'),
+                'State TPM enrollment differs from the selected Secure Boot policy.')
+    return tokens
+
+
 def initialize(installed):
     disk, active = verified_root()
     rows = geometry(disk)
@@ -120,9 +133,7 @@ def initialize(installed):
     require(len(backing) == 1 and Path(backing[0]).resolve() == Path(devices[0]).resolve(),
             'Mounted state is not backed by the selected encrypted partition.')
     luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', devices[0]]))
-    tokens = [item.get('type') for item in luks.get('tokens', {}).values()]
-    if installed['boot'].get('tpm', 'required') == 'required':
-        require('systemd-tpm2' in tokens, 'State lacks its required TPM enrollment.')
+    tokens = enrollment_tokens(luks, tpm_required=installed['boot'].get('tpm', 'required') == 'required')
     directory = Path(installed['state_directory'])
     directory.mkdir(mode=0o700, exist_ok=True)
     require(not directory.is_symlink() and directory.stat().st_uid == 0 and
@@ -176,7 +187,7 @@ def repartition(installed, disk, *, installed_root):
             del first
             command([*arguments, '--key-file='+str(key), disk], timeout=600)
     else:
-        command([*arguments, disk], timeout=600)
+        command([*arguments, '--tpm2-pcrs=7', '--tpm2-pcrlock=', disk], timeout=600)
     command(['udevadm', 'settle', '--timeout=30'])
 
 

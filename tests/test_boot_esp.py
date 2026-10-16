@@ -12,7 +12,7 @@ from lanrith.release import ReleaseError
 
 
 class BootESPTests(unittest.TestCase):
-    def observe(self, esp, *, parent='/dev/vda', kind='vfat', mounted=True, multiple=False):
+    def observe(self, esp, *, parent='/dev/vda', kind='vfat', mounted=True, multiple=False, nested=False):
         actual_stat = Path.stat
 
         def root_owned(path, **options):
@@ -24,7 +24,9 @@ class BootESPTests(unittest.TestCase):
             if arguments[0] == 'bootctl':
                 return str(esp)+'\n'
             if arguments[0] == 'findmnt':
-                rows = [{'source': '/dev/vda1', 'fstype': kind}]
+                self.assertIn('--target', arguments)
+                self.assertIn(str(esp/'EFI'), arguments)
+                rows = [{'source': '/dev/vda1', 'fstype': kind, 'target': str(esp/'EFI' if nested else esp)}]
                 return json.dumps({'filesystems': rows*2 if multiple else rows})
             if arguments[0] == 'lsblk':
                 return json.dumps({'blockdevices': [{'name': '/dev/vda1', 'type': 'part',
@@ -47,6 +49,7 @@ class BootESPTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             esp = Path(temporary)/'boot'
             (esp/'EFI').mkdir(parents=True)
-            for change in ({'parent': '/dev/vdb'}, {'kind': 'ext4'}, {'mounted': False}, {'multiple': True}):
+            for change in ({'parent': '/dev/vdb'}, {'kind': 'ext4'}, {'mounted': False},
+                           {'multiple': True}, {'nested': True}):
                 with self.subTest(change=change), self.assertRaises(ReleaseError):
                     self.observe(esp, **change)

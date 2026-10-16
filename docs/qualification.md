@@ -42,6 +42,7 @@ build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only
 loopback administration. It exercises installation read-back, Secure Boot,
 verity, TPM and manual state encryption, recovery acknowledgment, SSH/PAM,
+automatic boot observation and inactive optional services,
 one-shot updates, explicit acceptance, replay and tamper rejection,
 interrupted staging, failed-health fallback and populated state. Only the
 bounded JSON result is retained publicly; test disk images, recovery keys,
