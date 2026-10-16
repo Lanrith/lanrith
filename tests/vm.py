@@ -302,7 +302,13 @@ class Guest:
         deadline = time.monotonic()+timeout
         while time.monotonic()<deadline and self.process.poll() is None:
             time.sleep(0.1)
-        release.require(self.process.poll() is not None, 'Factory VM did not power off: '+self.diagnostic())
+        release.require(self.process.poll() is not None, 'Guest did not power off: '+self.diagnostic())
+
+    def poweroff(self):
+        request = self.ssh('sudo systemctl poweroff --no-block', success=False)
+        release.require(request.returncode in (0, 255), 'Guest refused the orderly shutdown request.')
+        self.wait_shutdown()
+        self.close()
 
     def ssh(self, command, *, success=True, timeout=180, agent=True):
         result = subprocess.run(self.ssh_arguments(command, agent=agent), stdin=subprocess.DEVNULL,
@@ -636,7 +642,7 @@ lanrith-vpp-service-attachment.service lanrith-nat64.service lanrith-nat64-inter
 ! systemctl is-active --quiet "$unit" || exit 1
 done''')
         if manual:
-            guest.close()
+            guest.poweroff()
             boot(guest, manual=True)
             check_state(guest, state, 'Manual encryption boot changed persistent state.')
             return {'profile': 'manual-encryption', 'result': 'pass', 'checks': [
