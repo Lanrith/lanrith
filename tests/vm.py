@@ -257,10 +257,12 @@ class Guest:
             if message.encode() in buffer:
                 literals.add(message)
         for executable in ('bootctl', 'cryptsetup', 'dd', 'dmsetup', 'findmnt', 'ip', 'lsblk',
-                           'mount', 'sfdisk', 'sync', 'systemctl', 'systemd-repart', 'udevadm', 'umount'):
-            message = 'Update command failed: '+executable
-            if message.encode() in buffer:
-                literals.add(message)
+                           'mount', 'sfdisk', 'sync', 'systemctl', 'systemd-repart', 'systemd-sysupdate',
+                           'udevadm', 'umount'):
+            for prefix in ('Update command failed: ', 'Update command could not start: '):
+                message = prefix+executable
+                if message.encode() in buffer:
+                    literals.add(message)
         for module in ('factory', 'update', 'release', 'runtime'):
             tree = ast.parse((PROJECT/'lanrith'/(module+'.py')).read_text())
             for node in ast.walk(tree):

@@ -24,8 +24,12 @@ UUID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
 
 def command(arguments, timeout=30):
-    result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
-                            text=True, timeout=timeout, env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+    try:
+        result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, timeout=timeout, env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+    except OSError as error:
+        from .release import ReleaseError
+        raise ReleaseError('Update command could not start: '+Path(arguments[0]).name) from error
     require(result.returncode == 0, 'Update command failed: ' + Path(arguments[0]).name)
     return result.stdout
 

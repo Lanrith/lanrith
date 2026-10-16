@@ -171,7 +171,16 @@ def main(arguments=None):
         else:
             print(json.dumps(promote(args.directory), sort_keys=True))
     except (ReleaseError, OSError, ValueError, KeyError) as error:
-        print(str(error) if isinstance(error, ReleaseError) else 'Runtime operation failed.', file=sys.stderr)
+        if isinstance(error, ReleaseError):
+            message = str(error)
+        else:
+            # Paths, command arguments and parser input can contain owner data.
+            # Report only the fixed operation, exception category and errno.
+            details = 'operation='+args.command+'; exception='+type(error).__name__
+            if isinstance(error, OSError) and type(error.errno) is int:
+                details += '; errno='+str(error.errno)
+            message = 'Runtime operation failed. ['+details+']'
+        print(message, file=sys.stderr)
         return 1
     return 0
 

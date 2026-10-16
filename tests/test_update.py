@@ -12,6 +12,12 @@ from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    def test_missing_command_reports_only_the_tool_name(self):
+        with patch.object(update.subprocess, 'run', side_effect=FileNotFoundError(
+                2, 'sensitive exception detail', '/private/example-secret')):
+            with self.assertRaisesRegex(ReleaseError, '^Update command could not start: systemd-sysupdate$'):
+                update.command(['/usr/lib/systemd/systemd-sysupdate', 'update', '10'])
+
     def test_inactive_partition_is_busy_when_a_child_mapping_is_mounted(self):
         device = {'name': '/dev/lanrith-test-disk2', 'type': 'part', 'pkname': '/dev/lanrith-test-disk',
                   'partn': 2, 'parttype': update.GUIDS['root'], 'partlabel': '_empty',
