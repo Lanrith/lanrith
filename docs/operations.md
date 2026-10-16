@@ -28,6 +28,8 @@ linked files, wrong trust, replay and incomplete sets fail admission.
 On the router, an administrator uploads to the unprivileged staging area and
 invokes the root-owned promotion helper through the approved authorization
 path. It copies into exclusive root-owned files before signature verification.
+The admitted files and publication directories are flushed before staging, so
+the authenticated inbox survives a power cycle after admission.
 The updater identifies the actual mounted dm-verity dependency graph and both
 slots; it does not guess a disk from device naming. Undersized, mounted,
 ambiguous or foreign targets fail. The inactive signature/hash/root are written

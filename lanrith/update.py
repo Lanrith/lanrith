@@ -393,8 +393,8 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
                         (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) and
                         size == before.st_size, 'Upload changed during promotion.')
                 output.flush()
+                os.fchmod(output.fileno(), 0o600)
                 os.fsync(output.fileno())
-            (root/name).chmod(0o600)
         verified = verify(root, Path(installed['certificate']), purpose='update',
                           image_id=installed['update_image_id'], minimum_sequence=installed['deployment_sequence'])
         require(verified == manifest, 'Manifest changed during promotion.')
@@ -404,6 +404,13 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
         else:
             os.rename(root, destination)
             root.mkdir(mode=0o700)  # Preserve TemporaryDirectory's cleanup ownership.
+    # Commit the file names and the publication rename before disk staging.
+    for directory in (destination, inbox):
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     return stage(destination, installed_path)
 
 

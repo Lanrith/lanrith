@@ -5,16 +5,71 @@ import json
 import os
 from pathlib import Path
 import platform
+import stat
 import subprocess
+from types import SimpleNamespace
 import unittest
 import tempfile
 from unittest.mock import patch
 
-from lanrith import update
+from lanrith import release, update
 from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid() == 0, 'Requires root-owned metadata in the native builder.')
+    def test_admission_directory_flush_failure_prevents_disk_staging(self):
+        for fail_at in (None, 'destination', 'parent'):
+            with self.subTest(fail_at=fail_at), tempfile.TemporaryDirectory() as temporary:
+                base=Path(temporary)
+                upload=base/'upload';upload.mkdir()
+                source=upload/'17';source.mkdir()
+                files={role:'synthetic.'+role for role in ('root','verity','verity-sig','uki')}
+                for name in files.values():
+                    (source/name).write_bytes(b'synthetic payload')
+                manifest=release.unsigned_manifest(source,purpose='update',version='0.1.0',sequence=17,
+                    configuration_sha256='a'*64,files=files)
+                (source/'release.json').write_bytes(release.canonical(manifest))
+                (source/'release.json.sig').write_bytes(b'synthetic signature; verifier tested separately')
+                policy={'upload_directory':str(upload),'state_directory':str(base/'state'),
+                        'certificate':str(base/'fixture.crt'),'update_image_id':'lanrith','deployment_sequence':10}
+                installed=base/'installed.json';installed.write_text(json.dumps(policy))
+                esp=base/'esp';esp.mkdir()
+                inbox=base/'state/update-inbox';destination=inbox/'17'
+                directories=[]
+                fsync=os.fsync
+                def flush(descriptor):
+                    info=os.fstat(descriptor)
+                    if stat.S_ISDIR(info.st_mode):
+                        kind='destination' if info.st_ino==destination.stat().st_ino else 'parent'
+                        directories.append(kind)
+                        if kind==fail_at:
+                            raise OSError(5,'synthetic directory writeback failure')
+                    else:
+                        self.assertEqual(stat.S_IMODE(info.st_mode),0o600)
+                    fsync(descriptor)
+                def staged(path,installed_path):
+                    self.assertEqual(directories,['destination','parent'])
+                    self.assertEqual(path,destination)
+                    self.assertEqual(installed_path,installed)
+                    self.assertEqual({p.name for p in inbox.iterdir()},{'17'})
+                    return {'result':'staged'}
+                with patch.object(update,'boot_esp',return_value=esp), \
+                        patch.object(Path,'is_mount',return_value=True), \
+                        patch.object(update,'root_disk',return_value=('/dev/synthetic',{1,2})), \
+                        patch.object(update,'geometry',return_value=[]), \
+                        patch.object(update,'upload_limits',return_value={role:4096 for role in files}), \
+                        patch.object(update.shutil,'disk_usage',return_value=SimpleNamespace(free=1024**3)), \
+                        patch.object(update,'verify',return_value=manifest), \
+                        patch.object(update.os,'fsync',side_effect=flush), \
+                        patch.object(update,'stage',side_effect=staged) as stage:
+                    if fail_at is None:
+                        self.assertEqual(update.promote(source,installed),{'result':'staged'})
+                    else:
+                        with self.assertRaises(OSError):
+                            update.promote(source,installed)
+                        stage.assert_not_called()
+
     def test_failed_boot_image_flush_cannot_select_a_candidate(self):
         with tempfile.TemporaryDirectory() as temporary:
             entry = Path(temporary)/'lanrith_10+3-0.efi'

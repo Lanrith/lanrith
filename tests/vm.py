@@ -679,22 +679,31 @@ done''')
                         'The installed updater accepted a tampered manifest.')
         guest.ssh('rm -rf -- '+third_path)
         third_path = upload(guest, third)
-        # A previously authenticated root-owned inbox was retained after the
-        # unaccepted-slot rejection. Interrupt the actual sysupdate write after
-        # it relabels an inactive partition, rather than killing an upload copy.
-        process = int(root(guest, 'setsid lanrith-runtime stage /var/lib/lanrith/update-inbox/11 '
-            '>/var/tmp/lanrith-qualification-stage.log 2>&1 </dev/null & echo $!').stdout)
-        release.require(process > 1, 'Invalid disposable update process.')
+        # The admitted store must survive the earlier power cycles. Keep the
+        # authorized foreground SSH session alive until the actual disk fault.
+        root(guest, 'test -d /var/lib/lanrith/update-inbox/11')
+        process = subprocess.Popen(guest.ssh_arguments(
+            'sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/11'),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=guest.environment)
         deadline, interrupted = time.monotonic()+90, False
-        while time.monotonic() < deadline:
-            table = json.loads(root(guest, 'sfdisk --json /dev/vda').stdout)['partitiontable']['partitions']
-            if any(part.get('name') == '_empty' for part in table):
-                root(guest, 'kill -KILL -- -'+str(process))
-                interrupted = True
-                break
-            time.sleep(0.1)
+        try:
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    _, errors = process.communicate(timeout=5)
+                    raise release.ReleaseError('Staging exited before the inactive-slot fault: '+
+                                               errors[-2048:].decode(errors='replace'))
+                table = json.loads(root(guest, 'sfdisk --json /dev/vda').stdout)['partitiontable']['partitions']
+                if any(part.get('name') == '_empty' for part in table):
+                    # Discard guest RAM and stop every writer at the observed
+                    # inactive-slot transaction, then boot the accepted image.
+                    guest.close()
+                    interrupted = True
+                    break
+                time.sleep(0.1)
+        finally:
+            stop(process)
         release.require(interrupted, 'Did not observe the inactive-slot write before interruption.')
-        guest.close()
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'Accepted update did not persist.')
