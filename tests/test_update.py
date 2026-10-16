@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+import platform
 import subprocess
 import unittest
 import tempfile
@@ -13,8 +14,10 @@ from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
-    @unittest.skipUnless(Path('/usr/lib/systemd/systemd-sysupdate').is_file(),
-                         'Requires the pinned Debian updater for native transfer parsing.')
+    @unittest.skipUnless(Path('/usr/lib/systemd/systemd-sysupdate').is_file() and
+                         platform.freedesktop_os_release().get('ID') == 'debian' and
+                         platform.freedesktop_os_release().get('VERSION_ID') == '13',
+                         'Requires Debian 13 and its native updater for transfer parsing.')
     def test_native_sysupdate_discovers_an_absolute_source_without_transfer_path_overrides(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
