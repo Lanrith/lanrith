@@ -14,6 +14,21 @@ and tool/source inputs are pinned. Review the
 [SLSA assessment](../security/slsa-assessment.json) alongside actual run evidence;
 a signature alone does not establish Build L3.
 
+The assessment records every requirement in
+[SLSA v1.2](https://slsa.dev/spec/v1.2/build-requirements), including separate
+signing authority, fresh hosted jobs, cache isolation and enumerated caller
+parameters. Its workflow hashes must match the reviewed files. The native
+runner must pass against the exact filesystem and initrd before a hosted
+main release can record eligibility. Local and PR builds cannot enable it.
+Consumers then verify the signed qualification record, its native subjects
+and both file and OCI provenance. This is a project assessment, not a
+third-party certification. Current qualification scope is the x86-64 UEFI
+VM core with TPM2 and manual state encryption; other hardware and enabled
+advanced integrations require their own qualification.
+
+After changing a release workflow, reassess its controls and update the hashes
+in `security/slsa-assessment.json`. A stale assessment blocks publication.
+
 `platform.lock` pins the Lanrith repository, release, source commit, signer
 workflow commit, security workflow commit, manifest, all selected files and the
 matching builder digest. `gh attestation verify` enforces the repository,

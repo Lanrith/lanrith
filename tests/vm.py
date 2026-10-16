@@ -89,7 +89,7 @@ class Guest:
             '-drive', 'if=pflash,format=raw,unit=0,readonly=on,file='+str(self.firmware),
             '-drive', 'if=pflash,format=raw,unit=1,file='+str(self.work/'vars.fd'),
             '-drive', 'if=none,id=installed,format=raw,file='+str(self.disk),
-            '-device', 'virtio-blk-pci,drive=installed,serial=lanrith-qualification,bootindex=2',
+            '-device', 'virtio-blk-pci,drive=installed,serial=lanrith-qa-disk,bootindex=2',
             '-chardev', 'socket,id=serial,path='+str(self.work/'serial.sock')+',server=on,wait=off',
             '-serial', 'chardev:serial', '-qmp', 'unix:'+str(self.work/'qmp.sock')+',server=on,wait=off', '-S']
         if self.medium:
@@ -141,14 +141,19 @@ class Guest:
         raise release.ReleaseError('QEMU control response timed out.')
 
     def expect(self, pattern, answer=None, timeout=600):
-        deadline, expression = time.monotonic()+timeout, re.compile(pattern, re.IGNORECASE)
+        self.expect_any([pattern], timeout=timeout)
+        if answer is not None:
+            self.serial.sendall(answer.encode()+b'\r')
+
+    def expect_any(self, patterns, timeout=600):
+        deadline = time.monotonic()+timeout
+        expressions = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
         while time.monotonic() < deadline:
-            match = expression.search(self.buffer)
-            if match:
-                self.buffer = self.buffer[match.end():]
-                if answer is not None:
-                    self.serial.sendall(answer.encode()+b'\r')
-                return
+            for index, expression in enumerate(expressions):
+                match = expression.search(self.buffer)
+                if match:
+                    self.buffer = self.buffer[match.end():]
+                    return index
             release.require(self.process.poll() is None, 'Guest stopped before the expected console event.')
             try:
                 data = self.serial.recv(65536)
@@ -157,8 +162,12 @@ class Guest:
             except socket.timeout:
                 pass
         # Console data can contain a disposable recovery key. Never export it.
-        raise release.ReleaseError('Guest console event timed out (diagnostic sha256 '+
-                                 hashlib.sha256(self.buffer).hexdigest()+').')
+        flags = {name: marker.lower() in self.buffer.lower() for name, marker in (
+            ('secure-boot-rejection', b'Security Violation'), ('kernel-started', b'Linux version'),
+            ('emergency-mode', b'emergency mode'), ('recovery-prompt', b'RECOVERY-KEY-STORED'),
+            ('bootloader-menu', b'Linux Boot Manager'))}
+        raise release.ReleaseError('Guest console event timed out: '+json.dumps(flags,sort_keys=True)+
+            ' (diagnostic sha256 '+hashlib.sha256(self.buffer).hexdigest()+').')
 
     def ssh_arguments(self, command, *, agent=True):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -180,7 +189,7 @@ class Guest:
         deadline = time.monotonic()+600
         while time.monotonic() < deadline:
             release.require(self.process.poll() is None, 'Guest exited before SSH became ready.')
-            command = 'sudo -n lanrith-runtime health' if healthy else 'sudo -n id -u'
+            command = 'sudo -n lanrith-runtime publish' if healthy else 'sudo -n id -u'
             if self.ssh(command, success=False, timeout=20).returncode == 0:
                 return
             time.sleep(2)
@@ -277,8 +286,19 @@ def boot(guest, *, manual=False, first=False):
             guest.expect(rb'(?:Please enter passphrase|Please enter password|Password:).*', PASSPHRASE)
     if first:
         if manual:
-            guest.expect(rb'Please enter current passphrase.*', PASSPHRASE)
-        guest.expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
+            # Creating the LUKS volume and unlocking it for the root system
+            # are separate operations. Recovery enrollment can ask again.
+            for _ in range(8):
+                event = guest.expect_any([rb'Type RECOVERY-KEY-STORED[^\r\n]*: ',
+                    rb'Please enter (?:current )?(?:passphrase|password)[^\r\n]*: ?'])
+                if event == 0:
+                    guest.serial.sendall(b'RECOVERY-KEY-STORED\r')
+                    break
+                guest.serial.sendall(PASSPHRASE.encode()+b'\r')
+            else:
+                raise release.ReleaseError('Manual state boot repeated too many unlock prompts.')
+        else:
+            guest.expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
     guest.ready()
 
 
@@ -297,13 +317,15 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
     guest = Guest(work/'guest', secret, disk, medium=medium, tpm=not manual)
     try:
         if medium:
+            print('Native VM: booting the disposable factory installation medium.',flush=True)
             guest.start()
             guest.expect(rb'Type ERASE-AND-INSTALL .* to continue: ',
-                         'ERASE-AND-INSTALL /dev/disk/by-id/virtio-lanrith-qualification')
+                         'ERASE-AND-INSTALL /dev/disk/by-id/virtio-lanrith-qa-disk')
             guest.expect(rb'Installation read-back passed')
             guest.process.wait(timeout=180)
             guest.close()
             guest.medium = None
+        print('Native VM: booting the installed '+('manual' if manual else 'TPM2')+' state profile.',flush=True)
         boot(guest, manual=manual, first=True)
         if medium:
             medium.unlink()
@@ -418,7 +440,7 @@ def main():
     work.mkdir(mode=0o700)
     value = config.load(PROJECT/'examples/minimal.yaml')
     value['hardware']['storage'] = {'root_mib': 6144, 'state_mib': 16384, 'esp_mib': 512,
-                                   'target': '/dev/disk/by-id/virtio-lanrith-qualification'}
+                                   'target': '/dev/disk/by-id/virtio-lanrith-qa-disk'}
     value['hardware']['boot'] = {'secure_boot': True, 'console': 'ttyS0,115200n8', 'recovery_console': 'ttyS0'}
     value['administration']['serial'] = {'enabled': True, 'tty': 'ttyS0'}
     report = {'schema': 1, 'result': 'fail', 'test': 'x86-64-uefi-factory-ab', 'profiles': [],

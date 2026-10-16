@@ -28,8 +28,11 @@ def main():
     args = parser.parse_args()
     def run(*argv, check=True, **kwargs):
         return subprocess.run(argv, check=check, stdin=subprocess.DEVNULL, **kwargs)
-    releases = json.loads(run('gh', 'api', 'repos/Lanrith/lanrith/releases?per_page=100',
-                              capture_output=True, text=True).stdout)
+    pages = json.loads(run('gh', 'api', '--paginate', '--slurp',
+        'repos/Lanrith/lanrith/releases?per_page=100', capture_output=True, text=True).stdout)
+    require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
+            'Retained release enumeration is malformed.')
+    releases = [item for page in pages for item in page]
     versions = [item for item in releases if not item['draft'] and
                 __import__('re').fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
     if os.environ.get('GITHUB_OUTPUT'):

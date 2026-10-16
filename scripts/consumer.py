@@ -32,8 +32,11 @@ def fetch(selection, directory):
             argv += ['--pattern', name+'.intoto.jsonl']
     run(*argv)
     # A retained image needs a fresh assessment even when its package inputs did not change.
-    response = json.loads(run('gh', 'api', 'repos/'+trust.REPOSITORY+'/releases?per_page=100',
-                              capture_output=True, text=True).stdout)
+    pages = json.loads(run('gh', 'api', '--paginate', '--slurp',
+        'repos/'+trust.REPOSITORY+'/releases?per_page=100', capture_output=True, text=True).stdout)
+    require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
+            'Published release enumeration is malformed.')
+    response = [item for page in pages for item in page]
     suffix = '-'+selection['files']['inventory.json'][:12]
     assessments = [item for item in response if not item['draft'] and
                    re.fullmatch(r'assessment-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}', item['tag_name']) and

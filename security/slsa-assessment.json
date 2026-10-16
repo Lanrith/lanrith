@@ -1,18 +1,77 @@
 {
+  "qualification": "This assessment is conditional on the actual hosted main run, successful native tests and independently verified file/OCI provenance. It is not an attestation or a third-party certification.",
+  "references": [
+    "https://slsa.dev/spec/v1.2/build-requirements",
+    "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating",
+    "https://docs.github.com/en/actions/concepts/runners/github-hosted-runners",
+    "https://docs.github.com/en/actions/reference/security/oidc",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/variables"
+  ],
+  "requirements": {
+    "appropriate-platform": {
+      "evidence": "GitHub documents reusable workflows with artifact attestations as its Build L3 path. Only standard ubuntu-24.04 hosted jobs may produce this release; consumers reject self-hosted provenance.",
+      "result": "satisfied-by-design"
+    },
+    "consistent-process": {
+      "evidence": "Release calls the repository-owned build-base reusable workflow without caller inputs. Consumers pin its exact commit, source commit, repository and main ref before executing tools.",
+      "result": "satisfied-by-design"
+    },
+    "distributed-provenance": {
+      "evidence": "Every selected file and the immutable OCI builder have GitHub/Sigstore provenance, distributed as offline bundles beside durable release assets. Owner boot signing is a separate authority.",
+      "result": "satisfied-by-design"
+    },
+    "external-parameters": {
+      "evidence": "The reusable platform workflow has no caller inputs. The only accepted release context is Lanrith/lanrith main at its GitHub source commit; the release version is derived by the reviewed script. Source, workflow, run and attempt are recorded. Resolved dependency coverage is best effort and supplemented by locked inputs, SBOM and binary/source assessments.",
+      "result": "satisfied-by-design"
+    },
+    "hosted": {
+      "evidence": "All build, attestation and publication jobs select standard GitHub ubuntu-24.04 hosted runners; local builds cannot mark an image production-qualified.",
+      "result": "satisfied-by-design"
+    },
+    "isolated-caches": {
+      "evidence": "No cross-run build cache is restored. setup-go cache is disabled; Alloy rejects retained local cache inputs in GitHub Actions. Dependency/image downloads use the reviewed hashes, commits or OCI digests.",
+      "result": "satisfied-by-design"
+    },
+    "isolated-concurrent-builds": {
+      "evidence": "Standard hosted jobs run on separate freshly provisioned VMs. Container and native qualification processes stay within their own build VM.",
+      "result": "satisfied-by-design"
+    },
+    "isolated-remote-influence": {
+      "evidence": "No remote build/debug service is opened. VM administration is loopback-only inside a network-disabled container and authenticates a fresh disposable SSH identity. Package/source downloads are explicit build dependencies.",
+      "result": "satisfied-by-design"
+    },
+    "isolated-signing": {
+      "evidence": "GitHub/Sigstore retains provenance signing authority outside the build job. The attestation job receives immutable artifact IDs, never caller commands, boot keys or owner secrets.",
+      "result": "satisfied-by-design"
+    },
+    "isolated-subsequent-builds": {
+      "evidence": "Every job starts on a fresh hosted VM. No self-hosted runner or persistent workspace is accepted.",
+      "result": "satisfied-by-design"
+    },
+    "provenance-authentic": {
+      "evidence": "GitHub OIDC and Sigstore bind the repository/workflow identity to signatures. Consumers verify the issuer, exact signer/source commits, main ref, predicate and hosted-runner policy.",
+      "result": "satisfied-by-design"
+    },
+    "provenance-exists": {
+      "evidence": "The pinned attest-build-provenance action emits SLSA provenance v1 with cryptographic subjects and GitHub control-plane source, invocation and workflow identity.",
+      "result": "satisfied-by-design"
+    },
+    "provenance-unforgeable": {
+      "evidence": "Build steps have no id-token or attestation permission. A separate fresh hosted attestation job has no source checkout and executes no uploaded code. GitHub supplies required provenance fields; uploaded artifact names/digests are the permitted tenant-controlled subject fields.",
+      "result": "satisfied-by-design"
+    },
+    "security-practices": {
+      "evidence": "Pinned actions, source/tool/image/patch hashes, protected main review/checks, least job permissions, fresh Debian/custom advisory scans, native negative-path checks, retained rescans and a separate freshness watchdog. Trusted administrators retain the documented bootstrap bypass; no claim of third-party certification is made.",
+      "result": "satisfied-by-design"
+    }
+  },
+  "result": "design-assessed",
+  "reviewed_workflows": {
+    ".github/workflows/build-base.yml": "6f2a07ac7c3684baac2ca37ac182875966f29f9776e351ac0d131c6279217fd6",
+    ".github/workflows/check.yml": "099ceaf4bf444d5829e21f0f083908c9f983e9a435a6f2f1364c6fb67aa90d22",
+    ".github/workflows/release.yml": "5779d5ad5b487e3a270737dbd1548797141bbb64e4b7ecddbd884ce3d95beae8"
+  },
   "schema": 1,
   "specification": "SLSA v1.2",
-  "target": "Build L3",
-  "result": "pending-native-and-platform-assessment",
-  "requirements": {
-    "provenance": "GitHub artifact attestations for every selected file and the matching OCI builder",
-    "identity": "Exact repository, reusable workflow commit, source commit, OIDC issuer and hosted-runner policy",
-    "isolation": "Fresh hosted jobs; build has no OIDC authority; attestation job executes no build outputs",
-    "handoff": "Immutable artifact IDs between build, attestation and publication",
-    "inputs": "Reviewed source/tool/action/package/patch pins and inventory-bound security evidence",
-    "assessment": "Actual successful run and supported GitHub build-platform guarantees must be reviewed before qualification"
-  },
-  "references": [
-    "https://slsa.dev/spec/v1.2/levels",
-    "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating"
-  ]
+  "target": "Build L3"
 }

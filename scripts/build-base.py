@@ -133,9 +133,10 @@ def main():
         extract_packages(image(component, args.work, inputs), packages)
     builder = image('mkosi', args.work, inputs)
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',
-        '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work', builder,
-        'python3', '/source/tests/storage.py', '--work', '/work/storage-qualification')
-    shutil.copyfile(args.work/'storage-qualification/result.json', args.output/'storage-qualification.json')
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
+        '-v', str(args.output)+':/output', builder,
+        'python3', '/source/tests/storage.py', '--work', '/work/storage-qualification',
+        '--result', '/output/storage-qualification.json')
     build = args.work / 'image'
     build.mkdir()
     shutil.copytree(PROJECT / 'mkosi/base', build, dirs_exist_ok=True)
@@ -207,6 +208,7 @@ def main():
         '-v', str(args.output)+':/output', builder, 'python3', '/source/tests/vm.py',
         '--base', '/output/lanrith-base.tar.gz', '--initrd-base', '/output/lanrith-initrd-base.tar.gz',
         '--work', '/work/vm-qualification', '--result', '/output/native-qualification.json')
+    run(sys.executable, str(PROJECT/'scripts/qualify-base.py'), '--directory', str(args.output))
 
 
 if __name__ == '__main__':

@@ -12,7 +12,10 @@ repository = os.environ['GITHUB_REPOSITORY']
 def gh(*arguments):
     return subprocess.run(['gh', *arguments], check=True, capture_output=True, text=True).stdout
 
-releases = json.loads(gh('api', 'repos/'+repository+'/releases?per_page=100'))
+pages = json.loads(gh('api', '--paginate', '--slurp', 'repos/'+repository+'/releases?per_page=100'))
+if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+    raise SystemExit('Published release enumeration is malformed.')
+releases = [item for page in pages for item in page]
 import re
 supported = [r for r in releases if not r['draft'] and
              re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', r['tag_name'])]

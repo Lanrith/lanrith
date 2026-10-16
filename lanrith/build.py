@@ -101,7 +101,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             required.append(unit)
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
-        f'Requires={" ".join(required)}\nAfter={" ".join(required)}\nBefore=boot-complete.target\n'
+        f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'
+        f'After=lanrith-recovery-key.service {" ".join(required)}\nBefore=boot-complete.target\n'
         '\n[Service]\nType=oneshot\nTimeoutStartSec=60s\nExecStart=/usr/bin/lanrith-runtime health\n'
         '\n[Install]\nRequiredBy=boot-complete.target\n')
     (units / 'lanrith-observation.service').write_text(

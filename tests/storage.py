@@ -43,6 +43,7 @@ def checksum(path, start, size):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--result', type=Path)
     args = parser.parse_args()
     work = args.work
     require(work.is_absolute() and not work.exists() and work.parent.resolve() == work.parent,
@@ -96,7 +97,10 @@ def main():
             require(first['start'] == signed[role]['start'] and
                     checksum(image, first['start']*512, signed[role]['size']*512) == expected[role],
                     'Slot expansion moved or changed signed filesystem, hash or signature bytes.')
-        (work/'result.json').write_text(json.dumps({'schema': 1, 'result': 'pass',
+        result = args.result or work/'result.json'
+        require(result.is_absolute() and result.parent.resolve() == result.parent and not result.exists(),
+                'Storage result must be a new canonical file.')
+        result.write_text(json.dumps({'schema': 1, 'result': 'pass',
             'test': 'factory-slot-expansion', 'original_signed_sha256': expected,
             'initial_partitions': len(original), 'expanded_partitions': len(expanded)}, sort_keys=True)+'\n')
     print('Real factory expansion preserved all signed data, hash and signature bytes.')
