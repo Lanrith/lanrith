@@ -1,15 +1,27 @@
 """Protect active slots while allowing image/version naming to change."""
 
 import copy
+import json
 from pathlib import Path
 import unittest
 import tempfile
+from unittest.mock import patch
 
 from lanrith import update
 from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    def test_inactive_partition_is_busy_when_a_child_mapping_is_mounted(self):
+        device = {'name': '/dev/lanrith-test-disk2', 'type': 'part', 'pkname': '/dev/lanrith-test-disk',
+                  'partn': 2, 'parttype': update.GUIDS['root'], 'partlabel': '_empty',
+                  'partuuid': '12345678-abcd-5678-9abc-123456789abc', 'size': 4096,
+                  'mountpoints': [None], 'children': [{'name': '/dev/mapper/foreign', 'type': 'crypt',
+                      'mountpoints': ['/mnt/foreign']}]}
+        with patch.object(update, 'command', return_value=json.dumps({'blockdevices': [device]})):
+            rows = update.geometry('/dev/lanrith-test-disk')
+        self.assertTrue(rows[0]['mounted'])
+
     def test_running_slot_must_be_the_explicitly_accepted_default(self):
         with tempfile.TemporaryDirectory() as temporary:
             variable = Path(temporary)/'LoaderEntryDefault'

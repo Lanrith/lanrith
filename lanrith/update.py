@@ -147,10 +147,17 @@ def geometry(disk):
         pending.extend(device.get('children', []))
         if device.get('type') != 'part':
             continue
+        descendants, busy = [device], False
+        while descendants:
+            child = descendants.pop()
+            busy = busy or any(child.get('mountpoints') or [])
+            descendants.extend(child.get('children', []))
+        holders = Path('/sys/class/block')/Path(device['name']).name/'holders'
+        busy = busy or holders.is_dir() and any(holders.iterdir())
         result.append({'disk': device.get('pkname'), 'number': device.get('partn'),
                        'type': device.get('parttype') or '', 'label': device.get('partlabel'),
                        'uuid': device.get('partuuid'),
-                       'size': device.get('size'), 'mounted': any(device.get('mountpoints') or [])})
+                       'size': device.get('size'), 'mounted': bool(busy)})
     return result
 
 
