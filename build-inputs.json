@@ -46,7 +46,7 @@
     "builders/tayga/Containerfile": "ba86edc0b1778e576213f574b0dc1d77d0264f07eb3f6a744b2559ccf0366be5",
     "builders/unbound-source.lock": "50570574c939e538a95c30304acf6bb5b68ef694133c76077d656d5bfa3bd7d7",
     "builders/unbound/Containerfile": "a6d4aad00d4197c225cb74885ccff0485e3797ceb4a43f3ae1b18b0dcee51fdf",
-    "builders/vpp-source.lock": "f787e7fdc63c7837d09e21d297e20e5cd7edcc691c5efa5ef60e346312564963",
+    "builders/vpp-source.lock": "aff9ec73e3c1f47e0cc968fe70eca5825c4658d0a724268ccce387401ba1f55f",
     "builders/vpp/Containerfile": "eb86698d84e832d908023c4fbb9ca6ce594654429d837d0620eea83eb3c2e5c5"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
