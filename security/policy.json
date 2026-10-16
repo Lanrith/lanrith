@@ -39,7 +39,6 @@
     "rsh-server",
     "rustc",
     "samba",
-    "systemd-container",
     "systemd-ukify",
     "telnetd",
     "tftpd",
@@ -139,7 +138,8 @@
     "openssh-server",
     "prometheus-node-exporter",
     "snmpd",
-    "suricata"
+    "suricata",
+    "systemd-container"
   ],
   "schema_version": 1
 }

@@ -21,9 +21,28 @@ spec.loader.exec_module(evidence)
 
 
 class BaseArchiveEvidenceTests(unittest.TestCase):
+    def test_updates_require_real_executable_helpers(self):
+        names = {}
+        for name in {'usr/lib/systemd/systemd', 'usr/bin/python3'} | evidence.UPDATE_TOOLS:
+            member = tarfile.TarInfo(name)
+            member.size, member.mode = 16, 0o755
+            names[name] = member
+        evidence.runtime_components(names)
+        for name in evidence.UPDATE_TOOLS:
+            with self.subTest(missing=name), self.assertRaises(ReleaseError):
+                evidence.runtime_components({key: member for key, member in names.items() if key != name})
+            for attribute, value in (('mode', 0o644), ('size', 0), ('type', tarfile.SYMTYPE)):
+                with self.subTest(tool=name, attribute=attribute), self.assertRaises(ReleaseError):
+                    invalid = tarfile.TarInfo(name)
+                    invalid.size, invalid.mode = 16, 0o755
+                    setattr(invalid, attribute, value)
+                    evidence.runtime_components({**names, name: invalid})
+
     def test_build_tools_and_caches_cannot_return_to_the_runtime(self):
         evidence.runtime_paths(['usr/bin/python3', 'usr/bin/tcpdump', 'usr/lib/locale/C.utf8/LC_CTYPE'])
-        for name in ('usr/bin/dpkg-query', 'usr/bin/gcc', 'usr/bin/git', 'var/lib/apt/lists/Packages',
+        for name in ('usr/bin/dpkg-query', 'usr/bin/gcc', 'usr/bin/git', 'usr/bin/systemd-nspawn',
+                     'usr/lib/systemd/systemd-machined', 'usr/lib/systemd/network/80-namespace-ns.network',
+                     'var/lib/apt/lists/Packages',
                      'usr/share/locale/de/messages.mo', 'usr/lib/python3.13/__pycache__/os.pyc'):
             with self.subTest(path=name), self.assertRaises(ReleaseError):
                 evidence.runtime_paths([name])
@@ -40,7 +59,7 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
                 member.size = 7
                 archive.addfile(member, io.BytesIO(b'fixture'))
         with tarfile.open(directory/'lanrith-base.tar.gz', 'w:gz') as archive:
-            names = ['usr/lib/systemd/systemd', 'usr/bin/python3']
+            names = ['usr/lib/systemd/systemd', 'usr/bin/python3'] + sorted(evidence.UPDATE_TOOLS)
             names += ['usr/bin/'+name for name in ('alloy', 'prometheus-node-exporter', 'discovery-bridge',
                 'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
                 'router-policy-check', 'router-policy-status', 'router-policy-recover')]
@@ -50,6 +69,7 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
                     data = b'changed after the package scan'
                 member = tarfile.TarInfo(prefix+name)
                 member.size = len(data)
+                member.mode = 0o755
                 archive.addfile(member, io.BytesIO(data))
             if state:
                 member = tarfile.TarInfo(prefix+'var/lib/lanrith/ssh-host-keys')

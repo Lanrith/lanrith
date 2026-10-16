@@ -20,6 +20,16 @@ from lanrith import sbom, embedded
 
 ROOT = Path(__file__).resolve().parents[1]
 
+UPDATE_TOOLS = {'usr/lib/systemd/systemd-sysupdate', 'usr/lib/systemd/systemd-import',
+                'usr/lib/systemd/systemd-import-fs', 'usr/lib/systemd/systemd-pull'}
+
+
+def runtime_components(names):
+    require({'usr/lib/systemd/systemd', 'usr/bin/python3'} | UPDATE_TOOLS <= names.keys(),
+            'Base is missing required runtime components.')
+    require(all(names[name].isfile() and names[name].size > 0 and names[name].mode & 0o111
+                for name in UPDATE_TOOLS), 'A required update tool is not an executable regular file.')
+
 
 def runtime_paths(names):
     for name in names:
@@ -28,6 +38,11 @@ def runtime_paths(names):
                 '__pycache__' not in Path(name).parts and
                 not re.fullmatch(r'usr/(?:s?bin)/(?:dpkg.*|apt.*|gcc(?:-[0-9]+)?|g\+\+|g?make|git|cargo|rustc|node|npm)', name),
                 'Base contains unnecessary package-manager, build or cache payload.')
+        require(not re.fullmatch(r'usr/(?:bin|sbin)/(?:machinectl|importctl|portablectl|systemd-nspawn|systemd-dissect|mount[.]ddi)', name)
+                and not re.fullmatch(r'usr/lib/systemd/systemd-(?:machined|nspawn|importd|portabled|export|mountfsd|mountwork|nsresourced|nsresourcework)', name)
+                and not name.startswith(('usr/lib/systemd/network/80-namespace-ns.',
+                                         'usr/lib/systemd/portable/')),
+                'Base contains an unused container runtime component.')
 
 
 def initrd_paths(path):
@@ -117,8 +132,7 @@ def main():
                                (b'', b'RSA ', b'EC ', b'DSA ', b'OPENSSH ', b'ENCRYPTED ')]
                     require(not any(marker in data for marker in markers),
                             'Base contains private-key material in a text file.')
-        require('usr/lib/systemd/systemd' in names and 'usr/bin/python3' in names,
-                'Base is missing required runtime components.')
+        runtime_components(names)
         runtime_paths(names)
         metadata = directory/'apt-metadata'
         require(metadata.is_file() and not metadata.is_symlink() and

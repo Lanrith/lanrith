@@ -66,6 +66,8 @@ class OptionalActivationTests(unittest.TestCase):
             script = Path(__file__).parents[1]/'mkosi/base/mkosi.finalize'
             output = root/'build-output'
             output.mkdir()
+            (output/'lanrith-base.container-pruning.json').write_text(
+                '{"schema":1,"removed_bytes":0,"removed_paths":0}\n')
             with mock.patch.dict(os.environ, {'BUILDROOT': str(root), 'OUTPUTDIR': str(output)}), mock.patch(
                     'subprocess.run', return_value=subprocess.CompletedProcess([], 0, b'Package: synthetic\n')):
                 runpy.run_path(str(script), run_name='__main__')
