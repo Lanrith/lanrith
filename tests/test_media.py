@@ -32,7 +32,10 @@ class MediaTests(unittest.TestCase):
                     return json.dumps({'blockdevices':[{'type':'part','partuuid':'synthetic-payload-id',
                                                        'name':'/dev/synthetic-payload'}]})
                 return ''
-            with patch.object(media, 'command', side_effect=command) as calls, \
+            temporary_directory = tempfile.TemporaryDirectory
+            with patch.object(media.tempfile, 'TemporaryDirectory',
+                              side_effect=lambda **kwargs: temporary_directory(dir=root)), \
+                    patch.object(media, 'command', side_effect=command) as calls, \
                     patch.object(release, 'verify', autospec=True, return_value=manifest) as admit:
                 media.verify(str(target), root, certificate, manifest)
                 self.assertEqual(admit.call_args.kwargs['expected_configuration'], 'a'*64)
