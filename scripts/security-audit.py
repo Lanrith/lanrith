@@ -106,7 +106,9 @@ def main():
                                       capture_output=True, text=True).stdout)
                 require(isinstance(feed, list), 'Retained embedded-source advisory coverage is malformed.')
                 covered = alloy['source_fix_ancestry'] if repository.startswith('open-telemetry/') else {}
-                if not all(record.get('ghsa_id') in covered for record in feed):
+                try:
+                    advisories.source_coverage(feed, covered)
+                except (ReleaseError, ValueError, KeyError):
                     failures.append('alloy-embedded-source-advisory')
             report = {'schema': 1, 'result': 'fail' if failures else 'pass', 'inventory_sha256': inventory,
                       'platform_version': item['tag_name'], 'source_commit': os.environ['GITHUB_SHA'],

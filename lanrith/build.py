@@ -36,11 +36,19 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     destination.mkdir(mode=0o700, parents=True)
     overlay = destination / 'mkosi.extra'
     digest = config.write(value, overlay)
-    base_files = set()
+    base_files, accounts = set(), {}
     if integrations:
         with tarfile.open(base) as archive:
-            base_files = {m.name.removeprefix('./').rstrip('/') for m in archive if not m.isdir()}
+            for member in archive:
+                name = member.name.removeprefix('./').rstrip('/')
+                if not member.isdir():
+                    base_files.add(name)
+                if name in ('etc/passwd', 'etc/group'):
+                    require(member.isfile() and 0 < member.size <= 1024*1024 and
+                            Path(name).name not in accounts, 'Base service account registry is ambiguous.')
+                    accounts[Path(name).name] = archive.extractfile(member).read()
     integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files)
+    extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
     # The effective intent includes every admitted integration, even when it adds no network fields.
     digest = hashlib.sha256(release.canonical({'configuration': value,
                                              'integrations': integration['digests'],
@@ -176,9 +184,14 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             # Permanent machine identity must not give successive deployments the
             # same signature-partition UUID as the still-active accepted slot.
             text += 'UUID='+str(uuid.uuid5(uuid.UUID(machine_id), f'{image_id}/{sequence}/{role}'))+'\n'
+        elif role == 'verity':
+            # Repart can grow the last existing root but cannot move it to make
+            # room for a preceding hash partition on first boot.
+            capacity = max(64, storage['root_mib']//16)
+            text += f'SizeMinBytes={capacity}M\nSizeMaxBytes={capacity}M\n'
         text += f'Verity={verity}\nVerityMatchKey=root\nSplitName={role}\n'
         if role == 'root':
-            text += 'Format=erofs\nCopyFiles=/\nExcludeFilesTarget=/var/\nMinimize=yes\n'
+            text += 'Format=erofs\nCopyFiles=/\nExcludeFilesTarget=/var/\nMinimize=best\n'
             if 'root_mib' in storage:
                 text += f'SizeMaxBytes={storage["root_mib"]}M\n'
         (repart / f'{index}-{role}.conf').write_text(text)

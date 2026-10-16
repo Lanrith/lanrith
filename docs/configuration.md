@@ -66,3 +66,16 @@ Extensions cannot overwrite base package binaries. Existing service configuratio
 files need an explicit admitted `replaces` entry. Selected health requirements
 activate the corresponding units; unselected optional daemons remain masked,
 including activation through D-Bus or sockets.
+
+An extension can declare `identities.users` (`name`, numeric `uid`, numeric
+`gid`, optional `home`) and `identities.groups` (`name`, numeric `gid`, optional
+`members`). These add locked service accounts with no login shell. The compiler
+preserves core accounts, rejects duplicate names/IDs and checks the final native
+registry. Account and sysusers files cannot be supplied as an ordinary overlay.
+Review any ownership conversion of existing state separately.
+
+`health_units` contains shared requirements. An optional
+`health_units_by_feature` map declares requirements for each selected feature.
+A disabled feature does not activate its units merely because its extension is
+present. Extensions with an empty `features` list activate their declared health
+requirements when explicitly selected; this supports separately owned components.

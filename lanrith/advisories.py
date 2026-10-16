@@ -35,6 +35,24 @@ def npm_queries(modules):
     return [queries[key] for key in sorted(queries)]
 
 
+def source_coverage(feed, fixes):
+    require(isinstance(feed, list) and isinstance(fixes, dict), 'Upstream source advisory coverage is malformed.')
+    seen = set()
+    for advisory in feed:
+        identity = advisory.get('ghsa_id')
+        require(isinstance(identity, str) and identity not in seen and identity in fixes,
+                'An upstream source advisory lacks reviewed fix coverage.')
+        seen.add(identity)
+        affected = advisory.get('vulnerabilities')
+        require(isinstance(affected, list) and affected and
+                all(isinstance(item, dict) and isinstance(item.get('patched_versions'), str) and
+                    item['patched_versions'] for item in affected), 'An upstream source advisory has unknown fix coverage.')
+        require({item['patched_versions'] for item in affected} ==
+                {item['fixed_tag'] for item in fixes[identity]},
+                'An upstream advisory changed its required fix; source ancestry must be reviewed again.')
+    return True
+
+
 def assess(queries):
     require(isinstance(queries, list) and 0 < len(queries) <= 1000, 'Invalid dependency advisory query set.')
     request = urllib.request.Request('https://api.osv.dev/v1/querybatch',

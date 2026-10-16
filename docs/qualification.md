@@ -30,3 +30,9 @@ uplink traffic, inter-network isolation, directional port grants, disabled
 service ports, spoof rejection, NAT44 and IPv6 source preservation. These
 results cover the generic compiler policy. Advanced integrations and physical
 hardware still need their own candidate-specific tests.
+
+`tests/storage.py` creates a signed synthetic EROFS image and expands it with
+the matching builder's `systemd-repart`. It verifies that the second slot and
+state appear without moving or changing signed data, hashes or signatures.
+It uses regular files and a disposable test authority. TPM and encrypted-state
+boot behavior remain separate qualification requirements.

@@ -70,3 +70,16 @@ RUN curl --proto '=https' --tlsv1.2 --fail --location --show-error \
  && mkosi --version | grep -Fqx 'mkosi 27' \
  && rm -f /tmp/mkosi.deb \
  && rm -rf /var/lib/apt/lists/*
+
+# The exported tool image has no reusable package-generated host/TLS identity.
+RUN python3 - <<'PY'
+from pathlib import Path
+root = Path('/')
+for pattern in ('etc/ssl/private/*', 'etc/ssh/ssh_host_*',
+                'etc/freeradius/*/certs/*.key', 'etc/freeradius/*/certs/*.pem',
+                'etc/freeradius/*/certs/*.p12', 'root/.ssh/*'):
+    for path in root.glob(pattern):
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+Path('/etc/machine-id').write_text('')
+PY

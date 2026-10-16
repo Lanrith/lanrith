@@ -19,6 +19,16 @@ identities = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
 (metadata/'service-identities.json').write_text(json.dumps(identities, sort_keys=True)+'\n')
 for path in (root/'etc/ssh').glob('ssh_host_*'):
     path.unlink()
+# Package installation can generate per-image TLS credentials. They must never
+# become a shared identity in the public base; enabled owner integrations supply
+# their own provisioning after admission.
+for pattern in ('etc/ssl/private/*', 'etc/freeradius/*/certs/*.key',
+                'etc/freeradius/*/certs/*.pem', 'etc/freeradius/*/certs/*.p12',
+                'home/*/.ssh/authorized_keys', 'root/.ssh/*',
+                'etc/security/authorized_keys', 'etc/security/admin.serial-passphrase.hash'):
+    for path in root.glob(pattern):
+        if path.is_file() or path.is_symlink():
+            path.unlink()
 for name in ('var/log', 'var/lib/dhcp', 'var/lib/kea', 'var/lib/systemd/random-seed',
              'var/lib/dbus/machine-id', 'etc/machine-id', 'etc/hostname'):
     path = root/name

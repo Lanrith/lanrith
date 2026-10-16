@@ -159,14 +159,16 @@ def main():
         run('gh', 'release', 'download', 'v'+pin['version'], '--repo', 'grafana/alloy',
             '--pattern', 'alloy-'+pin['version']+'-1.amd64.deb', '--output', str(upstream))
     require(file_record(upstream)['sha256'] == pin['upstream_deb_sha256'], 'Upstream Alloy packaging changed.')
-    tree = args.work/'package'
+    # A resumed local package step uses a new extraction tree as well.
+    import uuid
+    tree = args.work/('package-'+uuid.uuid4().hex)
     def package_tools(*arguments):
         container = [args.engine, 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
             '--security-opt', 'no-new-privileges', '--user', str(os.getuid())+':'+str(os.getgid())]
         if args.engine == 'podman':
             container += ['--userns=keep-id']
         run(*container, '-v', str(args.work)+':/work', '-v', str(args.output)+':/packages', tag, *arguments)
-    package_tools('dpkg-deb', '--raw-extract', '/work/upstream.deb', '/work/package')
+    package_tools('dpkg-deb', '--raw-extract', '/work/upstream.deb', '/work/'+tree.name)
     shutil.copyfile(args.work/'alloy-security', tree/'usr/bin/alloy')
     (tree/'usr/bin/alloy').chmod(0o755)
     embedded = tree/'usr/share/doc/alloy/security/beyla'
@@ -177,13 +179,18 @@ def main():
     text = control.read_text()
     require(re.search(r'^Package: alloy$', text, re.MULTILINE) and
             re.search(r'^Architecture: amd64$', text, re.MULTILINE), 'Unexpected upstream package identity.')
-    control.write_text(re.sub(r'^Version: .*$', 'Version: '+pin['package_version'], text, flags=re.MULTILINE))
+    text = re.sub(r'^Version: .*$', 'Version: '+pin['package_version'], text, flags=re.MULTILINE)
     notices = tree/'usr/share/doc/alloy/THIRD-PARTY-NOTICES.lanrith'
     notices.parent.mkdir(parents=True, exist_ok=True)
     notices.write_text('Lanrith source changes and build inputs:\n'+json.dumps(pin, sort_keys=True, indent=2)+
         '\n'+(args.work/'evidence/alloy-notices.txt').read_text()+
         '\nEmbedded Beyla:\n'+(args.work/'evidence/beyla-notices.txt').read_text()+
         '\nUI dependencies:\n'+(args.work/'evidence/npm-notices.txt').read_text())
+    installed_size = sum((path.stat().st_size+1023)//1024 for path in tree.rglob('*')
+                         if path.is_file() and not path.is_symlink() and 'DEBIAN' not in path.relative_to(tree).parts)
+    text, count = re.subn(r'^Installed-Size: .*$', 'Installed-Size: '+str(installed_size), text, flags=re.MULTILINE)
+    require(count == 1, 'Upstream package has no unique installed-size field.')
+    control.write_text(text)
     md5 = tree/'DEBIAN/md5sums'
     if md5.exists():
         records = []
@@ -194,7 +201,7 @@ def main():
                                    '  '+path.relative_to(tree).as_posix()+'\n')
         md5.write_text(''.join(records))
     output = args.output/('alloy_'+pin['package_version']+'_amd64.deb')
-    package_tools('dpkg-deb', '--build', '--root-owner-group', '/work/package', '/packages/'+output.name)
+    package_tools('dpkg-deb', '--build', '--root-owner-group', '/work/'+tree.name, '/packages/'+output.name)
     args.evidence.write_bytes(canonical({**evidence, 'package_sha256': file_record(output)['sha256'],
         'cache_reused': args.cache_from is not None,
         'upstream_deb_sha256': pin['upstream_deb_sha256'], 'fresh_source_advisories': feeds,

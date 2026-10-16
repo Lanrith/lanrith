@@ -10,6 +10,16 @@ from lanrith.release import ReleaseError
 
 
 class AdvisoryTests(unittest.TestCase):
+    def test_retained_source_coverage_rechecks_the_required_fix_not_only_the_id(self):
+        feed = [{'ghsa_id': 'GHSA-example', 'vulnerabilities': [{'patched_versions': 'v0.9.0'}]}]
+        fixes = {'GHSA-example': [{'fixed_tag': 'v0.9.0', 'fixed_commit': 'a'*40}]}
+        self.assertTrue(advisories.source_coverage(feed, fixes))
+        feed[0]['vulnerabilities'][0]['patched_versions'] = 'v0.11.0'
+        with self.assertRaises(ReleaseError):
+            advisories.source_coverage(feed, fixes)
+        with self.assertRaises(ReleaseError):
+            advisories.source_coverage(feed, {})
+
     def test_git_dependencies_get_both_package_and_commit_coverage(self):
         queries = advisories.cargo_queries({'package': [
             {'name': 'local-source', 'version': '0.1.0'},

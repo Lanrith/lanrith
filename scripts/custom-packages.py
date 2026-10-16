@@ -109,6 +109,8 @@ def main():
         reports['alloy'] = json.loads((work/'alloy-assessment.json').read_text())
         # The assessed package contains its notices. Release the large source,
         # vendor and compiler caches before assembling the remaining filesystem.
+        run('go', 'clean', '-modcache', cwd=work, env={**os.environ, 'GOENV': 'off', 'GOTOOLCHAIN': 'local',
+            'GOMODCACHE': str(work/'alloy-build/modules')})
         shutil.rmtree(work/'alloy-build')
         pam = work/'pam'
         commit = 'fb6e93908fa5c95fbad7682de081bcc70f341216'

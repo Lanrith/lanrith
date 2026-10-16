@@ -114,9 +114,14 @@ def main():
     packages.mkdir()
     components(selection['component_releases'], packages)
     inputs = locks(PROJECT / 'builders/build-inputs.lock')
-    for key in ('DEBIAN_RELEASE_SHA256', 'DEBIAN_SECURITY_RELEASE_SHA256'):
-        snapshot = inputs['DEBIAN_SNAPSHOT']
-        archive, suite = ('debian-security', 'trixie-security') if 'SECURITY' in key else ('debian', 'trixie')
+    for key in ('DEBIAN_RELEASE_SHA256', 'DEBIAN_SECURITY_RELEASE_SHA256',
+                'DEBIAN_BOOKWORM_RELEASE_SHA256', 'DEBIAN_BOOKWORM_SECURITY_RELEASE_SHA256'):
+        prefix = 'DEBIAN_BOOKWORM' if 'BOOKWORM' in key else 'DEBIAN'
+        snapshot = inputs[prefix+('_SECURITY_SNAPSHOT' if 'SECURITY' in key else '_SNAPSHOT')]
+        suite = 'bookworm' if 'BOOKWORM' in key else 'trixie'
+        archive = 'debian'
+        if 'SECURITY' in key:
+            archive, suite = 'debian-security', suite+'-security'
         path = args.work / (key + '.Release')
         run('curl', '--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', str(path),
             f'https://snapshot.debian.org/archive/{archive}/{snapshot}/dists/{suite}/Release')
@@ -127,6 +132,10 @@ def main():
     for component in ('vpp', 'unbound', 'tayga'):
         extract_packages(image(component, args.work, inputs), packages)
     builder = image('mkosi', args.work, inputs)
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work', builder,
+        'python3', '/source/tests/storage.py', '--work', '/work/storage-qualification')
+    shutil.copyfile(args.work/'storage-qualification/result.json', args.output/'storage-qualification.json')
     build = args.work / 'image'
     build.mkdir()
     shutil.copytree(PROJECT / 'mkosi/base', build, dirs_exist_ok=True)

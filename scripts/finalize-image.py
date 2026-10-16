@@ -46,6 +46,26 @@ for name, identity in expected.items():
         name = username
     if users.get(name) != identity:
         raise ValueError('A persistent service identity changed during assembly.')
+home = root/'home'/username
+ssh = home/'.ssh'
+authorized = ssh/'authorized_keys'
+if home.is_symlink() or ssh.is_symlink() or authorized.is_symlink() or not authorized.is_file():
+    raise ValueError('Administrator SSH identity has an unsafe final path.')
+for path, mode in ((home, 0o700), (ssh, 0o700), (authorized, 0o600)):
+    path.chmod(mode)
+    os.chown(path, users[username]['uid'], users[username]['gid'])
+integration_identities = root/'usr/share/lanrith/integration-identities.json'
+if integration_identities.exists():
+    extra = json.loads(integration_identities.read_text())
+    groups = {row[0]: {'gid': int(row[2]), 'members': set(filter(None, row[3].split(',')))}
+              for line in (root/'etc/group').read_text().splitlines() if line and (row := line.split(':'))}
+    for item in extra['users']:
+        if users.get(item['name']) != {key: item[key] for key in ('uid', 'gid')}:
+            raise ValueError('An integration service identity changed during assembly.')
+    for item in extra['groups']:
+        members = {username if name == 'admin' else name for name in item.get('members', [])}
+        if groups.get(item['name']) != {'gid': item['gid'], 'members': members}:
+            raise ValueError('An integration service group changed during assembly.')
 required = ['multi-user.target', 'boot-complete.target', 'lanrith-health.service', 'lanrith-observation.service']
 required.extend(json.loads((root/'usr/share/lanrith/installed.json').read_text())['integration_health_units'])
 with tempfile.TemporaryDirectory(prefix='boot-transaction.', dir=root/'run') as temporary:

@@ -39,6 +39,15 @@ def main():
             require(not member.isdev() and not member.isfifo(), 'Base contains a device or FIFO.')
             require(not name.startswith(('root/.ssh/', 'etc/ssh/ssh_host_', 'var/lib/lanrith/')),
                     'Base contains owner identity or deployment state.')
+            require(not member.isfile() or not name.startswith('etc/ssl/private/'),
+                    'Base contains package-generated TLS private material.')
+            if member.isfile() and 0 < member.size <= 2*1024*1024:
+                data = archive.extractfile(member).read()
+                if b'\0' not in data:
+                    markers = [b'-----BEGIN '+kind+b'PRIVATE KEY-----' for kind in
+                               (b'', b'RSA ', b'EC ', b'DSA ', b'OPENSSH ', b'ENCRYPTED ')]
+                    require(not any(marker in data for marker in markers),
+                            'Base contains private-key material in a text file.')
         require('usr/lib/systemd/systemd' in names and 'usr/bin/python3' in names,
                 'Base is missing required runtime components.')
         metadata = archive.getmember('usr/share/lanrith/apt-metadata') if 'usr/share/lanrith/apt-metadata' in names else archive.getmember('./usr/share/lanrith/apt-metadata')
