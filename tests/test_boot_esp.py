@@ -25,6 +25,7 @@ class BootESPTests(unittest.TestCase):
                 return str(esp)+'\n'
             if arguments[0] == 'findmnt':
                 self.assertIn('--target', arguments)
+                self.assertIn('--uniq', arguments)
                 self.assertIn(str(esp/'EFI'), arguments)
                 rows = [{'source': '/dev/vda1', 'fstype': kind, 'target': str(esp/'EFI' if nested else esp)}]
                 return json.dumps({'filesystems': rows*2 if multiple else rows})

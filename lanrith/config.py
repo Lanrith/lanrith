@@ -400,7 +400,10 @@ def render(value):
                 text += f'allow {ipaddress.ip_interface(address).network}\n'
         files['etc/chrony/chrony.conf'] = text
     if value['services'].get('dns', {}).get('enabled'):
-        text = 'server:\n  interface: 127.0.0.1\n  interface: ::1\n  access-control: 0.0.0.0/0 refuse\n  access-control: ::/0 refuse\n'
+        # Address configuration and IPv6 DAD can finish after network.target.
+        # Bind only these explicit addresses before they are ready; health
+        # still requires the declared gateway addresses before acceptance.
+        text = 'server:\n  ip-freebind: yes\n  interface: 127.0.0.1\n  interface: ::1\n  access-control: 0.0.0.0/0 refuse\n  access-control: ::/0 refuse\n'
         for network in networks.values():
             if network.get('dns'):
                 for address in network['addresses']:

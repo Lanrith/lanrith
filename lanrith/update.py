@@ -182,7 +182,9 @@ def boot_esp(installed, *, disk=None):
             'EFI mount path is unsafe.')
     # Crossing the automount first ensures findmnt observes vfat, not autofs.
     require((esp/'EFI').is_dir() and esp.is_mount(), 'EFI filesystem must be mounted.')
-    mount = json.loads(command(['findmnt', '--json', '--target', str(esp/'EFI'),
+    # util-linux 2.41 can report both the autofs trigger and its mounted
+    # filesystem for --target. --uniq selects the visible filesystem.
+    mount = json.loads(command(['findmnt', '--uniq', '--json', '--target', str(esp/'EFI'),
                                 '--output', 'SOURCE,FSTYPE,TARGET']))
     rows = mount.get('filesystems', [])
     require(len(rows) == 1 and rows[0].get('target') == str(esp) and rows[0].get('fstype') == 'vfat' and
