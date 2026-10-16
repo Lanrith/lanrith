@@ -1,6 +1,8 @@
 """Read actual tar headers while retaining neutral-image privacy checks."""
 
 import importlib.util
+import hashlib
+import datetime
 import io
 import json
 from pathlib import Path
@@ -19,7 +21,7 @@ spec.loader.exec_module(evidence)
 
 
 class BaseArchiveEvidenceTests(unittest.TestCase):
-    def run_fixture(self, directory, *, prefix, state=False, duplicate=False):
+    def run_fixture(self, directory, *, prefix, state=False, duplicate=False, altered_binary=False):
         metadata = b'Package: synthetic\nVersion: 1\n\n'
         with tarfile.open(directory/'lanrith-base.tar.gz', 'w:gz') as archive:
             names = ['usr/lib/systemd/systemd', 'usr/bin/python3', 'usr/share/lanrith/apt-metadata']
@@ -29,6 +31,8 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
             names += ['usr/share/doc/alloy/security/beyla']
             for name in names:
                 data = metadata if name.endswith('apt-metadata') else b'synthetic fixture'
+                if altered_binary and name == 'usr/bin/discovery-bridge':
+                    data = b'changed after the package scan'
                 member = tarfile.TarInfo(prefix+name)
                 member.size = len(data)
                 archive.addfile(member, io.BytesIO(data))
@@ -41,7 +45,15 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
                 member.size = len(metadata)
                 archive.addfile(member, io.BytesIO(metadata))
         (directory/'inventory.json').write_text(json.dumps({'packages': []}))
-        (directory/'custom-security.json').write_text(json.dumps({'result': 'pass'}))
+        digest = hashlib.sha256(b'synthetic fixture').hexdigest()
+        components = {'alloy': {'binary_sha256': digest, 'beyla': {'binary_sha256': digest}}}
+        for name, binaries in {'node-exporter': ['prometheus-node-exporter'],
+            'discovery-bridge': ['discovery-bridge'], 'router-policy-reader': ['router-policy-reader'],
+            'router-policy-collector': ['router-policy-collector'],
+            'router-policy-helper': ['router-policy-check','router-policy-helper','router-policy-status','router-policy-recover']}.items():
+            components[name] = {'binary_sha256': {binary: digest for binary in binaries}}
+        (directory/'custom-security.json').write_text(json.dumps({'result': 'pass', 'components': components,
+            'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}))
 
         def audited(arguments, **_):
             status = Path(arguments[arguments.index('--status')+1])
@@ -66,3 +78,20 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
                 with self.assertRaises(ReleaseError):
                     self.run_fixture(Path(temporary), prefix='./', **change)
+
+    def test_changed_installed_binary_cannot_reuse_the_package_scan(self):
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+                ReleaseError, 'Installed custom binary differs'):
+            self.run_fixture(Path(temporary), prefix='./', altered_binary=True)
+
+    def test_repackaging_cannot_refresh_an_expired_or_invalid_custom_assessment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.run_fixture(directory, prefix='./')
+            custom = json.loads((directory/'custom-security.json').read_text())
+            now = datetime.datetime.now(datetime.timezone.utc)
+            for stamp in (None, 'malformed', now.replace(tzinfo=None).isoformat(),
+                          (now-datetime.timedelta(hours=25)).isoformat(),
+                          (now+datetime.timedelta(minutes=5)).isoformat()):
+                with self.subTest(stamp=stamp), self.assertRaises(ReleaseError):
+                    evidence.binary_subjects({**custom, 'assessed_at': stamp})

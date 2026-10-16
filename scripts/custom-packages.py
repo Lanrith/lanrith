@@ -99,6 +99,8 @@ def main():
                       '1.12.1-1+lanrith1', args.output, work/'exporter-notices.txt')
         reports['node-exporter'] = {'source_commit': pin['commit'], 'patch_sha256':
                                     file_record(ROOT/'builders/node-exporter/dependencies.patch')['sha256'],
+                                    'binary_sha256': {'prometheus-node-exporter':
+                                        file_record(work/'node_exporter')['sha256']},
                                     'go_modules': {'prometheus-node-exporter': go_modules(json.loads(
                                         run('go', 'version', '-m', '-json', str(work/'node_exporter'),
                                             capture_output=True, text=True).stdout))},
@@ -155,6 +157,7 @@ def main():
                     run(scanner, '-mode=binary', str(binary), stdout=stream)
                 scanned[binary.name] = file_record(work/(binary.name+'.scan'))['sha256']
             reports[name] = {'package_sha256': file_record(package)['sha256'], 'scans': scanned}
+            reports[name]['binary_sha256'] = {binary.name: file_record(binary)['sha256'] for binary in binaries}
             reports[name]['go_modules'] = {binary.name: go_modules(json.loads(
                 run('go', 'version', '-m', '-json', str(binary), capture_output=True, text=True).stdout))
                 for binary in binaries}

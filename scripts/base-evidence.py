@@ -10,12 +10,49 @@ import subprocess
 import sys
 import tarfile
 import copy
+import re
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
 from lanrith import sbom
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def binary_subjects(custom):
+    try:
+        stamp = datetime.datetime.fromisoformat(custom['assessed_at'])
+    except (KeyError, TypeError, ValueError):
+        require(False, 'Custom package security assessment timestamp is malformed.')
+    require(stamp.tzinfo is not None and datetime.timedelta(0) <=
+            datetime.datetime.now(datetime.timezone.utc)-stamp <= datetime.timedelta(hours=24),
+            'Custom package security assessment is stale or future-dated.')
+    components = custom.get('components', {})
+    require(custom.get('result') == 'pass' and isinstance(components, dict),
+            'Custom package security assessment failed.')
+    alloy = components.get('alloy', {})
+    expected = {'alloy': alloy.get('binary_sha256'),
+                'alloy-beyla': alloy.get('beyla', {}).get('binary_sha256')}
+    for name in ('node-exporter', 'discovery-bridge', 'router-policy-helper',
+                 'router-policy-reader', 'router-policy-collector'):
+        subjects = components.get(name, {}).get('binary_sha256')
+        require(isinstance(subjects, dict) and subjects and not set(subjects) & set(expected),
+                'Custom binary scan subjects are missing or ambiguous.')
+        expected.update(subjects)
+    require(all(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest)
+                for digest in expected.values()), 'Custom binary scan subject digest is malformed.')
+    return expected
+
+
+class SubjectReader:
+    def __init__(self, stream):
+        self.stream = stream
+        self.digest = hashlib.sha256()
+
+    def read(self, length):
+        data = self.stream.read(length)
+        self.digest.update(data)
+        return data
 
 
 def main():
@@ -25,6 +62,8 @@ def main():
     args = parser.parse_args()
     directory = args.directory
     inventory = json.loads((directory/'inventory.json').read_text())
+    custom = json.loads((directory/'custom-security.json').read_text())
+    subjects = binary_subjects(custom)
     subprocess.run([sys.executable, str(ROOT/'security/audit-package-manifest.py'),
                     '--manifest', str(directory/'inventory.json'), '--policy', str(ROOT/'security/policy.json'),
                     '--release', args.version, '--status', str(directory/'package-policy.json')], check=True)
@@ -56,6 +95,7 @@ def main():
         scan_names = {'alloy', 'prometheus-node-exporter', 'discovery-bridge', 'router-policy-helper',
                       'router-policy-reader', 'router-policy-collector', 'router-policy-check',
                       'router-policy-status', 'router-policy-recover'}
+        require(set(subjects) == scan_names | {'alloy-beyla'}, 'Custom binary scan coverage is incomplete.')
         with tarfile.open(directory/'go-binaries.tar.gz', 'w:gz') as binaries:
             found = set()
             for member in archive.getmembers():
@@ -63,11 +103,13 @@ def main():
                 if (path.parent.as_posix() == 'usr/bin' and path.name in scan_names or
                         path.as_posix() == 'usr/share/doc/alloy/security/beyla'):
                     require(member.isfile(), 'A scan subject is not a regular binary.')
-                    content = archive.extractfile(member)
+                    content = SubjectReader(archive.extractfile(member))
                     scan_member = copy.copy(member)
                     scan_member.name = 'alloy-beyla' if path.name == 'beyla' else path.name
                     scan_member.mode = 0o644
                     binaries.addfile(scan_member, content)
+                    require(content.digest.hexdigest() == subjects[scan_member.name],
+                            'Installed custom binary differs from its scanned subject.')
                     found.add(scan_member.name)
             require(found == scan_names | {'alloy-beyla'}, 'Fresh binary scan coverage is incomplete.')
     subprocess.run([sys.executable, str(ROOT/'security/audit-debian-vulnerabilities.py'),
@@ -79,7 +121,6 @@ def main():
                     '--status', str(directory/'debian-security.txt')], check=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     digest = file_record(directory/'inventory.json')['sha256']
-    custom = json.loads((directory/'custom-security.json').read_text())
     (directory/'sbom.spdx.json').write_bytes(canonical(sbom.document(inventory, custom, args.version, digest, stamp)))
     security = {'schema': 1, 'assessed_at': stamp, 'inventory_sha256': digest,
                 'policy_sha256': file_record(ROOT/'security/policy.json')['sha256'],
