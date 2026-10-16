@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
@@ -14,6 +15,43 @@ from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    def test_failed_boot_image_flush_cannot_select_a_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            entry = Path(temporary)/'lanrith_10+3-0.efi'
+            entry.write_bytes(b'synthetic pending image')
+            for fail_at in (1, 2):
+                count = 0
+                def flush(descriptor):
+                    nonlocal count
+                    count += 1
+                    if count == fail_at:
+                        raise OSError(5, 'synthetic writeback failure')
+                with self.subTest(flush=fail_at), patch.object(update.os, 'fsync', side_effect=flush), \
+                        patch.object(update, 'command') as command:
+                    with self.assertRaises(OSError):
+                        update.select_boot_once(entry)
+                    command.assert_not_called()
+
+    def test_one_shot_requires_the_pending_counter_and_exact_firmware_readback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            entry = Path(temporary)/'lanrith_10+3-0.efi'
+            variable = Path(temporary)/'variable'
+            entry.write_bytes(b'synthetic pending image')
+            flushed = []
+            fsync = os.fsync
+            def flush(descriptor):
+                fsync(descriptor)
+                flushed.append(os.fstat(descriptor).st_ino)
+            def select(arguments):
+                self.assertEqual(arguments, ['bootctl', 'set-oneshot', entry.name])
+                self.assertEqual(flushed, [entry.stat().st_ino, entry.parent.stat().st_ino])
+                variable.write_bytes(b'\x07\x00\x00\x00'+(entry.name+'\0').encode('utf-16-le'))
+            with patch.object(update.os, 'fsync', side_effect=flush), patch.object(update, 'command', side_effect=select):
+                update.select_boot_once(entry, variable=variable)
+            variable.write_bytes(b'\x07\x00\x00\x00'+('lanrith_10.efi\0').encode('utf-16-le'))
+            with patch.object(update, 'command'), self.assertRaisesRegex(ReleaseError, 'one-shot entry'):
+                update.select_boot_once(entry, variable=variable)
+
     @unittest.skipUnless(Path('/usr/lib/systemd/systemd-sysupdate').is_file() and
                          platform.freedesktop_os_release().get('ID') == 'debian' and
                          platform.freedesktop_os_release().get('VERSION_ID') == '13',

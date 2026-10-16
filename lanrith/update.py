@@ -250,6 +250,26 @@ def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEnt
     require(entry == accepted.name, 'Accept the running boot as default before staging another update.')
 
 
+def select_boot_once(entry, *, variable=Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
+    """Make the admitted pending UKI durable before publishing its boot choice."""
+    descriptor = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    descriptor = os.open(entry.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    # systemd-boot matches the pending Type-2 filename including its boot
+    # counter. The counter-free name does not exist until blessing succeeds.
+    command(['bootctl', 'set-oneshot', entry.name])
+    data = read(variable, 4096)
+    require(6 <= len(data) and data[4:].decode('utf-16-le').rstrip('\x00') == entry.name,
+            'Boot loader did not retain the requested one-shot entry.')
+
+
 def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
     """Stage an admitted root-owned inbox through the ordinary A/B mechanism."""
     require(os.geteuid() == 0, 'Update staging requires the root-owned admission helper.')
@@ -312,12 +332,7 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         require(observed_uki['sha256'] == expected['sha256'] and observed_uki['size'] == expected['size'],
                 'Staged UKI differs from the admitted bytes.')
         require_default(accepted)
-        # Type-2 boot entry IDs omit the boot-counting suffix.
-        command(['bootctl', 'set-oneshot', value['uki']])
-        variable = Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')
-        data = variable.read_bytes()
-        require(6 <= len(data) <= 4096 and data[4:].decode('utf-16-le').rstrip('\x00') == value['uki'],
-                'Boot loader did not retain the requested one-shot entry.')
+        select_boot_once(candidates[0])
         return value
     finally:
         os.close(descriptor)
