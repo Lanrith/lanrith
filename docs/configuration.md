@@ -67,7 +67,26 @@ owner's `/etc/lanrith/integrations/network-profile.sh`; its settings use the
 `lanrith_` prefix. SNMP reads
 `/etc/lanrith/integrations/snmp-runtime-policy.json`. These files are absent
 from the neutral base and can be supplied by an admitted integration without
-overwriting protected runtime code. Keep the associated units disabled until
+overwriting protected runtime code. PCI binding uses `lanrith_vpp_bdf`,
+`lanrith_vpp_iommu_group`, `lanrith_vpp_linux_interface`,
+`lanrith_vpp_mac_address` and `lanrith_vpp_linux_driver`. There is no default
+NIC model, PCI address or Linux driver. Binding checks the exact function,
+interface, MAC, expected driver and exclusive IOMMU group before changing
+anything. Shared groups are rejected. `lanrith-vpp-device.service` and
+`verify-vpp-device` retain this ownership boundary; the owner explicitly admits
+the VPP dependency drop-in and its configuration. VPP/DPDK support for a chosen
+NIC still needs qualification. Acceleration devices are separate from declared
+Linux-owned interfaces.
+
+Declare both `lanrith-vpp-device.service` and `vpp.service` as selected health
+requirements to unmask that integration. The optional hardware readiness unit
+orders after VPP when VPP is selected, without pulling it into a software-only
+configuration. It waits for declared hardware within a bounded boot deadline.
+
+`router-network-status` checks only the interfaces declared in the compiled
+configuration. Hugepages use the selected `hardware.acceleration.hugepages_mib`
+budget in 2 MiB pages. No OOB port, separate LAN port, NIC model or fixed
+hugepage count is required. Keep the associated units disabled until
 that integration's configuration and hardware have been qualified.
 
 Extensions are executable runtime code and policy supplied by the owner. Review
@@ -99,3 +118,16 @@ Review any ownership conversion of existing state separately.
 A disabled feature does not activate its units merely because its extension is
 present. Extensions with an empty `features` list activate their declared health
 requirements when explicitly selected; this supports separately owned components.
+
+Namespace egress integrations explicitly choose `lanrith_wan_mode` from
+`static`, `routed` or `delegated`. Static mode supplies the service address and
+prefix directly; routed and delegated modes provide the reviewed prefix and
+address resolver functions and require an on-link WAN with proxy NDP. Other
+WAN layouts can use an owner integration without these helpers. Service IDs
+are owner-selected hexadecimal IPv6 host suffixes (`lanrith_unbound_service_id`
+and `lanrith_chrony_service_id`), not fixed allocations. The owner supplies
+`lanrith_service_ipv6_cleanup_prefix` to scope stale address and proxy cleanup.
+Keep all allocations, functions, time sources, daemon configuration and
+credentials in the private integration. Serial hardening helpers likewise use
+an explicit enable flag and selected TTY; core boot acceptance uses the typed
+owner configuration.

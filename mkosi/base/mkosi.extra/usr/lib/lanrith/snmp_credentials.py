@@ -13,7 +13,7 @@ class SNMPError(ValueError):
 
 AUTH = {'SHA', 'SHA-256', 'SHA-384', 'SHA-512'}
 PRIV = {'AES', 'AES-128', 'AES-192', 'AES-256'}
-HEADER = '# Managed by the homelab Ansible router runtime role.\n'
+HEADER = '# Managed by the Lanrith owner runtime.\n'
 
 
 def validate(value):

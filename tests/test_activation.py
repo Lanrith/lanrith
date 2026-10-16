@@ -64,7 +64,9 @@ class OptionalActivationTests(unittest.TestCase):
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to('/usr/lib/systemd/system/'+name)
             script = Path(__file__).parents[1]/'mkosi/base/mkosi.finalize'
-            with mock.patch.dict(os.environ, {'BUILDROOT': str(root)}), mock.patch(
+            output = root/'build-output'
+            output.mkdir()
+            with mock.patch.dict(os.environ, {'BUILDROOT': str(root), 'OUTPUTDIR': str(output)}), mock.patch(
                     'subprocess.run', return_value=subprocess.CompletedProcess([], 0, b'Package: synthetic\n')):
                 runpy.run_path(str(script), run_name='__main__')
             result = subprocess.run(['systemctl', '--root', str(root), 'preset-all'],

@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
-from lanrith import advisories
+from lanrith import advisories, embedded
 
 
 def run(*arguments, **kwargs):
@@ -152,6 +152,8 @@ def main():
             'Embedded Beyla differs from its independently scanned bytes.')
     shutil.copyfile(args.work/'beyla-security', beyla_subject)
     beyla_subject.chmod(0o644)
+    embedded_record = embedded.verify(args.work/'alloy-security', beyla_subject,
+                                      evidence['beyla']['binary_sha256'])
     # Retain upstream units, users, dependencies and copyright; replace only the
     # binary, package version and additional notices in the verified upstream Deb.
     upstream = args.work/'upstream.deb'
@@ -171,10 +173,6 @@ def main():
     package_tools('dpkg-deb', '--raw-extract', '/work/upstream.deb', '/work/'+tree.name)
     shutil.copyfile(args.work/'alloy-security', tree/'usr/bin/alloy')
     (tree/'usr/bin/alloy').chmod(0o755)
-    embedded = tree/'usr/share/doc/alloy/security/beyla'
-    embedded.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(beyla_subject, embedded)
-    embedded.chmod(0o644)
     control = tree/'DEBIAN/control'
     text = control.read_text()
     require(re.search(r'^Package: alloy$', text, re.MULTILINE) and
@@ -203,6 +201,7 @@ def main():
     output = args.output/('alloy_'+pin['package_version']+'_amd64.deb')
     package_tools('dpkg-deb', '--build', '--root-owner-group', '/work/'+tree.name, '/packages/'+output.name)
     args.evidence.write_bytes(canonical({**evidence, 'package_sha256': file_record(output)['sha256'],
+        'embedded_beyla': embedded_record,
         'cache_reused': args.cache_from is not None,
         'upstream_deb_sha256': pin['upstream_deb_sha256'], 'fresh_source_advisories': feeds,
         'source_fix_ancestry': source_fixes,

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Bind only the owner's explicitly declared, independently isolated PCI function.
+set -eu
+. /etc/lanrith/integrations/network-profile.sh
+exec /usr/bin/python3 -I -c 'import sys; sys.path.insert(0,"/usr/lib/lanrith"); from lanrith.hardware import main; sys.exit(main())' \
+  bind --bdf "$lanrith_vpp_bdf" --group "$lanrith_vpp_iommu_group" \
+  --interface "$lanrith_vpp_linux_interface" --mac "$lanrith_vpp_mac_address" \
+  --driver "$lanrith_vpp_linux_driver"

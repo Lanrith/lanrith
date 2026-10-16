@@ -28,7 +28,7 @@ FACTORY_TYPES = (
     "2c7357ed-ebd2-46d9-aec1-23d437ec2bf5",  # x86-64 verity tree
     "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",  # x86-64 root
 )
-MEDIA_LABEL = "homelab-factory-media"
+MEDIA_LABEL = "lanrith-factory-media"
 MIB = 1024 * 1024
 
 

@@ -1,54 +1,6 @@
-#!/bin/sh
-# Read-only hardware and standalone-image status. This does not bring an
-# interface up, bind a PCI device, add an address, or change a route.
-set -eu
-
-. /etc/lanrith/integrations/network-profile.sh
-
-check_interface() {
-  expected_name=$1
-  expected_bdf=$2
-  expected_mac=$3
-  expected_driver=$4
-
-  device="/sys/bus/pci/devices/$expected_bdf"
-  [ -d "$device" ] || {
-    echo "missing PCI device: $expected_bdf" >&2
-    return 1
-  }
-  [ -d "$device/net/$expected_name" ] || {
-    echo "unexpected interface mapping for $expected_bdf" >&2
-    return 1
-  }
-  actual_mac=$(tr 'A-F' 'a-f' < "/sys/class/net/$expected_name/address")
-  [ "$actual_mac" = "$expected_mac" ] || {
-    echo "unexpected MAC for $expected_name" >&2
-    return 1
-  }
-  actual_driver=$(basename "$(readlink -f "$device/driver")")
-  [ "$actual_driver" = "$expected_driver" ] || {
-    echo "unexpected driver for $expected_name" >&2
-    return 1
-  }
-}
-
-/usr/lib/lanrith/verify-network-base
-check_interface "$lanrith_oob_interface" "$lanrith_oob_pci_bdf" \
-  "$lanrith_oob_mac_address" "$lanrith_oob_driver"
-check_interface "$lanrith_wan_interface" "$lanrith_wan_pci_bdf" \
-  "$lanrith_wan_mac_address" "$lanrith_wan_driver"
-check_interface "$lanrith_standalone_lan_interface" \
-  "$lanrith_standalone_lan_pci_bdf" \
-  "$lanrith_standalone_lan_mac_address" \
-  "$lanrith_standalone_lan_driver"
-# VPP owns the X710, so its prior kernel interface must be absent. The
-# VPP-specific verifier checks the exact PCI binding, IOMMU group, VPP socket,
-# interface name, and administratively-down state.
-test -e "/sys/kernel/iommu_groups/$lanrith_vpp_iommu_group/devices/$lanrith_vpp_bdf"
-test "$(find "/sys/kernel/iommu_groups/$lanrith_vpp_iommu_group/devices" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1
-test "$(basename "$(readlink -f "/sys/bus/pci/devices/$lanrith_vpp_bdf/driver")")" = vfio-pci
-test ! -d "/sys/bus/pci/devices/$lanrith_vpp_bdf/net"
-grep -Eq '^HugePages_Total:[[:space:]]+2$' /proc/meminfo
-grep -Eq '^Hugepagesize:[[:space:]]+1048576 kB$' /proc/meminfo
-
-echo "Router hardware mapping, VPP X710 ownership, and standalone $lanrith_ipv4_cutover_mode IPv4 mode verified."
+#!/usr/bin/python3
+"""Read-only inspection of interfaces and acceleration declared by the owner."""
+import sys
+sys.path.insert(0, '/usr/lib/lanrith')
+from lanrith.hardware import main
+sys.exit(main(['status']))

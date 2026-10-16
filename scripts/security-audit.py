@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
 from lanrith import archive as handoff
-from lanrith import advisories
+from lanrith import advisories, embedded
 from lanrith.release import ReleaseError
 
 
@@ -89,6 +89,9 @@ def main():
                 if not all(record.get('ghsa_id') in patched for record in feed):
                     failures.append('native-upstream-advisory')
             old = json.loads((work/'security.json').read_text())
+            require(embedded.verify(binaries/'alloy', binaries/'alloy-beyla',
+                    old['custom']['components']['alloy']['beyla']['binary_sha256']) == old['embedded_beyla'],
+                    'Retained Beyla scan subject differs from the deployed embedded payload.')
             queries = old['custom']['components']['pam-rssh']['queries']
             try:
                 advisories.assess(queries)

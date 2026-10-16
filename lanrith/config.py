@@ -109,9 +109,12 @@ def normalize(value):
         fields(hardware['acceleration'], {'pci', 'hugepages_mib'}, {'pci', 'hugepages_mib'})
         require(isinstance(hardware['acceleration']['pci'], list) and hardware['acceleration']['pci'] and
                 all(isinstance(pci, str) and re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]', pci)
-                    for pci in hardware['acceleration']['pci']), 'Invalid acceleration device selection.')
+                    for pci in hardware['acceleration']['pci']) and
+                len(set(hardware['acceleration']['pci'])) == len(hardware['acceleration']['pci']),
+                'Invalid or duplicate acceleration device selection.')
         require(type(hardware['acceleration']['hugepages_mib']) is int and
-                2 <= hardware['acceleration']['hugepages_mib'] <= 1024 * 1024,
+                2 <= hardware['acceleration']['hugepages_mib'] <= 1024 * 1024 and
+                hardware['acceleration']['hugepages_mib'] % 2 == 0,
                 'Invalid hugepage allocation.')
     interfaces = hardware['interfaces']
     require(isinstance(interfaces, dict) and 2 <= len(interfaces) <= 64, 'Declare the physical/virtual interfaces.')

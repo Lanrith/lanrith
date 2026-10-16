@@ -21,16 +21,26 @@ spec.loader.exec_module(evidence)
 
 
 class BaseArchiveEvidenceTests(unittest.TestCase):
+    def test_build_tools_and_caches_cannot_return_to_the_runtime(self):
+        evidence.runtime_paths(['usr/bin/python3', 'usr/bin/tcpdump', 'usr/lib/locale/C.utf8/LC_CTYPE'])
+        for name in ('usr/bin/dpkg-query', 'usr/bin/gcc', 'usr/bin/git', 'var/lib/apt/lists/Packages',
+                     'usr/share/locale/de/messages.mo', 'usr/lib/python3.13/__pycache__/os.pyc'):
+            with self.subTest(path=name), self.assertRaises(ReleaseError):
+                evidence.runtime_paths([name])
+
     def run_fixture(self, directory, *, prefix, state=False, duplicate=False, altered_binary=False):
         metadata = b'Package: synthetic\nVersion: 1\n\n'
+        subject = b'synthetic embedded scan subject'
+        alloy = b'synthetic executable prefix'+subject+b'suffix'
+        (directory/'apt-metadata').write_bytes(metadata)
+        (directory/'alloy-beyla.scan').write_bytes(subject)
         with tarfile.open(directory/'lanrith-base.tar.gz', 'w:gz') as archive:
-            names = ['usr/lib/systemd/systemd', 'usr/bin/python3', 'usr/share/lanrith/apt-metadata']
+            names = ['usr/lib/systemd/systemd', 'usr/bin/python3']
             names += ['usr/bin/'+name for name in ('alloy', 'prometheus-node-exporter', 'discovery-bridge',
                 'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
                 'router-policy-check', 'router-policy-status', 'router-policy-recover')]
-            names += ['usr/share/doc/alloy/security/beyla']
             for name in names:
-                data = metadata if name.endswith('apt-metadata') else b'synthetic fixture'
+                data = alloy if name == 'usr/bin/alloy' else b'synthetic fixture'
                 if altered_binary and name == 'usr/bin/discovery-bridge':
                     data = b'changed after the package scan'
                 member = tarfile.TarInfo(prefix+name)
@@ -41,12 +51,13 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
                 member.type = tarfile.DIRTYPE
                 archive.addfile(member)
             if duplicate:
-                member = tarfile.TarInfo('usr/share/lanrith/apt-metadata')
+                member = tarfile.TarInfo('usr/bin/python3')
                 member.size = len(metadata)
                 archive.addfile(member, io.BytesIO(metadata))
         (directory/'inventory.json').write_text(json.dumps({'packages': []}))
         digest = hashlib.sha256(b'synthetic fixture').hexdigest()
-        components = {'alloy': {'binary_sha256': digest, 'beyla': {'binary_sha256': digest}}}
+        components = {'alloy': {'binary_sha256': hashlib.sha256(alloy).hexdigest(),
+            'beyla': {'binary_sha256': hashlib.sha256(subject).hexdigest()}}}
         for name, binaries in {'node-exporter': ['prometheus-node-exporter'],
             'discovery-bridge': ['discovery-bridge'], 'router-policy-reader': ['router-policy-reader'],
             'router-policy-collector': ['router-policy-collector'],

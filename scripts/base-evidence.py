@@ -11,12 +11,23 @@ import sys
 import tarfile
 import copy
 import re
+import shutil
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
-from lanrith import sbom
+from lanrith import sbom, embedded
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def runtime_paths(names):
+    for name in names:
+        require(not name.startswith(('usr/share/man/', 'usr/share/info/', 'usr/share/locale/',
+                                     'var/lib/dpkg/', 'var/lib/apt/', 'var/cache/apt/')) and
+                '__pycache__' not in Path(name).parts and
+                not re.fullmatch(r'usr/(?:s?bin)/(?:dpkg.*|apt.*|gcc(?:-[0-9]+)?|g\+\+|g?make|git|cargo|rustc|node|npm)', name),
+                'Base contains unnecessary package-manager, build or cache payload.')
 
 
 def binary_subjects(custom):
@@ -89,29 +100,48 @@ def main():
                             'Base contains private-key material in a text file.')
         require('usr/lib/systemd/systemd' in names and 'usr/bin/python3' in names,
                 'Base is missing required runtime components.')
-        metadata = names['usr/share/lanrith/apt-metadata']
-        require(metadata.isfile() and 0 < metadata.size < 256 * 1024 * 1024, 'Base APT metadata is missing or oversized.')
-        (directory/'apt-metadata').write_bytes(archive.extractfile(metadata).read())
+        runtime_paths(names)
+        metadata = directory/'apt-metadata'
+        require(metadata.is_file() and not metadata.is_symlink() and
+                0 < metadata.stat().st_size < 256*1024*1024, 'Build APT metadata is missing or oversized.')
+        require('usr/share/lanrith/apt-metadata' not in names and
+                'usr/share/doc/alloy/security/beyla' not in names,
+                'Scan-only evidence must not be deployed in the router filesystem.')
         scan_names = {'alloy', 'prometheus-node-exporter', 'discovery-bridge', 'router-policy-helper',
                       'router-policy-reader', 'router-policy-collector', 'router-policy-check',
                       'router-policy-status', 'router-policy-recover'}
         require(set(subjects) == scan_names | {'alloy-beyla'}, 'Custom binary scan coverage is incomplete.')
-        with tarfile.open(directory/'go-binaries.tar.gz', 'w:gz') as binaries:
+        with tarfile.open(directory/'go-binaries.tar.gz', 'w:gz') as binaries, \
+                tempfile.TemporaryDirectory(prefix='embedded-subject.', dir=directory) as temporary:
             found = set()
             for member in archive.getmembers():
                 path = Path(member.name.removeprefix('./'))
-                if (path.parent.as_posix() == 'usr/bin' and path.name in scan_names or
-                        path.as_posix() == 'usr/share/doc/alloy/security/beyla'):
+                if path.parent.as_posix() == 'usr/bin' and path.name in scan_names:
                     require(member.isfile(), 'A scan subject is not a regular binary.')
                     content = SubjectReader(archive.extractfile(member))
                     scan_member = copy.copy(member)
-                    scan_member.name = 'alloy-beyla' if path.name == 'beyla' else path.name
+                    scan_member.name = path.name
                     scan_member.mode = 0o644
                     binaries.addfile(scan_member, content)
                     require(content.digest.hexdigest() == subjects[scan_member.name],
                             'Installed custom binary differs from its scanned subject.')
                     found.add(scan_member.name)
-            require(found == scan_names | {'alloy-beyla'}, 'Fresh binary scan coverage is incomplete.')
+            require(found == scan_names, 'Fresh binary scan coverage is incomplete.')
+            installed_alloy = Path(temporary)/'alloy'
+            with installed_alloy.open('wb') as stream:
+                shutil.copyfileobj(archive.extractfile(names['usr/bin/alloy']), stream)
+            require(file_record(installed_alloy)['sha256'] == subjects['alloy'],
+                    'Installed Alloy changed while binding its embedded scan subject.')
+            subject = directory/'alloy-beyla.scan'
+            embedded_record = embedded.verify(installed_alloy, subject, subjects['alloy-beyla'])
+            scan_member = tarfile.TarInfo('alloy-beyla')
+            scan_member.size = subject.stat().st_size
+            scan_member.mode = 0o644
+            with subject.open('rb') as stream:
+                content = SubjectReader(stream)
+                binaries.addfile(scan_member, content)
+            require(content.digest.hexdigest() == subjects['alloy-beyla'],
+                    'Embedded scan subject changed during evidence packaging.')
     subprocess.run([sys.executable, str(ROOT/'security/audit-debian-vulnerabilities.py'),
                     '--manifest', str(directory/'inventory.json'), '--policy', str(ROOT/'security/policy.json'),
                     '--release', args.version, '--suite', 'trixie', '--apt-metadata', str(directory/'apt-metadata'),
@@ -128,6 +158,8 @@ def main():
                 'custom': custom,
                 'debian': (directory/'debian-security.txt').read_text(),
                 'package_sources_sha256': file_record(directory/'package-sources.json')['sha256'],
+                'apt_metadata_sha256': file_record(directory/'apt-metadata')['sha256'],
+                'embedded_beyla': embedded_record,
                 'production_qualified': False}
     require(security['custom'].get('result') == 'pass', 'Custom package security assessment failed.')
     (directory/'security.json').write_bytes(canonical(security))

@@ -162,21 +162,13 @@ def main():
     notices.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(packages/'pam-rssh.notices.txt', notices)
     package_list = json.loads((PROJECT / 'mkosi/packages.json').read_text())['packages']
-    (build / 'mkosi.conf').write_text(
-        '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
-        f'Snapshot={inputs["DEBIAN_SNAPSHOT"]}\n\n[Output]\nFormat=tar\n'
-        f'ImageId=lanrith\nImageVersion={version}\nOutput=lanrith-base\nOutputDirectory=/work/output\n'
-        'ManifestFormat=json\nCompressOutput=gz\n\n[Content]\nBootable=no\nPackages=' + ','.join(package_list) + '\n')
+    from lanrith.image import base_configuration, initrd_configuration
+    (build / 'mkosi.conf').write_text(base_configuration(inputs['DEBIAN_SNAPSHOT'], version, package_list))
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work) + ':/work', '-w', '/work/image', builder,
         'mkosi', '--force', 'build')
     initrd = args.work/'initrd-image'
     initrd.mkdir()
-    (initrd/'mkosi.conf').write_text(
-        '[Include]\nInclude=mkosi-initrd\n'
-        '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
-        f'Snapshot={inputs["DEBIAN_SNAPSHOT"]}\n'
-        '[Output]\nFormat=tar\nOutput=lanrith-initrd-base\nOutputDirectory=/work/output\nCompressOutput=gz\nManifestFormat=json\n'
-        '[Content]\nRemovePackages=\nPackages=linux-image-amd64,python3,openssl,coreutils,util-linux,fdisk,dmsetup,e2fsprogs,cryptsetup-bin,systemd-cryptsetup,systemd-repart,tpm2-tools\n')
+    (initrd/'mkosi.conf').write_text(initrd_configuration(inputs['DEBIAN_SNAPSHOT']))
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work)+':/work', '-w', '/work/initrd-image',
         builder, 'mkosi', '--force', 'build')
     generated = args.work / 'output'
@@ -190,6 +182,8 @@ def main():
                            ('lanrith-initrd-base.tar.gz', 'lanrith-initrd-base.tar.gz'),
                            ('lanrith-base.manifest', 'inventory.json')):
         shutil.copyfile(generated / source, args.output / target)
+    shutil.copyfile(generated/'lanrith-base.apt-metadata', args.output/'apt-metadata')
+    shutil.copyfile(packages/'alloy-beyla.scan', args.output/'alloy-beyla.scan')
     shutil.copyfile(PROJECT / 'build-inputs.json', args.output / 'inputs.json')
     shutil.copyfile(args.work / 'custom-security.json', args.output / 'custom-security.json')
     with urllib.request.urlopen('https://security-tracker.debian.org/tracker/data/json', timeout=90) as response:

@@ -38,7 +38,10 @@ runners. Replacing a mutable tag does not replace those trusted bytes.
 Alloy is built with its complete component registry, embedded UI and matching
 Beyla source. Reviewed dependency patches, supported compiler versions and
 unstripped Go symbols keep the binary scanner's coverage precise. The embedded
-Beyla executable is also retained as an independent scan subject. UI, Cargo,
+Beyla executable is retained outside the router filesystem as an independent
+scan subject. Packaging and base admission both verify its digest and unique
+byte range inside the actual Alloy executable. The deployed image contains
+one embedded Beyla payload; it does not need a duplicate scan-only executable. UI, Cargo,
 Java and upstream-source advisory checks supplement Go and Debian coverage.
 The SBOM records these dependency graphs; package notices retain upstream
 licenses, including any reviewed correction for an omitted archive notice.
@@ -127,3 +130,28 @@ a public repository, command arguments or CI logs.
 The template checks actual private-repository and environment capabilities.
 It does not assume GitHub Enterprise. Public keyless owner provenance would
 expose repository identity and is outside the default private workflow.
+
+The Debian appliance installs only explicit packages and their required
+dependencies (`WithRecommends=no`). Build tools stay in the separate builder:
+UKI creation, EROFS creation and container tools are not runtime requirements.
+The deployed storage formats are EROFS, ext4 and FAT; Btrfs and alternative
+partition editors are omitted. Runtime disk installation and recovery retain
+`systemd-repart`, `sfdisk`, filesystem checks and encryption tools.
+
+Finalization removes package caches and databases, package-manager executables,
+manuals, examples, translations, Python bytecode caches and unused legacy
+initramfs files. Copyright, license and third-party notices remain, as do the
+C.UTF-8 locale, kernel modules, firmware supplied by the selected package set,
+and operational diagnostics. Full supported router services remain installed
+and inactive until selected; minimization does not remove optional features.
+Authenticated APT metadata, inventories and scan subjects are release evidence
+outside the deployed filesystem. The inventory describes the installed package
+closure before file pruning; `image-footprint.json` records payload pruning.
+Package and filesystem gates reject build tools and scan-only payloads, and
+native qualification tests the pruned image before publication.
+
+Debian's `freeradius-config` requires `make` to generate example certificates
+during package installation. The package inventory retains that dependency,
+but finalization removes the Make executable. Enabled RADIUS integrations
+supply their own reviewed credentials; they do not generate shared example
+certificates on the router. The filesystem gate checks this distinction.

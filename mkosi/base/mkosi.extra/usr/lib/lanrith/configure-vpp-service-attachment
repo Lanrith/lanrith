@@ -1,7 +1,7 @@
 #!/bin/sh
 # Create the reviewed AF_PACKET host interface and its narrow L3 routes.  The
 # Linux veth pair is created by lanrith-service-namespace.service; VPP
-# owns only the host-vpp-services interface and never the physical X710 here.
+# owns only the host-vpp-services interface and never the physical PCI device here.
 set -eu
 
 . /etc/lanrith/integrations/network-profile.sh

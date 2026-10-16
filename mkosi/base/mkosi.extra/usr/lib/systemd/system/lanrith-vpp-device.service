@@ -1,0 +1,9 @@
+[Unit]
+Description=Bind the explicitly selected PCI function to VFIO
+Before=vpp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/lanrith/bind-vpp-device
+TimeoutStartSec=45s

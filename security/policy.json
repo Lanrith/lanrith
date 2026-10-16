@@ -18,14 +18,29 @@
   },
   "forbidden_package_suffixes": [
     "-dbg",
-    "-dbgsym"
+    "-dbgsym",
+    "-dev",
+    "-doc"
   ],
   "forbidden_packages": [
+    "btrfs-progs",
+    "build-essential",
+    "cargo",
+    "erofs-utils",
+    "g++",
+    "gcc",
+    "git",
     "inetutils-inetd",
+    "nodejs",
+    "npm",
     "openbsd-inetd",
+    "parted",
     "proftpd-core",
     "rsh-server",
+    "rustc",
     "samba",
+    "systemd-container",
+    "systemd-ukify",
     "telnetd",
     "tftpd",
     "vsftpd",
@@ -40,7 +55,7 @@
   "local_package_sources": {
     "alloy": {
       "source": "alloy",
-      "version": "1.20.1-1+lanrith1"
+      "version": "1.20.1-1+lanrith2"
     },
     "discovery-bridge": {
       "source": "discovery-bridge",
@@ -96,7 +111,7 @@
     }
   },
   "required_exact_packages": {
-    "alloy": "1.20.1-1+lanrith1",
+    "alloy": "1.20.1-1+lanrith2",
     "discovery-bridge": "0.1.0",
     "lanrith-tayga-internal": "0.9.6-1",
     "libunbound8": "1.26.1-0+deb13u1",

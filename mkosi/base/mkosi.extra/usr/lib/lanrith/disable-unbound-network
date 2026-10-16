@@ -4,19 +4,27 @@
 # addresses belonging to the other namespace services are preserved.
 set -eu
 
-. /etc/lanrith/integrations/network-profile.sh
+profile=${LANRITH_NETWORK_PROFILE:-/etc/lanrith/integrations/network-profile.sh}
+. "$profile"
+case "$lanrith_wan_mode" in static|routed|delegated) ;; *) exit 1 ;; esac
 
 namespace=$lanrith_service_namespace
+service_id=$lanrith_unbound_service_id
+case "$service_id" in ''|*[!0-9a-f]*) exit 1 ;; esac
+[ "${#service_id}" -le 4 ] || exit 1
+if [ "$lanrith_wan_mode" != static ]; then
+  case "$lanrith_service_ipv6_cleanup_prefix" in ''|*[!0-9a-f:]*) exit 1 ;; esac
+fi
 host_link=$lanrith_service_host_link
 namespace_link=$lanrith_service_namespace_link
 namespace_address=$lanrith_service_ipv6_namespace_address
 
-if [ "$lanrith_wan_mode" != 'standalone_lab' ] && \
+if [ "$lanrith_wan_mode" != 'static' ] && \
     ip link show dev "$lanrith_wan_interface" >/dev/null 2>&1; then
-  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  aggregate_start=$lanrith_service_ipv6_cleanup_prefix
   for proxy_address in $(ip -6 neigh show proxy \
-      dev "$lanrith_wan_interface" | awk -v prefix="$aggregate_start:" \
-        '$1 ~ ("^" prefix) && $1 ~ /::10$/ { print $1 }'); do
+      dev "$lanrith_wan_interface" | awk -v service_id="$service_id" -v prefix="$aggregate_start:" \
+        '$1 ~ ("^" prefix) && $1 ~ ("::" service_id "$") { print $1 }'); do
     ip -6 neigh del proxy "$proxy_address" \
       dev "$lanrith_wan_interface" 2>/dev/null || true
   done
@@ -24,25 +32,25 @@ fi
 
 if ip netns list | awk -v expected="$namespace" '$1 == expected { found = 1 } END { exit !found }'; then
   ip -n "$namespace" -6 route del default dev "$namespace_link" 2>/dev/null || true
-  if [ "$lanrith_wan_mode" = 'standalone_lab' ]; then
-    ip -n "$namespace" -6 address del "$lanrith_unbound_lab_address" \
+  if [ "$lanrith_wan_mode" = 'static' ]; then
+    ip -n "$namespace" -6 address del "$lanrith_unbound_static_address" \
       dev lo 2>/dev/null || true
   else
-    aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+    aggregate_start=$lanrith_service_ipv6_cleanup_prefix
     for address in $(ip -n "$namespace" -6 -o address show dev lo scope global | \
-        awk -v prefix="$aggregate_start" \
-          '$4 ~ ("^" prefix ":") && $4 ~ /::10\/128$/ { print $4 }'); do
+        awk -v service_id="$service_id" -v prefix="$aggregate_start" \
+          '$4 ~ ("^" prefix ":") && $4 ~ ("::" service_id "/128$") { print $4 }'); do
       ip -n "$namespace" -6 address del "$address" dev lo 2>/dev/null || true
     done
   fi
 fi
 
-if [ "$lanrith_wan_mode" = 'standalone_lab' ]; then
-  ip -6 route del "$lanrith_unbound_lab_prefix" via "$namespace_address" \
+if [ "$lanrith_wan_mode" = 'static' ]; then
+  ip -6 route del "$lanrith_unbound_static_prefix" via "$namespace_address" \
     dev "$host_link" 2>/dev/null || true
 else
-  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
-  for prefix in $(ip -6 route show dev "$host_link" | awk -v prefix="$aggregate_start:" '$1 ~ ("^" prefix) { print $1 }'); do
+  aggregate_start=$lanrith_service_ipv6_cleanup_prefix
+  for prefix in $(ip -6 route show dev "$host_link" | awk -v service_id="$service_id" -v prefix="$aggregate_start:" '$1 ~ ("^" prefix) { print $1 }'); do
     ip -6 route del "$prefix" via "$namespace_address" dev "$host_link" \
       2>/dev/null || true
   done

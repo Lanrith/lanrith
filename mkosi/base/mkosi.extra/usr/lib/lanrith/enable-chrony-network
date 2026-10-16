@@ -3,16 +3,24 @@
 # by Unbound's required network unit and is deliberately not changed.
 set -eu
 
-. /etc/lanrith/integrations/network-profile.sh
+profile=${LANRITH_NETWORK_PROFILE:-/etc/lanrith/integrations/network-profile.sh}
+. "$profile"
+case "$lanrith_wan_mode" in static|routed|delegated) ;; *) exit 1 ;; esac
 
 namespace=$lanrith_service_namespace
+service_id=$lanrith_chrony_service_id
+case "$service_id" in ''|*[!0-9a-f]*) exit 1 ;; esac
+[ "${#service_id}" -le 4 ] || exit 1
+if [ "$lanrith_wan_mode" != static ]; then
+  case "$lanrith_service_ipv6_cleanup_prefix" in ''|*[!0-9a-f:]*) exit 1 ;; esac
+fi
 
 ip netns list | awk -v expected="$namespace" '$1 == expected { found = 1 } END { exit !found }'
 ip -n "$namespace" link show dev lo >/dev/null
-if [ "$lanrith_wan_mode" = 'standalone_lab' ]; then
-  service_address=$lanrith_chrony_lab_address
-elif [ "$lanrith_wan_mode" = 'existing_network_static' ]; then
-  service_address="$(lanrith_service_gua_service_address 40)/128"
+if [ "$lanrith_wan_mode" = 'static' ]; then
+  service_address=$lanrith_chrony_static_address
+elif [ "$lanrith_wan_mode" = 'routed' ]; then
+  service_address="$(lanrith_service_gua_service_address "$lanrith_chrony_service_id")/128"
 else
   attempts=0
   while ! service_prefix=$(lanrith_service_gua_prefix); do
@@ -23,16 +31,16 @@ else
     }
     sleep 1
   done
-  service_address="$(lanrith_service_gua_service_address 40)/128"
-  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  service_address="$(lanrith_service_gua_service_address "$lanrith_chrony_service_id")/128"
+  aggregate_start=$lanrith_service_ipv6_cleanup_prefix
   for old_address in $(ip -n "$namespace" -6 -o address show dev lo scope global | \
-      awk -v prefix="$aggregate_start" \
-        '$4 ~ ("^" prefix ":") && $4 ~ /::40\/128$/ { print $4 }'); do
+      awk -v service_id="$service_id" -v prefix="$aggregate_start" \
+        '$4 ~ ("^" prefix ":") && $4 ~ ("::" service_id "/128$") { print $4 }'); do
     ip -n "$namespace" -6 address del "$old_address" dev lo 2>/dev/null || true
   done
 fi
 
-if [ "$lanrith_wan_mode" != 'standalone_lab' ]; then
+if [ "$lanrith_wan_mode" != 'static' ]; then
   # Chrony has its own stable egress identity and therefore needs a separate
   # exact upstream proxy entry. Unbound's required network unit has already
   # enabled proxy NDP on this WAN link.
@@ -40,11 +48,11 @@ if [ "$lanrith_wan_mode" != 'standalone_lab' ]; then
     echo 'Chrony network path requires WAN proxy NDP.' >&2
     exit 1
   }
-  aggregate_start=${lanrith_wan_ipv6_allowed_aggregate%::/48}
+  aggregate_start=$lanrith_service_ipv6_cleanup_prefix
   proxy_address=${service_address%/*}
   for old_proxy in $(ip -6 neigh show proxy dev "$lanrith_wan_interface" | \
-      awk -v prefix="$aggregate_start:" \
-        '$1 ~ ("^" prefix) && $1 ~ /::40$/ { print $1 }'); do
+      awk -v service_id="$service_id" -v prefix="$aggregate_start:" \
+        '$1 ~ ("^" prefix) && $1 ~ ("::" service_id "$") { print $1 }'); do
     [ "$old_proxy" = "$proxy_address" ] || \
       ip -6 neigh del proxy "$old_proxy" dev "$lanrith_wan_interface"
   done

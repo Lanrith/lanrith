@@ -81,7 +81,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                         f'{value["administration"]["username"]} -\n')
     library = overlay / 'usr/lib/lanrith/lanrith'
     library.mkdir(parents=True)
-    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py'):
+    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)

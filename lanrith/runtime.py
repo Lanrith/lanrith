@@ -69,6 +69,10 @@ def health():
     for key, setting in expected.items():
         require(Path('/proc/sys', key.replace('.', '/')).read_text().strip() == str(setting),
                 'Required kernel hardening is not active.')
+    loaded = {line.split()[0] for line in Path('/proc/modules').read_text().splitlines() if line}
+    require(not loaded & {'dccp', 'sctp', 'rds', 'tipc', 'can', 'can_raw', 'can_bcm', 'can_gw',
+                          'bluetooth', 'btusb', 'af_802154', 'ieee802154', 'mac802154', 'nfc'},
+            'A disabled kernel protocol module is loaded.')
     factory.secure_boot(value['boot'].get('secure_boot', True))
     watchdog_health(value.get('watchdog'))
     factory.initialize(value)
