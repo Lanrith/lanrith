@@ -26,7 +26,7 @@ def partitions(original, written):
         'Factory media changed an authenticated partition.')
     payload = after[-1]
     release.require(payload.get('name') == 'lanrith-factory-media' and
-                    payload.get('type') == '0fc63daf-8483-4772-8e79-3d69d8477de4' and
+                    str(payload.get('type', '')).lower() == '0fc63daf-8483-4772-8e79-3d69d8477de4' and
                     type(payload.get('start')) is int and type(payload.get('size')) is int and
                     payload['size'] > 0 and all(type(p.get('start')) is int and type(p.get('size')) is int and
                         p['start'] > 0 and p['size'] > 0 and p['start']+p['size'] <= payload['start'] for p in before),
@@ -62,7 +62,7 @@ def verify(target, root, certificate, manifest):
     while pending:
         device = pending.pop()
         pending.extend(device.get('children', []))
-        if device.get('type') == 'part' and device.get('partuuid') == payload.get('uuid'):
+        if device.get('type') == 'part' and device.get('partuuid', '').lower() == payload.get('uuid', '').lower():
             matches.append(device['name'])
     release.require(len(matches) == 1, 'Cannot identify the written factory payload partition.')
     with tempfile.TemporaryDirectory(prefix='lanrith-media-readback.', dir='/run') as temporary:
@@ -70,7 +70,7 @@ def verify(target, root, certificate, manifest):
         try:
             observed = release.verify(Path(temporary)/'release', certificate, purpose='factory',
                 image_id=manifest['image_id'], expected_version=manifest['platform_version'],
-                configuration_sha256=manifest['configuration_sha256'])
+                expected_configuration=manifest['configuration_sha256'])
             release.require(observed == manifest, 'Written factory payload differs from the selected signed release.')
         finally:
             command('umount', temporary)

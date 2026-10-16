@@ -99,6 +99,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
         if value['services'].get(feature, {}).get('enabled'):
             required.append(unit)
+    required = sorted(set(required))
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
         f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'
@@ -148,7 +149,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         path = wants / directory / unit
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/' + unit)
-    for unit in required:
+    for unit in sorted(set(required) | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
+                                       'lanrith-health.service', 'lanrith-observation.service',
+                                       'lanrith-ssh-host-key.service'}):
         # Replace the base's inactive mask only for explicitly selected health requirements.
         path = wants/unit
         require(not path.exists() and not path.is_symlink(), 'Integration conflicts with a selected service activation.')
@@ -199,10 +202,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     initrd = destination/'mkosi.images/initrd'
     initrd.mkdir(parents=True)
     (initrd/'mkosi.conf').write_text(
-        '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
-        f'\n[Output]\nFormat=cpio\nOutput=initrd\nOutputDirectory={destination/"output"}\n'
+        '[Output]\nFormat=cpio\nOutput=initrd\n'
         'CompressOutput=zstd\nManifestFormat=\nSplitArtifacts=\n'
-        f'\n[Content]\nBaseTrees={initrd_base}\nBootable=no\nMakeInitrd=yes\nMachineID={machine_id}\n')
+        f'\n[Content]\nBaseTrees={initrd_base}\nBootable=no\nMakeInitrd=yes\n')
+    (initrd/'mkosi.machine-id').write_text(machine_id+'\n')
     initrd_overlay = initrd/'mkosi.extra'
     (initrd_overlay/'etc').mkdir(parents=True)
     (initrd_overlay/'etc/machine-id').write_text(machine_id+'\n')
@@ -242,7 +245,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             f'\n[Output]\nFormat=disk\nImageId={image_id}\nImageVersion={sequence}\n'
             f'Output={image_id}_{sequence}\nOutputDirectory={destination / "output"}\n'
             'SplitArtifacts=uki,partitions\nManifestFormat=json\n'
-            f'\n[Content]\nBaseTrees={base}\nBootable=yes\nShimBootloader=signed\nInitrds=%O/initrd\nMachineID={machine_id}\n'
+            f'\n[Content]\nBaseTrees={base}\nBootable=yes\nShimBootloader=signed\nInitrds=%O/initrd\n'
             f'KernelCommandLine=console={boot.get("console", "tty0")} systemd.log_target=journal-or-kmsg '
             'systemd.journald.forward_to_console=0 systemd.journald.forward_to_kmsg=0 '
             f'systemd.journald.forward_to_wall=0{kernel}\n'

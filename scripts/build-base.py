@@ -176,7 +176,7 @@ def main():
         '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
         f'Snapshot={inputs["DEBIAN_SNAPSHOT"]}\n'
         '[Output]\nFormat=tar\nOutput=lanrith-initrd-base\nOutputDirectory=/work/output\nCompressOutput=gz\nManifestFormat=json\n'
-        '[Content]\nPackages=linux-image-amd64,python3,openssl,coreutils,util-linux,fdisk,dmsetup,e2fsprogs,cryptsetup-bin,systemd-cryptsetup,systemd-repart,tpm2-tools\n')
+        '[Content]\nRemovePackages=\nPackages=linux-image-amd64,python3,openssl,coreutils,util-linux,fdisk,dmsetup,e2fsprogs,cryptsetup-bin,systemd-cryptsetup,systemd-repart,tpm2-tools\n')
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work)+':/work', '-w', '/work/initrd-image',
         builder, 'mkosi', '--force', 'build')
     generated = args.work / 'output'

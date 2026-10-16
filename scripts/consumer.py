@@ -34,7 +34,7 @@ def fetch(selection, directory):
     # A retained image needs a fresh assessment even when its package inputs did not change.
     pages = json.loads(run('gh', 'api', '--paginate', '--slurp',
         'repos/'+trust.REPOSITORY+'/releases?per_page=100', capture_output=True, text=True).stdout)
-    require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
+    release.require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
             'Published release enumeration is malformed.')
     response = [item for page in pages for item in page]
     suffix = '-'+selection['files']['inventory.json'][:12]
@@ -154,7 +154,7 @@ def assemble(owner, bundle, request, output):
                         maximum_file=4*1024*1024, nested=True)
         workspace = assembly_root/'work'
         payload = assembly_root/'update'
-        command = ['docker', 'run', '--rm', '--network', 'none', '--privileged',
+        command = ['docker', 'run', '--rm', '--pull=never', '--network', 'none', '--privileged',
                    '-v', str(private)+':'+str(private)+':ro', '-v', str(assembly_root)+':'+str(assembly_root),
                    '-v', str(owner)+':/owner:ro',
                    '-v', str(bundle)+':/platform:ro', '-w', str(tools), reference,

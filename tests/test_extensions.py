@@ -39,12 +39,31 @@ class IntegrationTests(unittest.TestCase):
 
     def test_protected_files_and_uninventoried_content_fail_closed(self):
         for name in ('etc/ssh/sshd_config', 'etc/sudoers.d/root', 'etc/passwd', 'etc/group', 'usr/bin/lanrith-runtime',
-                     'usr/share/lanrith/owner.crt', 'usr/lib/repart.d/10-root.conf'):
+                     'usr/share/lanrith/owner.crt', 'usr/lib/repart.d/10-root.conf',
+                     'usr/lib/systemd/system-generators/owner-hook', 'etc/ld.so.preload',
+                     'usr/lib/systemd/system/var.mount', 'etc/systemd/system/efi.automount.d/owner.conf'):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 pin = self.make(root, name)
                 with self.assertRaises(ReleaseError):
                     extensions.admit(root, pin)
+
+    def test_owner_state_mount_can_be_required_without_replacing_core_storage(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make(root, 'usr/lib/systemd/system/var-lib-owner\x2dservice.mount')
+            value = json.loads((root/'extension.json').read_text())
+            value['health_units'] = ['var-lib-owner\x2dservice.mount']
+            encoded = canonical(value)
+            (root/'extension.json').write_bytes(encoded)
+            pin = hashlib.sha256(encoded).hexdigest()
+            settings = {'extensions': ['routing'],
+                        'services': {'bgp': {'enabled': True, 'configuration': 'routing'}}}
+            result = extensions.overlay(settings, {'routing': (root, pin)}, root/'output')
+            self.assertEqual(result['health_units'], value['health_units'])
+        for unit in ('var.mount', 'efi.automount', '-.mount', 'sysroot.mount'):
+            self.assertFalse(extensions.health_unit(unit))
 
     def test_owner_service_identities_are_locked_and_cannot_alias_core_authority(self):
         accounts = {'passwd': b'root:*:0:0:root:/root:/bin/bash\nadmin:x:982:982:Admin:/home/admin:/bin/bash\n',

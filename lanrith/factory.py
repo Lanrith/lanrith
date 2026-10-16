@@ -240,7 +240,7 @@ def provision():
         try:
             payload = mount/'release'
             manifest = verify(payload, Path('/sysroot'+installed['certificate']), purpose='factory',
-                              image_id=installed['image_id'], configuration_sha256=installed['configuration_sha256'])
+                              image_id=installed['image_id'], expected_configuration=installed['configuration_sha256'])
             require(manifest['deployment_sequence'] == installed['deployment_sequence'] and
                     manifest['platform_version'] == installed['platform_version'], 'Media does not match the booted root.')
             rows = geometry(disk)

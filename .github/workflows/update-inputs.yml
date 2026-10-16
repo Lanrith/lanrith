@@ -40,4 +40,6 @@ jobs:
             security/policy.json
       - name: Explicitly run checks for the bot proposal
         if: steps.proposal.outputs.pull-request-number
-        run: gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref automation/dependency-inputs
+        run: |
+          gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref automation/dependency-inputs
+          gh workflow run package-check.yml --repo "$GITHUB_REPOSITORY" --ref automation/dependency-inputs

@@ -65,7 +65,9 @@ optional = {'unbound.service','chrony.service','named.service','freeradius.servi
             'prometheus-node-exporter.service','alloy.service','snmpd.service','vpp.service',
             'discovery-bridge.service','discovery-bridge-dns.service'}
 for path in (root/'usr/lib/systemd/system').iterdir():
-    if path.name.startswith(('lanrith-policy-', 'lanrith-radius-', 'lanrith-nat', 'lanrith-vpp-', 'lanrith-unbound-')):
+    # Every bundled advanced integration is inactive until owner assembly
+    # explicitly selects its health units. This includes dependency activation.
+    if path.name.startswith('lanrith-'):
         optional.add(path.name)
 for name in optional:
     mask = root/'etc/systemd/system'/name

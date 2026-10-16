@@ -21,11 +21,26 @@ PROTECTED = (
     'etc/systemd/system/ssh.', 'usr/lib/systemd/system/ssh.',
     'etc/systemd/system/multi-user.', 'usr/lib/systemd/system/multi-user.',
     'etc/systemd/system/boot-complete.', 'usr/lib/systemd/system/boot-complete.',
+    'usr/lib/kernel/', 'usr/lib/dracut/', 'etc/dracut.conf', 'etc/dracut.conf.d/',
+    'usr/share/initramfs-tools/', 'etc/initramfs-tools/',
+    'etc/systemd/system-generators/', 'usr/lib/systemd/system-generators/',
+    'etc/ld.so.preload',
 )
 REPLACEABLE = ('etc/nftables.conf', 'etc/systemd/network/', 'etc/kea/', 'etc/unbound/',
                'etc/chrony/', 'etc/sysctl.d/90-lanrith-routing.conf', 'etc/frr/', 'etc/freeradius/',
                'etc/suricata/', 'etc/snmp/', 'etc/alloy/', 'etc/discovery-bridge/', 'etc/router-policy/',
                'etc/avahi/', 'etc/tayga.conf')
+
+CORE_MOUNTS = {'-', 'var', 'efi', 'boot', 'boot-efi', 'sysroot', 'usr', 'etc', 'home', 'root',
+               'run', 'dev', 'proc', 'sys', 'tmp'}
+
+
+def health_unit(value):
+    if not isinstance(value, str) or not re.fullmatch(
+            r'[A-Za-z0-9_@.\\-]+\.(service|target|socket|timer|path|mount|automount)', value):
+        return False
+    stem, suffix = value.rsplit('.', 1)
+    return suffix not in ('mount', 'automount') or stem not in CORE_MOUNTS
 
 
 def admit(directory, expected):
@@ -45,13 +60,12 @@ def admit(directory, expected):
                 for item in value['features']) and len(set(value['features'])) == len(value['features']),
             'Invalid integration features.')
     require(isinstance(value['health_units'], list) and len(value['health_units']) <= 64 and
-            all(isinstance(item, str) and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(service|target|socket|timer|path)', item)
-                for item in value['health_units']), 'Invalid integration health units.')
+            all(health_unit(item) for item in value['health_units']), 'Invalid integration health units.')
     by_feature = value.get('health_units_by_feature', {})
     require(isinstance(by_feature, dict) and set(by_feature) <= set(value['features']) and
             all(isinstance(units, list) and len(units) <= 64 and
-                all(isinstance(unit, str) and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(service|target|socket|timer|path)', unit)
-                    for unit in units) for units in by_feature.values()), 'Invalid per-feature health units.')
+                all(health_unit(unit) for unit in units) for units in by_feature.values()),
+            'Invalid per-feature health units.')
     require(isinstance(value['files'], dict) and 0 < len(value['files']) <= 4096, 'Invalid integration inventory.')
     identity_declarations(value.get('identities', {}))
     replaces = value.get('replaces', [])
@@ -77,6 +91,11 @@ def admit(directory, expected):
                 (name.startswith(('usr/lib/lanrith/integrations/', 'usr/share/lanrith/integrations/')) or
                  not any(name.startswith(prefix) for prefix in PROTECTED)),
                 'Integration attempts to replace protected boot, access or update authority.')
+        if name.startswith(('etc/systemd/system/', 'usr/lib/systemd/system/')):
+            unit = path.parts[4] if name.startswith('usr/') else path.parts[3]
+            unit = unit.removesuffix('.d')
+            require(not unit.endswith(('.mount', '.automount')) or health_unit(unit),
+                    'Integration attempts to replace a core storage mount.')
         require(isinstance(record, dict) and set(record) == {'sha256', 'size', 'mode'} and
                 record['mode'] in (0o644, 0o600, 0o755) and type(record['mode']) is int,
                 'Invalid integration file record.')

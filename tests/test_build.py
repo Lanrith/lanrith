@@ -1,6 +1,8 @@
 """Assembly consumes an existing package tree and emits bounded boot policy."""
 
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -9,6 +11,18 @@ from lanrith.release import ReleaseError
 
 
 class AssemblyTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('mkosi'), 'Run in the matching mkosi builder for native configuration checks.')
+    def test_pinned_mkosi_accepts_root_and_initrd_configuration(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-summary-input')
+            build.assembly(value, base, root/'work', version='0.1.0', sequence=9)
+            result = subprocess.run(['mkosi', '--directory', str(root/'work'), 'summary'], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(result.stderr, b'')
+
     def test_successive_deployments_have_distinct_signature_partition_identities(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
         with tempfile.TemporaryDirectory() as temporary:
@@ -38,6 +52,9 @@ class AssemblyTests(unittest.TestCase):
             self.assertEqual((workspace/'mkosi.machine-id').read_text().strip(), value['hardware']['machine_id'])
             self.assertEqual((workspace/'mkosi.images/initrd/mkosi.extra/etc/machine-id').read_text(),
                              (workspace/'mkosi.extra/etc/machine-id').read_text())
+            self.assertEqual((workspace/'mkosi.images/initrd/mkosi.machine-id').read_text(),
+                             (workspace/'mkosi.machine-id').read_text())
+            self.assertNotIn('[Distribution]', (workspace/'mkosi.images/initrd/mkosi.conf').read_text())
             self.assertEqual((workspace/'mkosi.extra/etc/systemd/system/systemd-repart.service').readlink(), Path('/dev/null'))
             self.assertEqual(identity['deployment_sequence'], 9)
             self.assertTrue((workspace / 'mkosi.extra/etc/systemd/system/boot-complete.target.requires/lanrith-health.service').is_symlink())

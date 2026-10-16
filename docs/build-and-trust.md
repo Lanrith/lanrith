@@ -70,22 +70,40 @@ keys. The evidence job validates the owner signature and request identities
 without executing an image or builder. Its DSSE SLSA statement remains private;
 no public transparency log is used by default.
 
-For a local build, install the authenticated compiler and enter an isolated
-matching builder using your established secret-management process:
+For a local build, authenticate the compiler using the release's pinned file
+provenance. Download the platform files and their verification bundles into
+`platform/`. Install GitHub CLI and rootless Podman (or select `--engine docker`).
+Use existing keys from your established secret-management process:
 
 ```sh
-python3 -m lanrith build config.yaml \
-  --base platform/lanrith-base.tar.gz \
-  --initrd-base platform/lanrith-initrd-base.tar.gz \
-  --platform-lock platform.lock --platform-bundle platform \
-  --workspace work --output update --version 0.1.0 --sequence 1 \
-  --certificate /private/owner.crt --key /private/owner.key
+python3 scripts/build-local.py preflight \
+  --owner /private/config --platform /private/platform \
+  --request /private/build-request.json --sequence 1
+
+python3 scripts/build-local.py assemble \
+  --owner /private/config --platform /private/platform \
+  --request /private/build-request.json \
+  --work /private/work --output /private/release \
+  --boot-certificate /private/owner.crt --boot-key /private/owner.key
 ```
 
-Authenticate the compiler and builder before invoking this command. Local
-signing is appropriate when repository or environment protections cannot be
-enforced. Do not put keys, hashes, credentials or private configuration into a
-public repository, command arguments or CI logs.
+Review the exact request before assembly. If serial administration is enabled,
+supply `--serial-hash /private/serial.hash` to both commands. The hash is bound
+to the request; pass only its path. Preflight authenticates the files, security
+qualification and OCI builder. Assembly repeats those checks before reading
+keys, snapshots owner inputs, then runs mkosi with networking disabled. It
+retains independently verified `update/` and `factory/` directories. Keep the
+workspace private: it contains the effective owner configuration.
+
+Signing uses private tmpfs and an owned container. Cleanup stops that container
+before removing keys; an unavailable container engine retains the owned tmpfs
+for recovery. The local path does not claim hosted SLSA qualification for the
+owner image. Public platform provenance remains independently verified. Use a
+separate owner evidence authority for any deployment-evidence signing.
+
+Local signing is appropriate when repository or environment protections cannot
+be enforced. Do not put keys, hashes, credentials or private configuration into
+a public repository, command arguments or CI logs.
 
 The template checks actual private-repository and environment capabilities.
 It does not assume GitHub Enterprise. Public keyless owner provenance would
