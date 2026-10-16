@@ -121,18 +121,15 @@ def initialize(installed):
     var = [row for row in rows if row['type'].lower() == VAR_GUID]
     require(len(var) == 1 and var[0]['label'] == 'var', 'The state volume is absent or ambiguous.')
     # Use the verified disk's partition number; global label symlinks are not authority.
-    listing = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PARTN', disk]))
-    parts = listing['blockdevices'][0].get('children', [])
-    devices = [item['name'] for item in parts if item.get('partn') == var[0]['number']]
-    require(len(devices) == 1, 'Cannot resolve the selected encrypted state partition.')
-    command(['cryptsetup', 'isLuks', devices[0]])
+    device = var[0]['device']
+    command(['cryptsetup', 'isLuks', device])
     source = command(['findmnt', '--noheadings', '--output', 'SOURCE', '/var']).strip()
     require(source.startswith(('/dev/mapper/', '/dev/dm-')), 'Persistent state is not mounted through encryption.')
     status = command(['cryptsetup', 'status', source])
     backing = re.findall(r'^\s*device:\s+(\S+)\s*$', status, re.MULTILINE)
-    require(len(backing) == 1 and Path(backing[0]).resolve() == Path(devices[0]).resolve(),
+    require(len(backing) == 1 and Path(backing[0]).resolve() == Path(device).resolve(),
             'Mounted state is not backed by the selected encrypted partition.')
-    luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', devices[0]]))
+    luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', device]))
     tokens = enrollment_tokens(luks, tpm_required=installed['boot'].get('tpm', 'required') == 'required')
     directory = Path(installed['state_directory'])
     directory.mkdir(mode=0o700, exist_ok=True)
@@ -143,7 +140,7 @@ def initialize(installed):
         with marker.open('xb') as stream:
             stream.write(canonical({'schema': 1, 'disk': disk}))
         marker.chmod(0o600)
-    return devices[0], tokens
+    return device, tokens
 
 
 def recovery(installed):
@@ -216,11 +213,7 @@ def prepare_state(installed, disk, active):
     require(len(state) == 1 and state[0]['label'] == 'var' and
             state[0]['size'] >= installed['storage']['state_mib']*1024*1024,
             'Selected persistent state partition is absent or undersized.')
-    devices = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PARTN', disk]))
-    parts = [part['name'] for part in devices['blockdevices'][0].get('children', [])
-             if part.get('type') == 'part' and part.get('partn') == state[0]['number']]
-    require(len(parts) == 1, 'Cannot identify the selected persistent state partition.')
-    command(['cryptsetup', 'isLuks', parts[0]])
+    command(['cryptsetup', 'isLuks', state[0]['device']])
 
 
 def provision():

@@ -96,6 +96,13 @@ class AssemblyTests(unittest.TestCase):
             self.assertEqual((workspace/'mkosi.extra/etc/systemd/system/systemd-repart.service').readlink(), Path('/dev/null'))
             self.assertEqual(identity['deployment_sequence'], 9)
             self.assertTrue((workspace / 'mkosi.extra/usr/lib/systemd/system/boot-complete.target.requires/lanrith-health.service').is_symlink())
+            initrd_units = workspace/'mkosi.images/initrd/mkosi.extra/usr/lib/systemd/system'
+            boundary = (initrd_units/'initrd-switch-root.service.d/60-lanrith-provisioning.conf').read_text()
+            self.assertIn('Requires=lanrith-factory.service\n', boundary)
+            self.assertIn('After=lanrith-factory.service\n', boundary)
+            provision = (initrd_units/'lanrith-factory.service').read_text()
+            self.assertIn('OnFailureJobMode=isolate\n', provision)
+            self.assertIn('RemainAfterExit=yes\n', provision)
             with self.assertRaises(ReleaseError):
                 build.assembly(value, base, workspace, version='0.1.0', sequence=10)
 

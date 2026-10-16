@@ -57,6 +57,12 @@ disk and mounted/in-use devices, and requires the full stable target identity
 in the destructive confirmation. It reads the copied image back before
 power-off. Never substitute an ordinary raw writer for those checks.
 
+Slot and encrypted state provisioning must finish before the initrd switches
+to the installed root. A provisioning failure leaves the system in initrd
+emergency mode. Disk checks bind GPT identities to kernel partition numbers,
+capacity and in-use state; cached udev partition properties do not select the
+state volume or update slots.
+
 Create a USB installer from the owner's authenticated factory release directory:
 
 ```sh

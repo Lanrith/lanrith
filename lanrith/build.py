@@ -246,13 +246,18 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         'DefaultDependencies=no\nRequires=initrd-root-fs.target\nAfter=initrd-root-fs.target systemd-udev-trigger.service\n'
         'Before=initrd-udevadm-cleanup-db.service initrd-cleanup.service initrd-switch-root.target shutdown.target\n'
         'Conflicts=shutdown.target\n'
-        'OnFailure=emergency.target\n'
-        '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-factory provision\n'
+        'OnFailure=emergency.target\nOnFailureJobMode=isolate\n'
+        '\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/lanrith-factory provision\n'
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
         'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n')
     link = initrd_overlay/'usr/lib/systemd/system/initrd-switch-root.target.requires/lanrith-factory.service'
     link.parent.mkdir(parents=True)
     link.symlink_to('../lanrith-factory.service')
+    # The distribution switch-root service only Wants its target. A failed
+    # requirement of that target must also prevent the service switching root.
+    boundary = initrd_units/'initrd-switch-root.service.d/60-lanrith-provisioning.conf'
+    boundary.parent.mkdir(parents=True)
+    boundary.write_text('[Unit]\nRequires=lanrith-factory.service\nAfter=lanrith-factory.service\n')
     trust_path = initrd_overlay/'etc/verity.d'
     trust_path.mkdir(parents=True)
     if certificate:

@@ -18,9 +18,53 @@ class UpdatePlanTests(unittest.TestCase):
                   'partuuid': '12345678-abcd-5678-9abc-123456789abc', 'size': 4096,
                   'mountpoints': [None], 'children': [{'name': '/dev/mapper/foreign', 'type': 'crypt',
                       'mountpoints': ['/mnt/foreign']}]}
-        with patch.object(update, 'command', return_value=json.dumps({'blockdevices': [device]})):
-            rows = update.geometry('/dev/lanrith-test-disk')
+        table = {'label': 'gpt', 'device': '/dev/lanrith-test-disk', 'unit': 'sectors', 'sectorsize': 512,
+                 'partitions': [{'node': device['name'], 'size': 8, 'type': device['parttype'],
+                                 'name': device['partlabel'], 'uuid': device['partuuid']}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            sysfs = Path(temporary)
+            (sysfs/Path(device['name']).name).mkdir()
+            (sysfs/Path(device['name']).name/'partition').write_text('2\n')
+            with patch.object(update, 'command', side_effect=[json.dumps({'partitiontable': table}),
+                                                             json.dumps({'blockdevices': [device]})]):
+                rows = update.geometry('/dev/lanrith-test-disk', sysfs=sysfs)
         self.assertTrue(rows[0]['mounted'])
+
+    def test_partition_identity_comes_from_fresh_gpt_when_udev_metadata_is_stale(self):
+        disk = '/dev/lanrith-test-disk'
+        device = {'name': disk+'8', 'type': 'part', 'pkname': disk, 'partn': None,
+                  'parttype': None, 'partlabel': None, 'partuuid': None,
+                  'size': 4096, 'mountpoints': [None]}
+        identity = '12345678-abcd-5678-9abc-123456789abc'
+        part = {'node': device['name'], 'size': 8, 'type': '4d21b016-b534-45c2-a9fb-5c16e091fd2d',
+                'name': 'var', 'uuid': identity}
+        table = {'label': 'gpt', 'device': disk, 'unit': 'sectors', 'sectorsize': 512,
+                 'partitions': [part]}
+        def observe(observed_table, observed_device, number='8\n'):
+            with tempfile.TemporaryDirectory() as temporary:
+                sysfs = Path(temporary)
+                (sysfs/Path(device['name']).name).mkdir()
+                (sysfs/Path(device['name']).name/'partition').write_text(number)
+                with patch.object(update, 'command', side_effect=[json.dumps({'partitiontable': observed_table}),
+                                                                  json.dumps({'blockdevices': [observed_device]})]):
+                    return update.geometry(disk, sysfs=sysfs)
+        rows = observe(table, device)
+        self.assertEqual((rows[0]['type'], rows[0]['label'], rows[0]['uuid']),
+                         (part['type'], 'var', identity))
+        self.assertEqual((rows[0]['number'], rows[0]['device']), (8, device['name']))
+        self.assertEqual(observe({**table, 'partitions': [
+            {**part, 'type': part['type'].upper(), 'uuid': identity.upper()}]}, device), rows)
+        for changed_table, changed_device in (
+                ({**table, 'device': '/dev/foreign'}, device),
+                ({**table, 'partitions': [part, part]}, device),
+                (table, {**device, 'size': 2048}),
+                (table, {**device, 'name': disk+'9'}),
+                (table, {**device, 'pkname': '/dev/foreign'})):
+            with self.subTest(table=changed_table, device=changed_device), self.assertRaises(ReleaseError):
+                observe(changed_table, changed_device)
+        for number in ('', '0', '129', 'not-a-partition'):
+            with self.subTest(number=number), self.assertRaises(ReleaseError):
+                observe(table, device, number)
 
     def test_running_slot_must_be_the_explicitly_accepted_default(self):
         with tempfile.TemporaryDirectory() as temporary:

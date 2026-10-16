@@ -119,6 +119,7 @@ class Guest:
         self.buffer = b''
         self.last_diagnostic = None
         self.qmp_events = []
+        self.observed_diagnostics = {}
         self.environment = {key: value for key, value in os.environ.items()
                             if key not in ('SSH_AUTH_SOCK', 'SSH_AGENT_PID')}
         self.environment['SSH_AUTH_SOCK'] = str(secret/'agent.sock')
@@ -145,6 +146,7 @@ class Guest:
     def start(self):
         release.require(self.process is None or self.process.poll() is not None, 'Guest is already running.')
         self.qmp_events = []
+        self.observed_diagnostics = {}
         for name in ('qmp.sock', 'serial.sock', 'tpm.sock'):
             (self.work/name).unlink(missing_ok=True)
         arguments = ['qemu-system-x86_64', '-machine', 'q35,smm=on,accel=tcg', '-cpu', 'max',
@@ -251,7 +253,15 @@ class Guest:
                         self.qmp_events.append({'event': event['event'],
                             'reason': reason if re.fullmatch(r'[a-z-]{0,64}', reason) else 'unknown'})
         literals = set()
-        for module in ('factory', 'update', 'release'):
+        for message in ('Factory installation failed closed.', 'Runtime operation failed.'):
+            if message.encode() in buffer:
+                literals.add(message)
+        for executable in ('bootctl', 'cryptsetup', 'dd', 'dmsetup', 'findmnt', 'ip', 'lsblk',
+                           'mount', 'sfdisk', 'sync', 'systemctl', 'systemd-repart', 'udevadm', 'umount'):
+            message = 'Update command failed: '+executable
+            if message.encode() in buffer:
+                literals.add(message)
+        for module in ('factory', 'update', 'release', 'runtime'):
             tree = ast.parse((PROJECT/'lanrith'/(module+'.py')).read_text())
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'require' and len(node.args)>1:
@@ -264,6 +274,16 @@ class Guest:
             if b'fail' in line.lower() or b'timed out' in line.lower():
                 units.update(match.decode() for match in re.findall(
                     rb'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', line))
+        # Prompts consume the raw buffer, including initrd messages preceding
+        # recovery enrollment. Keep only bounded, public diagnostic categories
+        # across those prompts so a later failure retains its original cause.
+        previous = self.observed_diagnostics
+        flags = {name: present or previous.get('flags', {}).get(name, False)
+                 for name, present in flags.items()}
+        literals.update(previous.get('literal_errors', []))
+        units.update(previous.get('failed_units', []))
+        self.observed_diagnostics = {'flags': flags, 'literal_errors': sorted(literals)[:32],
+                                     'failed_units': sorted(units)[:32]}
         return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
             'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(buffer).hexdigest()},sort_keys=True)
 
@@ -294,6 +314,8 @@ class Guest:
         while time.monotonic() < deadline:
             release.require(self.process.poll() is None, 'Guest exited before SSH became ready (status '+
                             str(self.process.returncode)+'): '+self.diagnostic())
+            release.require(not re.search(rb'(?:You are in|Entering) emergency mode', self.buffer, re.IGNORECASE),
+                            'Installed boot entered emergency mode: '+self.diagnostic())
             command = ('sudo sh -c '+shlex.quote(
                 'test -s /run/lanrith/boot.json && lanrith-runtime health >/dev/null')
                 if healthy else 'sudo id -u')
@@ -392,19 +414,25 @@ def root(guest, script, **kwargs):
 
 def boot(guest, *, manual=False, first=False):
     guest.start()
+    def expect(pattern, answer):
+        event = guest.expect_any([pattern, rb'(?:You are in|Entering) emergency mode'])
+        release.require(event == 0, 'Installed initrd entered emergency mode: '+guest.last_diagnostic)
+        guest.serial.sendall(answer.encode()+b'\r')
     if manual:
         if first:
-            guest.expect(rb'State encryption passphrase .*: ', PASSPHRASE)
-            guest.expect(rb'Repeat state encryption passphrase: ', PASSPHRASE)
+            expect(rb'State encryption passphrase .*: ', PASSPHRASE)
+            expect(rb'Repeat state encryption passphrase: ', PASSPHRASE)
         else:
-            guest.expect(rb'(?:Please enter passphrase|Please enter password|Password:).*', PASSPHRASE)
+            expect(rb'(?:Please enter passphrase|Please enter password|Password:).*', PASSPHRASE)
     if first:
         if manual:
             # Creating the LUKS volume and unlocking it for the root system
             # are separate operations. Recovery enrollment can ask again.
             for _ in range(8):
                 event = guest.expect_any([rb'Type RECOVERY-KEY-STORED[^\r\n]*: ',
-                    rb'Please enter (?:current )?(?:passphrase|password)[^\r\n]*: ?'])
+                    rb'Please enter (?:current )?(?:passphrase|password)[^\r\n]*: ?',
+                    rb'(?:You are in|Entering) emergency mode'])
+                release.require(event != 2, 'Installed initrd entered emergency mode: '+guest.last_diagnostic)
                 if event == 0:
                     guest.serial.sendall(b'RECOVERY-KEY-STORED\r')
                     break
@@ -412,8 +440,61 @@ def boot(guest, *, manual=False, first=False):
             else:
                 raise release.ReleaseError('Manual state boot repeated too many unlock prompts.')
         else:
-            guest.expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
+            expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
     guest.ready()
+
+
+def provisioning_failure(value, base, initrd, work, secret):
+    """An error after creating valid encrypted state must remain in the initrd."""
+    work.mkdir(mode=0o700)
+    assembly = work/'image'
+    build.assembly(value, base, assembly, version='0.1.0', sequence=12,
+        certificate=secret/'test.crt', private_key=secret/'test.key',
+        serial_hash=secret/'serial.hash', initrd_base=initrd)
+    unit = assembly/'mkosi.images/initrd/mkosi.extra/usr/lib/systemd/system/lanrith-factory.service'
+    with unit.open('a') as stream:
+        stream.write('ExecStartPost=/usr/bin/false\n')
+    build.run(assembly)
+    disk = work/'installed.raw'
+    shutil.copyfile(assembly/'output/lanrith_12.raw', disk)
+    with disk.open('r+b') as stream:
+        stream.truncate(40*1024**3)
+    guest = Guest(work/'guest', secret, disk, tpm=True)
+    print('Native VM: verifying a provisioning failure prevents switch-root.', flush=True)
+    try:
+        guest.start()
+        event = guest.expect_any([rb'(?:You are in|Entering) emergency mode',
+                                 rb'Type RECOVERY-KEY-STORED[^\r\n]*: '])
+        release.require(event == 0, 'Failed provisioning reached root recovery enrollment.')
+        # A failed target alone previously let the distribution's switch-root
+        # service proceed. Observe beyond normal root startup, including sshd,
+        # without authenticating or recording console payloads.
+        deadline = time.monotonic()+180
+        while time.monotonic() < deadline:
+            release.require(guest.process.poll() is None and not guest.console.closed,
+                            'Provisioning failure reset or stopped the guest.')
+            release.require(b'RECOVERY-KEY-STORED' not in guest.buffer,
+                            'Failed provisioning continued into the installed root.')
+            try:
+                with socket.create_connection(('127.0.0.1', guest.port), timeout=0.5) as client:
+                    client.settimeout(0.5)
+                    release.require(not client.recv(255).startswith(b'SSH-'),
+                                    'Failed provisioning exposed installed SSH administration.')
+            except OSError:
+                pass
+            time.sleep(1)
+    finally:
+        guest.close()
+    table = json.loads(run('sfdisk', '--json', str(disk)))['partitiontable']
+    state = [part for part in table['partitions'] if part['type'].lower() ==
+             '4d21b016-b534-45c2-a9fb-5c16e091fd2d']
+    release.require(len(table['partitions']) == 8 and len(state) == 1 and table['sectorsize'] == 512,
+                    'The injected failure did not follow completed slot and state provisioning.')
+    with disk.open('rb') as stream:
+        stream.seek(state[0]['start']*512)
+        release.require(stream.read(6) == b'LUKS\xba\xbe', 'The failure probe did not create encrypted state.')
+    shutil.rmtree(work)
+    print('Native VM: completed provisioning failed closed before switch-root.', flush=True)
 
 
 def qualify(value, base, initrd, work, secret, *, manual=False):
@@ -545,12 +626,18 @@ done''')
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10 and
                         root(guest, STATE).stdout == state, 'Failed candidate did not fall back with populated state intact.')
+        guest.close()
+        # The accepted synthetic disk is no longer needed. Reclaim it before
+        # constructing the independent provisioning-failure probe.
+        disk.unlink()
+        provisioning_failure(value, base, initrd, work/'provisioning-failure', secret)
         return {'profile': 'tpm2-ab', 'result': 'pass', 'checks': ['factory-install-readback',
             'secure-boot', 'dm-verity', 'tpm2-state-encryption', 'recovery-enrollment', 'ssh-pam-administration',
             'automatic-boot-observation',
             'optional-services-inactive', 'one-shot-upgrade', 'fallback-protection', 'unaccepted-reboot-fallback',
             'explicit-acceptance', 'replay-rejection', 'tamper-rejection', 'interrupted-staging',
-            'failed-health-fallback', 'populated-state-upgrade-and-rollback']}
+            'failed-health-fallback', 'populated-state-upgrade-and-rollback',
+            'initrd-provisioning-failure-boundary']}
     finally:
         guest.close()
 

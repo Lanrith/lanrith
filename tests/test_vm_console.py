@@ -1,12 +1,46 @@
 """Slow qualification operations cannot back up the guest's serial console."""
 
+import json
 import socket
+import threading
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
-from vm import SerialReader
+from vm import Guest, SerialReader, boot
+from lanrith.release import ReleaseError
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_emergency_mode_stops_boot_before_sending_credentials_or_attempting_ssh(self):
+        for manual, first in ((False, True), (True, True), (True, False)):
+            with self.subTest(manual=manual, first=first):
+                guest = Mock()
+                guest.expect_any.return_value = 1
+                guest.last_diagnostic = '{"flags":{"emergency-mode":true}}'
+                with self.assertRaises(ReleaseError):
+                    boot(guest, manual=manual, first=first)
+                guest.serial.sendall.assert_not_called()
+                guest.ready.assert_not_called()
+
+    def test_consuming_a_recovery_prompt_preserves_only_safe_initrd_failure_categories(self):
+        guest = Guest.__new__(Guest)
+        guest.console = SimpleNamespace(condition=threading.Condition(), data=(
+            b'Failed to start lanrith-factory.service\nFactory installation failed closed.\n'
+            b'disposable-recovery-key-never-log-this\nType RECOVERY-KEY-STORED: '))
+        guest.qmp = None
+        guest.qmp_events = []
+        guest.observed_diagnostics = {}
+        guest.diagnostic()
+        guest.buffer = b'Failed to start systemd-boot-check-no-failures.service\n'
+        encoded = guest.diagnostic()
+        value = json.loads(encoded)
+        self.assertEqual(value['failed_units'], ['lanrith-factory.service',
+                                                'systemd-boot-check-no-failures.service'])
+        self.assertEqual(value['literal_errors'], ['Factory installation failed closed.'])
+        self.assertTrue(value['flags']['recovery-prompt'])
+        self.assertNotIn('disposable-recovery-key', encoded)
+
     def test_console_drains_without_an_expect_call_and_retains_bounded_output(self):
         receiving, sending = socket.socketpair()
         receiving.settimeout(0.05)

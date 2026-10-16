@@ -83,7 +83,8 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(artifact['size'], (directory/'security.json').stat().st_size)
 
     def test_incomplete_stale_and_wrong_subject_native_reports_are_rejected(self):
-        for alteration in ('subject', 'stale', 'missing-failure-path', 'missing-automatic-observation'):
+        for alteration in ('subject', 'stale', 'missing-failure-path', 'missing-automatic-observation',
+                           'missing-provisioning-failure-boundary'):
             with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
                 directory, project, now, native = self.fixture(Path(temporary))
                 if alteration == 'subject':
@@ -92,6 +93,8 @@ class QualificationTests(unittest.TestCase):
                     native['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
                 elif alteration == 'missing-failure-path':
                     native['profiles'][0]['checks'].remove('interrupted-staging')
+                elif alteration == 'missing-provisioning-failure-boundary':
+                    native['profiles'][0]['checks'].remove('initrd-provisioning-failure-boundary')
                 else:
                     native['profiles'][0]['checks'].remove('automatic-boot-observation')
                 (directory/'native-qualification.json').write_bytes(release.canonical(native))

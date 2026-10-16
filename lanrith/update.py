@@ -138,26 +138,58 @@ def root_disk(mountpoint='/'):
     return disks.pop(), numbers
 
 
-def geometry(disk):
+def geometry(disk, *, sysfs=Path('/sys/class/block')):
+    # Partition GUIDs and labels in udev can still describe the pre-repartition
+    # disk after its kernel devices are ready. Read identity from the GPT itself;
+    # use the kernel view for device numbers, capacity and in-use detection.
+    table = json.loads(command(['sfdisk', '--json', disk]))['partitiontable']
+    require(table.get('label') == 'gpt' and table.get('device') == disk and
+            table.get('unit') == 'sectors' and table.get('sectorsize') in (512, 4096),
+            'Cannot bind GPT geometry to the observed disk.')
+    entries = table.get('partitions', [])
+    require(isinstance(entries, list) and 1 <= len(entries) <= 128 and
+            all(isinstance(part, dict) and isinstance(part.get('node'), str) for part in entries),
+            'GPT partition geometry is malformed.')
+    partitions = {part['node']: part for part in entries}
+    require(len(partitions) == len(entries), 'GPT contains duplicate partition devices.')
     data = json.loads(command(['lsblk', '--json', '--bytes', '--paths', '--output',
-                              'NAME,TYPE,PKNAME,PARTTYPE,PARTLABEL,PARTN,PARTUUID,SIZE,MOUNTPOINTS', disk]))
+                              'NAME,TYPE,PKNAME,SIZE,MOUNTPOINTS', disk]))
     result, pending = [], list(data.get('blockdevices', []))
+    seen = set()
+    numbers = set()
     while pending:
         device = pending.pop()
         pending.extend(device.get('children', []))
         if device.get('type') != 'part':
             continue
+        name = device.get('name')
+        require(name in partitions and name not in seen and device.get('pkname') == disk,
+                'Kernel partition devices differ from the selected GPT.')
+        seen.add(name)
+        part = partitions[name]
+        kernel_device = sysfs/Path(name).name
+        number = (kernel_device/'partition').read_text().strip()
+        require(number.isdecimal() and 1 <= int(number) <= 128 and int(number) not in numbers,
+                'Kernel partition numbers are invalid or duplicated.')
+        number = int(number)
+        numbers.add(number)
+        require(type(part.get('size')) is int and part['size'] > 0 and
+                type(device.get('size')) is int and device['size'] == part['size']*table['sectorsize'],
+                'Kernel partition capacity differs from the selected GPT.')
+        require(all(isinstance(part.get(key), str) and re.fullmatch(UUID, part[key].lower())
+                    for key in ('type', 'uuid')), 'GPT partition identities are malformed.')
         descendants, busy = [device], False
         while descendants:
             child = descendants.pop()
             busy = busy or any(child.get('mountpoints') or [])
             descendants.extend(child.get('children', []))
-        holders = Path('/sys/class/block')/Path(device['name']).name/'holders'
+        holders = kernel_device/'holders'
         busy = busy or holders.is_dir() and any(holders.iterdir())
-        result.append({'disk': device.get('pkname'), 'number': device.get('partn'),
-                       'type': device.get('parttype') or '', 'label': device.get('partlabel'),
-                       'uuid': device.get('partuuid'),
+        result.append({'disk': device.get('pkname'), 'device': name, 'number': number,
+                       'type': part['type'].lower(), 'label': part.get('name'),
+                       'uuid': part['uuid'].lower(),
                        'size': device.get('size'), 'mounted': bool(busy)})
+    require(seen == set(partitions), 'A GPT partition has no matching kernel device.')
     return result
 
 
