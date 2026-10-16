@@ -40,5 +40,6 @@ jobs:
           name: unsigned-package-qualification
           path: |
             ${{ runner.temp }}/lanrith-output/*
+            ${{ runner.temp }}/lanrith-work/packages/*
           if-no-files-found: warn
           retention-days: 7

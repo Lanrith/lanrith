@@ -132,6 +132,15 @@ def main():
     for component in ('vpp', 'unbound', 'tayga'):
         extract_packages(image(component, args.work, inputs), packages)
     builder = image('mkosi', args.work, inputs)
+    # Retain public package outputs and the exact tools before filesystem
+    # assembly, so a later failure can be reproduced without recompilation.
+    checkpoint = {'schema':1,'qualification_only':True,'source_commit':os.environ.get('GITHUB_SHA'),
+        'inputs_sha256':file_record(PROJECT/'build-inputs.json')['sha256'],
+        'packages':{path.name:file_record(path) for path in sorted(packages.iterdir()) if path.is_file()}}
+    (args.output/'package-checkpoint.json').write_bytes(canonical(checkpoint))
+    shutil.copyfile(args.work/'custom-security.json',args.output/'custom-security.json')
+    run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
+    run('docker', 'save', '--output', str(args.output / 'builder.tar'), builder)
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',
         '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
         '-v', str(args.output)+':/output', builder,
@@ -190,9 +199,6 @@ def main():
     run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
         '-v', str(args.output)+':/output', builder, 'python3', '/source/scripts/base-evidence.py',
         '--directory', '/output', '--version', version)
-    # Export this exact builder. The publishing job binds the registry digest into provenance.
-    run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
-    run('docker', 'save', '--output', str(args.output / 'builder.tar'), builder)
     import tarfile
     with tarfile.open(args.output/'tools.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT) as archive:
         for name in ('lanrith', 'scripts', 'security', 'mkosi', 'pyproject.toml', 'requirements.txt', 'LICENSE'):
