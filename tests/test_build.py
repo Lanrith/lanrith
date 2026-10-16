@@ -11,6 +11,25 @@ from lanrith.release import ReleaseError
 
 
 class AssemblyTests(unittest.TestCase):
+    def test_selected_serial_administration_activates_its_recovery_guarded_watchdog(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            build.assembly(value, base, root/'disabled', version='0.1.0', sequence=9)
+            unit = 'lanrith-serial-idle-watchdog.service'
+            self.assertFalse((root/'disabled/mkosi.extra/etc/systemd/system'/unit).is_symlink())
+            value['administration']['serial'] = {'enabled': True, 'tty': 'ttyS0'}
+            provision = root/'serial.hash'
+            provision.write_text('scrypt:32768:8:1:'+'1'*32+':'+'2'*64+'\n')
+            provision.chmod(0o600)
+            build.assembly(value, base, root/'enabled', version='0.1.0', sequence=10, serial_hash=provision)
+            overlay = root/'enabled/mkosi.extra'
+            self.assertEqual((overlay/'etc/systemd/system'/unit).readlink(), Path('/usr/lib/systemd/system')/unit)
+            self.assertIn(unit, (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
+            self.assertIn('After=lanrith-recovery-key.service', (overlay/'usr/lib/systemd/system'/unit).read_text())
+
     @unittest.skipUnless(shutil.which('mkosi'), 'Run in the matching mkosi builder for native configuration checks.')
     def test_pinned_mkosi_accepts_root_and_initrd_configuration(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')

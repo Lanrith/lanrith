@@ -166,6 +166,32 @@ def accepted_boot(current, expected, esp):
     return stable
 
 
+def boot_esp(installed, *, disk=None):
+    """Resolve the mounted ESP and bind it to the observed verified-root disk."""
+    selected = installed.get('esp', 'auto')
+    esp = Path(command(['bootctl', '--print-esp-path']).strip() if selected == 'auto' else selected)
+    require(esp.is_absolute() and esp.resolve() == esp and esp.is_dir() and
+            esp.stat().st_uid == 0 and not esp.stat().st_mode & 0o022,
+            'EFI mount path is unsafe.')
+    # Crossing the automount first ensures findmnt observes vfat, not autofs.
+    require((esp/'EFI').is_dir() and esp.is_mount(), 'EFI filesystem must be mounted.')
+    mount = json.loads(command(['findmnt', '--json', '--mountpoint', str(esp), '--output', 'SOURCE,FSTYPE']))
+    rows = mount.get('filesystems', [])
+    require(len(rows) == 1 and rows[0].get('fstype') == 'vfat' and
+            isinstance(rows[0].get('source'), str) and rows[0]['source'].startswith('/dev/'),
+            'EFI filesystem is not a mounted FAT block partition.')
+    device = str(Path(rows[0]['source']).resolve())
+    partition = json.loads(command(['lsblk', '--json', '--nodeps', '--paths', '--output',
+                                   'NAME,TYPE,PKNAME,PARTTYPE', device])).get('blockdevices', [])
+    if disk is None:
+        disk, _ = root_disk()
+    require(len(partition) == 1 and partition[0].get('name') == device and
+            partition[0].get('type') == 'part' and partition[0].get('pkname') == disk and
+            (partition[0].get('parttype') or '').lower() == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b',
+            'EFI partition differs from the verified root disk.')
+    return esp
+
+
 def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
     """Do not overwrite the last accepted fallback from an unaccepted running slot."""
     data = read(variable, 4096)
@@ -190,7 +216,7 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
             'Update must be an exclusive root-owned inbox directory.')
     require(command(['systemctl', 'is-active', 'boot-complete.target']).strip() == 'active',
             'Running boot has not completed acceptance.')
-    esp = Path(installed['esp'])
+    esp = boot_esp(installed)
     current = Path(command(['bootctl', '--print-stub-path']).strip())
     accepted = accepted_boot(current, installed['uki_name'], esp)
     lock_path = Path(installed.get('lock_path', '/run/lock/lanrith-update.lock'))
@@ -264,7 +290,7 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
     from .release import document, canonical
     manifest = document(canonical(manifest))
     require(manifest['purpose'] == 'update', 'Only update payloads can be promoted.')
-    esp = Path(installed['esp'])
+    esp = boot_esp(installed)
     require(esp.is_mount(), 'EFI filesystem must be mounted before upload admission.')
     disk, active = root_disk()
     limits = upload_limits(manifest, installed, geometry(disk), disk=disk,

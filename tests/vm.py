@@ -209,8 +209,8 @@ class Guest:
                 pass
         release.require(self.process.poll() is not None, 'Factory VM did not power off: '+self.diagnostic())
 
-    def ssh(self, command, *, success=True, timeout=180):
-        result = subprocess.run(self.ssh_arguments(command), stdin=subprocess.DEVNULL,
+    def ssh(self, command, *, success=True, timeout=180, agent=True):
+        result = subprocess.run(self.ssh_arguments(command, agent=agent), stdin=subprocess.DEVNULL,
                                 capture_output=True, env=self.environment, timeout=timeout)
         if success:
             release.require(result.returncode == 0, 'Guest SSH operation failed: '+
@@ -221,7 +221,7 @@ class Guest:
         deadline = time.monotonic()+600
         while time.monotonic() < deadline:
             release.require(self.process.poll() is None, 'Guest exited before SSH became ready.')
-            command = 'sudo -n lanrith-runtime publish' if healthy else 'sudo -n id -u'
+            command = 'sudo lanrith-runtime publish' if healthy else 'sudo id -u'
             try:
                 if self.ssh(command, success=False, timeout=20).returncode == 0:
                     return
@@ -316,7 +316,7 @@ journalctl --quiet --no-pager -t lanrith-qualification | grep -q synthetic-persi
 
 
 def root(guest, script, **kwargs):
-    return guest.ssh('sudo -n sh -c '+shlex.quote(script), **kwargs)
+    return guest.ssh('sudo sh -c '+shlex.quote(script), **kwargs)
 
 
 def boot(guest, *, manual=False, first=False):
@@ -376,7 +376,9 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
             medium.unlink()
             shutil.rmtree(work/'factory')
         shutil.rmtree(assembly)
-        guest.ssh('sudo -n lanrith-runtime accept 9')
+        release.require(guest.ssh('sudo id -u', agent=False, success=False).returncode != 0,
+                        'Root administration succeeded without the forwarded test agent.')
+        guest.ssh('sudo lanrith-runtime accept 9')
         root(guest, '''set -eu
 mkdir -p /var/lib/lanrith/qualification-state /var/lib/kea
 printf 'address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\\n192.168.10.123,02:00:00:00:02:01,,3600,4102444800,1,0,0,synthetic,0,\\n' > /var/lib/kea/kea-leases4.csv
@@ -411,28 +413,28 @@ done''')
         third_assembly, _, third = image(failed_value, base, initrd, work, secret, 11)
         shutil.rmtree(third_assembly)
         second_path, third_path = upload(guest, second), upload(guest, third)
-        guest.ssh('sudo -n lanrith-runtime promote '+second_path, timeout=900)
+        guest.ssh('sudo lanrith-runtime promote '+second_path, timeout=900)
         guest.close()
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'One-shot update did not boot the new deployment.')
         release.require(root(guest, STATE).stdout == state, 'Update changed populated state or host identity.')
-        rejected = guest.ssh('sudo -n lanrith-runtime promote '+third_path, success=False, timeout=900)
+        rejected = guest.ssh('sudo lanrith-runtime promote '+third_path, success=False, timeout=900)
         release.require(rejected.returncode != 0 and b'Accept the running boot as default' in rejected.stderr,
                         'An unaccepted update could overwrite the last accepted fallback.')
         guest.close()
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 9,
                         'Unaccepted one-shot boot replaced the accepted default.')
-        guest.ssh('sudo -n bootctl set-oneshot lanrith_10.efi')
+        guest.ssh('sudo bootctl set-oneshot lanrith_10.efi')
         guest.close()
         boot(guest)
-        guest.ssh('sudo -n lanrith-runtime accept 10')
+        guest.ssh('sudo lanrith-runtime accept 10')
         replay = upload(guest, first)
-        release.require(guest.ssh('sudo -n lanrith-runtime promote '+replay, success=False).returncode != 0,
+        release.require(guest.ssh('sudo lanrith-runtime promote '+replay, success=False).returncode != 0,
                         'The installed updater accepted a replay.')
         root(guest, 'printf tampered >> '+third_path+'/release.json')
-        release.require(guest.ssh('sudo -n lanrith-runtime promote '+third_path, success=False).returncode != 0,
+        release.require(guest.ssh('sudo lanrith-runtime promote '+third_path, success=False).returncode != 0,
                         'The installed updater accepted a tampered manifest.')
         guest.ssh('rm -rf -- '+third_path)
         third_path = upload(guest, third)
@@ -455,11 +457,11 @@ done''')
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10 and
                         root(guest, STATE).stdout == state, 'Accepted update or populated state did not persist.')
-        guest.ssh('sudo -n lanrith-runtime promote '+third_path, timeout=900)
+        guest.ssh('sudo lanrith-runtime promote '+third_path, timeout=900)
         guest.close()
         guest.start()
         guest.ready(healthy=False)
-        release.require(guest.ssh('sudo -n lanrith-runtime health', success=False).returncode != 0 and
+        release.require(guest.ssh('sudo lanrith-runtime health', success=False).returncode != 0 and
                         not (json.loads(guest.ssh('lanrith-runtime status').stdout).get('boot') or {}).get('accepted'),
                         'A failed-health candidate was accepted.')
         guest.close()

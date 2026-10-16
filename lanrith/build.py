@@ -59,7 +59,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,
                  'update_image_id': image_id, 'platform_version': version, 'deployment_sequence': sequence,
                  'uki_name': f'{image_id}_{sequence}.efi', 'state_directory': '/var/lib/lanrith',
-                 'certificate': '/usr/share/lanrith/owner.crt', 'esp': '/efi',
+                 'certificate': '/usr/share/lanrith/owner.crt', 'esp': 'auto',
                  'integration_health_units': integration['health_units'],
                  'configuration_sha256': digest, 'storage': value['hardware']['storage'],
                  'payload_limits': {'root': value['hardware']['storage']['root_mib']*1024*1024,
@@ -99,6 +99,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
         if value['services'].get(feature, {}).get('enabled'):
             required.append(unit)
+    if value['administration']['serial']['enabled']:
+        required.append('lanrith-serial-idle-watchdog.service')
     required = sorted(set(required))
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
@@ -160,13 +162,14 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         tty = value['administration']['serial'].get('tty', 'ttyS0')
         (units/'lanrith-serial-idle-watchdog.service').write_text(
             '[Unit]\nDescription=Expire idle serial administration\n'
+            'Requires=lanrith-recovery-key.service\nAfter=lanrith-recovery-key.service\n'
             f'Upholds=serial-getty@{tty}.service\n'
             'ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n'
             '\n[Service]\nType=exec\nExecStart=/usr/lib/lanrith/serial-idle-watchdog\n'
             'Restart=always\nRestartSec=2s\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n')
-        for unit in ('lanrith-serial-idle-watchdog.service', 'serial-getty@'+tty+'.service'):
-            path = wants/'multi-user.target.wants'/unit
-            path.symlink_to('/usr/lib/systemd/system/'+unit)
+        unit = 'serial-getty@'+tty+'.service'
+        path = wants/'multi-user.target.wants'/unit
+        path.symlink_to('/usr/lib/systemd/system/'+unit)
     if certificate is not None:
         require(certificate.is_file() and private_key.is_file(), 'Signing inputs are unavailable.')
         release.public_key(certificate)

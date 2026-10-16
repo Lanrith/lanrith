@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from .release import canonical, read, require, ReleaseError
-from .update import accepted_boot, command, promote, stage
+from .update import accepted_boot, boot_esp, command, promote, stage
 from . import factory
 
 
@@ -61,6 +61,8 @@ def health():
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
         if resolved['services'].get(feature, {}).get('enabled'):
             units.append(unit)
+    if resolved['administration']['serial']['enabled']:
+        units.append('lanrith-serial-idle-watchdog.service')
     for unit in units:
         require(command(['systemctl', 'is-active', unit]).strip() == 'active', 'Required service is not active.')
     for network in resolved['networks'].values():
@@ -82,7 +84,7 @@ def publish():
     expected = value['uki_name']
     if current.name != expected:
         command(['/usr/lib/systemd/systemd-bless-boot', 'good'])
-    stable = accepted_boot(current, expected, Path(value['esp']))
+    stable = accepted_boot(current, expected, boot_esp(value))
     boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     require(re.fullmatch(r'[0-9a-f-]{36}', boot_id), 'Invalid boot identity.')
     observation = {'schema': 1, 'accepted': True, 'boot_complete': True, 'boot_id': boot_id,
