@@ -1,17 +1,12 @@
 [Unit]
-Requires=lanrith-grow-var.service
-After=lanrith-grow-var.service
-Description=Verify the router network base and lab NAT64 path
-Requires=systemd-networkd.service nftables.service vpp.service lanrith-vpp-x710.service lanrith-grow-var.service lanrith-service-namespace.service lanrith-vpp-service-attachment.service lanrith-nat64.service lanrith-nat64-internal.service suricata.service unbound.service named.service chrony.service lanrith-prometheus-node-exporter.service
-After=systemd-networkd.service nftables.service vpp.service lanrith-vpp-x710.service lanrith-grow-var.service lanrith-service-namespace.service lanrith-vpp-service-attachment.service lanrith-nat64.service lanrith-nat64-internal.service suricata.service unbound.service named.service chrony.service lanrith-prometheus-node-exporter.service
-Before=lanrith-boot-health.service boot-complete.target
+Description=Verify the owner-declared router hardware
+Requires=systemd-networkd.service
+After=systemd-networkd.service systemd-udev-trigger.service vpp.service lanrith-vpp-device.service
+Before=lanrith-health.service boot-complete.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-Environment=HOMELAB_ROUTER_BOOT_TIMEOUT_SECONDS=120
-# The script shares this 120-second readiness deadline with nested verifiers.
-# Systemd allows ten seconds to terminate a stuck child after that deadline.
+Environment=LANRITH_BOOT_TIMEOUT_SECONDS=120
+ExecStart=/bin/sh -ec '. /usr/lib/lanrith/network-checks.sh; router_wait_for /usr/lib/lanrith/router-network-status'
 TimeoutStartSec=130s
-TimeoutStopSec=10s
-ExecStart=/usr/lib/lanrith/verify-network-base

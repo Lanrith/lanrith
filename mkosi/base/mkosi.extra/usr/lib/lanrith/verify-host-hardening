@@ -2,7 +2,7 @@
 # Verify the signed service-state and local kernel attack-surface policy.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/assertions.sh
 
 # Boot counting is safe only when a healthy candidate can remove its tries
@@ -32,23 +32,26 @@ if [ "${lanrith_policy_enforcement_enabled:-0}" = 1 ]; then
   done
   test "$(stat -c '%U:%a' /run/router-policy-reader/credentials.json)" = 'router-policy-reader:600'
   test "$(stat -c '%U:%a' /var/lib/lanrith/policy-agent/state.json)" = 'root:600'
-  ! nft list table inet homelab_policy_boot >/dev/null 2>&1
+  ! nft list table inet lanrith_policy_boot >/dev/null 2>&1
 else
   for unit in lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket; do
     [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
     require_inactive_service "$unit"
   done
 fi
-test -x /usr/lib/lanrith/serial-idle-watchdog
-systemctl is-enabled --quiet lanrith-serial-idle-watchdog.service
-# Recovery login has its own getty; no kernel console may write to the UART.
-reject_match -Eq '^ttyS[0-9]+[[:space:]]' /proc/consoles
-test "$(systemctl show -P TTYPath serial-getty@ttyS0.service)" = /dev/ttyS0
-for setting in forward_to_console forward_to_kmsg forward_to_wall; do
-  grep -Fqw "systemd.journald.$setting=0" /proc/cmdline
-done
-grep -Fqx 'auth required pam_exec.so quiet quiet_log seteuid expose_authtok /usr/lib/lanrith/verify-serial-passphrase' /etc/pam.d/login
-grep -Fqx 'auth required pam_permit.so' /etc/pam.d/login
+if [ "${lanrith_serial_administration_enabled:-0}" = 1 ]; then
+  printf '%s\n' "$lanrith_serial_tty" | grep -Eq '^(ttyS|ttyUSB|ttyAMA|hvc)[0-9]+$'
+  test -x /usr/lib/lanrith/serial-idle-watchdog
+  systemctl is-enabled --quiet lanrith-serial-idle-watchdog.service
+  # Recovery login has its own getty; no kernel console may write to the UART.
+  reject_match -Eq "^$lanrith_serial_tty[[:space:]]" /proc/consoles
+  test "$(systemctl show -P TTYPath "serial-getty@$lanrith_serial_tty.service")" = "/dev/$lanrith_serial_tty"
+  for setting in forward_to_console forward_to_kmsg forward_to_wall; do
+    grep -Fqw "systemd.journald.$setting=0" /proc/cmdline
+  done
+  grep -Fqx 'auth required pam_exec.so quiet quiet_log seteuid expose_authtok /usr/lib/lanrith/verify-serial-passphrase' /etc/pam.d/login
+  grep -Fqx 'auth required pam_permit.so' /etc/pam.d/login
+fi
 
 if [ "${lanrith_discovery_enabled:-0}" = 1 ]; then
   for unit in avahi-daemon.service avahi-daemon.socket dbus-org.freedesktop.Avahi.service discovery-bridge-publisher.service discovery-bridge-collector.service; do

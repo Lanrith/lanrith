@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
 from lanrith import archive as handoff
+from lanrith import advisories, embedded
+from lanrith.release import ReleaseError
 
 
 def main():
@@ -26,8 +28,11 @@ def main():
     args = parser.parse_args()
     def run(*argv, check=True, **kwargs):
         return subprocess.run(argv, check=check, stdin=subprocess.DEVNULL, **kwargs)
-    releases = json.loads(run('gh', 'api', 'repos/Lanrith/lanrith/releases?per_page=100',
-                              capture_output=True, text=True).stdout)
+    pages = json.loads(run('gh', 'api', '--paginate', '--slurp',
+        'repos/Lanrith/lanrith/releases?per_page=100', capture_output=True, text=True).stdout)
+    require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
+            'Retained release enumeration is malformed.')
+    releases = [item for page in pages for item in page]
     versions = [item for item in releases if not item['draft'] and
                 __import__('re').fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
     if os.environ.get('GITHUB_OUTPUT'):
@@ -47,7 +52,7 @@ def main():
                 '--bundle', str(work/'selection.json.intoto.jsonl'), '--repo', 'Lanrith/lanrith',
                 '--signer-workflow', 'Lanrith/lanrith/.github/workflows/build-base.yml',
                 '--source-digest', selection['source_commit'], '--signer-digest', selection['signer_commit'],
-                '--deny-self-hosted-runners')
+                '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners')
             names = ['inventory.json', 'package-sources.json', 'policy.json', 'security.json', 'go-binaries.tar.gz']
             for name in names:
                 run('gh', 'release', 'download', item['tag_name'], '--repo', 'Lanrith/lanrith', '--dir', str(work), '--pattern', name)
@@ -68,9 +73,9 @@ def main():
             # A positive scan does not execute binaries. The archive is already digest-bound.
             binaries = work/'binaries'
             binaries.mkdir()
-            members = handoff.extract(work/'go-binaries.tar.gz', binaries, entries=9,
+            members = handoff.extract(work/'go-binaries.tar.gz', binaries, entries=10,
                                      maximum_file=1024*1024*1024, maximum_size=2*1024*1024*1024)
-            require(members == {'alloy', 'prometheus-node-exporter', 'discovery-bridge',
+            require(members == {'alloy', 'alloy-beyla', 'prometheus-node-exporter', 'discovery-bridge',
                 'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
                 'router-policy-check', 'router-policy-status', 'router-policy-recover'},
                 'Retained binary scan coverage is incomplete.')
@@ -84,13 +89,33 @@ def main():
                 if not all(record.get('ghsa_id') in patched for record in feed):
                     failures.append('native-upstream-advisory')
             old = json.loads((work/'security.json').read_text())
+            require(embedded.verify(binaries/'alloy', binaries/'alloy-beyla',
+                    old['custom']['components']['alloy']['beyla']['binary_sha256']) == old['embedded_beyla'],
+                    'Retained Beyla scan subject differs from the deployed embedded payload.')
             queries = old['custom']['components']['pam-rssh']['queries']
-            request = urllib.request.Request('https://api.osv.dev/v1/querybatch',
-                data=json.dumps({'queries': queries}).encode(), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(request, timeout=60) as response:
-                result = json.load(response)['results']
-            if len(result) != len(queries) or any(entry.get('vulns') for entry in result):
+            try:
+                advisories.assess(queries)
+            except (ReleaseError, ValueError, OSError):
                 failures.append('pam-dependencies')
+            try:
+                advisories.assess(old['custom']['components']['alloy']['java_agent']['queries'])
+            except (ReleaseError, ValueError, OSError, KeyError):
+                failures.append('alloy-embedded-java')
+            try:
+                advisories.assess(advisories.npm_queries(old['custom']['components']['alloy']['npm_modules']))
+            except (ReleaseError, ValueError, OSError, KeyError):
+                failures.append('alloy-ui-dependencies')
+            alloy = old['custom']['components']['alloy']
+            for repository in ('grafana/alloy', 'grafana/beyla', 'grafana/opentelemetry-ebpf-instrumentation',
+                               'open-telemetry/opentelemetry-ebpf-instrumentation'):
+                feed = json.loads(run('gh', 'api', 'repos/'+repository+'/security-advisories', '--paginate',
+                                      capture_output=True, text=True).stdout)
+                require(isinstance(feed, list), 'Retained embedded-source advisory coverage is malformed.')
+                covered = alloy['source_fix_ancestry'] if repository.startswith('open-telemetry/') else {}
+                try:
+                    advisories.source_coverage(feed, covered)
+                except (ReleaseError, ValueError, KeyError):
+                    failures.append('alloy-embedded-source-advisory')
             report = {'schema': 1, 'result': 'fail' if failures else 'pass', 'inventory_sha256': inventory,
                       'platform_version': item['tag_name'], 'source_commit': os.environ['GITHUB_SHA'],
                       'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),

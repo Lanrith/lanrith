@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install --yes dpkg
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - id: scan
         name: Reassess retained inventories
         run: python3 scripts/security-audit.py --output "$RUNNER_TEMP/assessments"

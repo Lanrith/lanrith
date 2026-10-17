@@ -23,6 +23,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('release',type=Path)
     parser.add_argument('--certificate',type=Path,required=True)
+    parser.add_argument('--image-id', default='lanrith')
     parser.add_argument('--target',type=Path,required=True)
     parser.add_argument('--verify-only',action='store_true',help='Verify existing media without writing it')
     args=parser.parse_args()
@@ -32,7 +33,7 @@ def main():
                     re.fullmatch(r'/dev/disk/by-id/[A-Za-z0-9_.:+-]+',str(args.target)),
                     'Use a canonical release directory and a stable target identity.')
     release.require(args.certificate.resolve().parent != root, 'Supply controller trust independently of the release.')
-    manifest=release.verify(root,args.certificate,purpose='factory')
+    manifest=release.verify(root,args.certificate,purpose='factory',image_id=args.image_id)
     image=root/next(a['name'] for a in manifest['artifacts'] if a['role']=='disk')
     minimum=image.stat().st_size+sum(a['size'] for a in manifest['artifacts'])+256*1024*1024
     target=str(args.target.resolve())

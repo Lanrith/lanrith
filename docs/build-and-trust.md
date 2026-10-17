@@ -14,11 +14,63 @@ and tool/source inputs are pinned. Review the
 [SLSA assessment](../security/slsa-assessment.json) alongside actual run evidence;
 a signature alone does not establish Build L3.
 
+The assessment records every requirement in
+[SLSA v1.2](https://slsa.dev/spec/v1.2/build-requirements), including separate
+signing authority, fresh hosted jobs, cache isolation and enumerated caller
+parameters. Its workflow hashes must match the reviewed files. The native
+runner must pass against the exact filesystem and initrd before a hosted
+main release can record eligibility. Local and PR builds cannot enable it.
+Consumers then verify the signed qualification record, its native subjects
+and both file and OCI provenance. This is a project assessment, not a
+third-party certification. Current qualification scope is the x86-64 UEFI
+VM core with TPM2 and manual state encryption; other hardware and enabled
+advanced integrations require their own qualification.
+
+After changing a release workflow, reassess its controls and update the hashes
+in `security/slsa-assessment.json`. A stale assessment blocks publication.
+
 `platform.lock` pins the Lanrith repository, release, source commit, signer
 workflow commit, security workflow commit, manifest, all selected files and the
 matching builder digest. `gh attestation verify` enforces the repository,
 trusted workflow, exact source/signer commits, GitHub OIDC issuer and hosted
 runners. Replacing a mutable tag does not replace those trusted bytes.
+
+Alloy is built with its complete component registry, embedded UI and matching
+Beyla source. Reviewed dependency patches, supported compiler versions and
+unstripped Go symbols keep the binary scanner's coverage precise. The embedded
+Beyla executable is retained outside the router filesystem as an independent
+scan subject. Packaging and base admission both verify its digest and unique
+byte range inside the actual Alloy executable. The deployed image contains
+one embedded Beyla payload; it does not need a duplicate scan-only executable. UI, Cargo,
+Java and upstream-source advisory checks supplement Go and Debian coverage.
+The SBOM records these dependency graphs; package notices retain upstream
+licenses, including any reviewed correction for an omitted archive notice.
+
+Daily proposals refresh immutable Debian snapshots, qualified components and
+supported toolchain patches. Upstream source candidates appear in
+`docs/upstream-proposals.json`; their patches and behavior need review before
+the selected source revision changes. Proposals do not merge themselves or
+grant security exceptions. A source branch that is no longer supported blocks
+the resolver until its migration is reviewed.
+
+The Debian proposal uses the current UTC hour so security fixes do not wait for
+the next day's snapshot. Missing archive metadata blocks the proposal. For a
+focused security update, use `scripts/refresh-inputs.py --debian-only --snapshot
+YYYYMMDDTHHMMSSZ`; this retains component and toolchain selections. Future and
+backwards snapshot proposals are rejected. The build still authenticates the
+archive signatures and assesses the actual installed package inventory before
+an image can be published.
+
+The proposal job uses a GitHub App installed only on this repository, with
+Contents and Pull requests read/write access and no protection bypass. Store
+its numeric App ID as `LANRITH_UPDATE_APP_ID` and its existing private key as
+`LANRITH_UPDATE_APP_PRIVATE_KEY` in the `lanrith-updates` environment. Restrict
+that environment to protected `main`; it contains no image-signing authority.
+The action requests a short-lived token for this repository only. App-authored
+proposals trigger normal PR checks and still need an independent review.
+Keep default workflow permissions read-only and GitHub's shared option to
+create and approve PRs disabled. Missing App credentials block proposals
+clearly; they do not weaken protection or silently skip security updates.
 
 Admission also requires complete current scanner coverage, an inventory-bound
 successful assessment within 24 hours, no selected revoked digest, and passing
@@ -40,23 +92,66 @@ keys. The evidence job validates the owner signature and request identities
 without executing an image or builder. Its DSSE SLSA statement remains private;
 no public transparency log is used by default.
 
-For a local build, install the authenticated compiler and enter an isolated
-matching builder using your established secret-management process:
+For a local build, authenticate the compiler using the release's pinned file
+provenance. Download the platform files and their verification bundles into
+`platform/`. Install GitHub CLI and rootless Podman (or select `--engine docker`).
+Use existing keys from your established secret-management process:
 
 ```sh
-python3 -m lanrith build config.yaml \
-  --base platform/lanrith-base.tar.gz \
-  --initrd-base platform/lanrith-initrd-base.tar.gz \
-  --platform-lock platform.lock --platform-bundle platform \
-  --workspace work --output update --version 0.1.0 --sequence 1 \
-  --certificate /private/owner.crt --key /private/owner.key
+python3 scripts/build-local.py preflight \
+  --owner /private/config --platform /private/platform \
+  --request /private/build-request.json --sequence 1
+
+python3 scripts/build-local.py assemble \
+  --owner /private/config --platform /private/platform \
+  --request /private/build-request.json \
+  --work /private/work --output /private/release \
+  --boot-certificate /private/owner.crt --boot-key /private/owner.key
 ```
 
-Authenticate the compiler and builder before invoking this command. Local
-signing is appropriate when repository or environment protections cannot be
-enforced. Do not put keys, hashes, credentials or private configuration into a
-public repository, command arguments or CI logs.
+Review the exact request before assembly. If serial administration is enabled,
+supply `--serial-hash /private/serial.hash` to both commands. The hash is bound
+to the request; pass only its path. Preflight authenticates the files, security
+qualification and OCI builder. Assembly repeats those checks before reading
+keys, snapshots owner inputs, then runs mkosi with networking disabled. It
+retains independently verified `update/` and `factory/` directories. Keep the
+workspace private: it contains the effective owner configuration.
+
+Signing uses private tmpfs and an owned container. Cleanup stops that container
+before removing keys; an unavailable container engine retains the owned tmpfs
+for recovery. The local path does not claim hosted SLSA qualification for the
+owner image. Public platform provenance remains independently verified. Use a
+separate owner evidence authority for any deployment-evidence signing.
+
+Local signing is appropriate when repository or environment protections cannot
+be enforced. Do not put keys, hashes, credentials or private configuration into
+a public repository, command arguments or CI logs.
 
 The template checks actual private-repository and environment capabilities.
 It does not assume GitHub Enterprise. Public keyless owner provenance would
 expose repository identity and is outside the default private workflow.
+
+The Debian appliance installs only explicit packages and their required
+dependencies (`WithRecommends=no`). Build tools stay in the separate builder:
+UKI creation, EROFS creation and container tools are not runtime requirements.
+The deployed storage formats are EROFS, ext4 and FAT; Btrfs and alternative
+partition editors are omitted. Runtime disk installation and recovery retain
+`systemd-repart`, `sfdisk`, filesystem checks and encryption tools.
+
+Finalization removes package caches and databases, package-manager executables,
+manuals, examples, translations, Python bytecode caches and unused legacy
+initramfs files. Copyright, license and third-party notices remain, as do the
+C.UTF-8 locale, kernel modules, firmware supplied by the selected package set,
+and operational diagnostics. Full supported router services remain installed
+and inactive until selected; minimization does not remove optional features.
+Authenticated APT metadata, inventories and scan subjects are release evidence
+outside the deployed filesystem. The inventory describes the installed package
+closure before file pruning; `image-footprint.json` records payload pruning.
+Package and filesystem gates reject build tools and scan-only payloads, and
+native qualification tests the pruned image before publication.
+
+Debian's `freeradius-config` requires `make` to generate example certificates
+during package installation. The package inventory retains that dependency,
+but finalization removes the Make executable. Enabled RADIUS integrations
+supply their own reviewed credentials; they do not generate shared example
+certificates on the router. The filesystem gate checks this distinction.

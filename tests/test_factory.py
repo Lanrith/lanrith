@@ -11,6 +11,16 @@ from lanrith.update import GUIDS
 
 
 class FactorySelectionTests(unittest.TestCase):
+    def test_unbound_or_different_tpm_policy_is_rejected_even_with_a_valid_token(self):
+        valid = {'type': 'systemd-tpm2', 'tpm2-pcrs': [7]}
+        self.assertEqual(factory.enrollment_tokens({'tokens': {'0': valid}}, tpm_required=True), ['systemd-tpm2'])
+        self.assertEqual(factory.enrollment_tokens({'tokens': {}}, tpm_required=False), [])
+        for tokens in ({}, [], {'0': None}, {'0': {'type': 'systemd-recovery'}},
+                       *({'0': valid, '1': {**valid, 'tpm2-pcrs': pcrs}}
+                         for pcrs in (None, [], [0], [7, 11], ['7']))):
+            with self.subTest(tokens=tokens), self.assertRaises(ReleaseError):
+                factory.enrollment_tokens({'tokens': tokens}, tpm_required=True)
+
     def test_boot_disk_readonly_mount_holders_and_sector_constraints(self):
         disk = {'name': '/dev/synthetic-disk', 'type': 'disk', 'ro': False,
                 'log-sec': 512, 'size': 128*1024**3, 'mountpoints': [None],
@@ -46,17 +56,18 @@ class FactorySelectionTests(unittest.TestCase):
 
     def test_state_creation_uses_only_the_verified_disk_and_preserves_existing_state(self):
         installed, rows = self.fixture()
-        state = {'type': factory.VAR_GUID, 'number': 8, 'label': 'var', 'size': 64*1024**3}
+        state = {'type': factory.VAR_GUID, 'number': 8, 'device': '/dev/synthetic8',
+                 'label': 'var', 'size': 64*1024**3}
         capacity = json.dumps({'blockdevices': [{'ro': False, 'log-sec': 512, 'size': 128*1024**3}]})
-        listing = json.dumps({'blockdevices': [{'children': [{'type': 'part', 'partn': 8, 'name': '/dev/synthetic8'}]}]})
         with patch.object(factory, 'geometry', side_effect=[rows, rows+[state]]), \
-                patch.object(factory, 'command', side_effect=[capacity, listing, '']) as command, \
+                patch.object(factory, 'command', side_effect=[capacity, '']) as command, \
                 patch.object(factory, 'repartition') as repartition:
             factory.prepare_state(installed, '/dev/synthetic', {2, 3})
             repartition.assert_called_once_with(installed, '/dev/synthetic', installed_root=True)
             self.assertEqual(command.call_args.args[0], ['cryptsetup', 'isLuks', '/dev/synthetic8'])
         with patch.object(factory, 'geometry', return_value=rows+[state]), \
-                patch.object(factory, 'command', side_effect=[listing, '']), \
+                patch.object(factory, 'command', return_value='') as command, \
                 patch.object(factory, 'repartition') as repartition:
             factory.prepare_state(installed, '/dev/synthetic', {2, 3})
             repartition.assert_not_called()
+            command.assert_called_once_with(['cryptsetup', 'isLuks', '/dev/synthetic8'])

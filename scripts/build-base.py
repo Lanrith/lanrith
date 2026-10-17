@@ -87,7 +87,7 @@ def components(selection, destination):
             run('gh', 'attestation', 'verify', str(directory / name), '--bundle', str(directory / (name+'.intoto.jsonl')),
                 '--repo', pin['repository'], '--signer-workflow', pin['repository']+'/.github/workflows/build-release.yml',
                 '--source-digest', pin['source_commit'], '--signer-digest', pin['workflow_commit'],
-                '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--deny-self-hosted-runners')
+                '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners')
         require(any(path.suffix == '.deb' for path in directory.iterdir()), 'Component selection contains no packages.')
         for path in directory.glob('*.deb'):
             shutil.copyfile(path, destination / path.name)
@@ -114,22 +114,50 @@ def main():
     packages.mkdir()
     components(selection['component_releases'], packages)
     inputs = locks(PROJECT / 'builders/build-inputs.lock')
-    for key in ('DEBIAN_RELEASE_SHA256', 'DEBIAN_SECURITY_RELEASE_SHA256'):
-        snapshot = inputs['DEBIAN_SNAPSHOT']
-        archive, suite = ('debian-security', 'trixie-security') if 'SECURITY' in key else ('debian', 'trixie')
+    for key in ('DEBIAN_RELEASE_SHA256', 'DEBIAN_SECURITY_RELEASE_SHA256',
+                'DEBIAN_BOOKWORM_RELEASE_SHA256', 'DEBIAN_BOOKWORM_SECURITY_RELEASE_SHA256'):
+        prefix = 'DEBIAN_BOOKWORM' if 'BOOKWORM' in key else 'DEBIAN'
+        snapshot = inputs[prefix+('_SECURITY_SNAPSHOT' if 'SECURITY' in key else '_SNAPSHOT')]
+        suite = 'bookworm' if 'BOOKWORM' in key else 'trixie'
+        archive = 'debian'
+        if 'SECURITY' in key:
+            archive, suite = 'debian-security', suite+'-security'
         path = args.work / (key + '.Release')
         run('curl', '--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', str(path),
             f'https://snapshot.debian.org/archive/{archive}/{snapshot}/dists/{suite}/Release')
         require(file_record(path)['sha256'] == inputs[key], 'Debian snapshot Release differs from the reviewed lock.')
+    builder = image('mkosi', args.work, inputs)
+    # Exercise the pinned updater interface before the expensive source builds.
+    run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
+        '-w', '/source', builder, 'python3', '-m', 'unittest', 'discover',
+        '-s', 'tests', '-p', 'test_update.py', '-v')
     # Non-Debian packages and native PAM are produced and scanned by the same run.
     run(sys.executable, str(PROJECT / 'scripts/custom-packages.py'), '--output', str(packages),
         '--evidence', str(args.work / 'custom-security.json'))
     for component in ('vpp', 'unbound', 'tayga'):
         extract_packages(image(component, args.work, inputs), packages)
-    builder = image('mkosi', args.work, inputs)
+    # Retain public package outputs and the exact tools before filesystem
+    # assembly, so a later failure can be reproduced without recompilation.
+    checkpoint = {'schema':1,'qualification_only':True,'source_commit':os.environ.get('GITHUB_SHA'),
+        'inputs_sha256':file_record(PROJECT/'build-inputs.json')['sha256'],
+        'packages':{path.name:file_record(path) for path in sorted(packages.iterdir()) if path.is_file()}}
+    (args.output/'package-checkpoint.json').write_bytes(canonical(checkpoint))
+    shutil.copyfile(args.work/'custom-security.json',args.output/'custom-security.json')
+    run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
+    run('docker', 'save', '--output', str(args.output / 'builder.tar'), builder)
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
+        '-v', str(args.output)+':/output', builder,
+        'python3', '/source/tests/storage.py', '--work', '/work/storage-qualification',
+        '--result', '/output/storage-qualification.json')
     build = args.work / 'image'
     build.mkdir()
     shutil.copytree(PROJECT / 'mkosi/base', build, dirs_exist_ok=True)
+    version = (PROJECT / 'VERSION').read_text().strip()
+    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
+    platform = build/'mkosi.extra/usr/share/lanrith'
+    platform.mkdir(parents=True,exist_ok=True)
+    (platform/'platform-version').write_text(version+'\n')
     shutil.copytree(packages, build / 'mkosi.packages')
     pam = build / 'mkosi.extra/usr/lib/x86_64-linux-gnu/security/pam_rssh.so'
     pam.parent.mkdir(parents=True, exist_ok=True)
@@ -137,24 +165,14 @@ def main():
     notices = build/'mkosi.extra/usr/share/doc/pam-rssh/THIRD-PARTY-NOTICES'
     notices.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(packages/'pam-rssh.notices.txt', notices)
-    version = (PROJECT / 'VERSION').read_text().strip()
-    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
     package_list = json.loads((PROJECT / 'mkosi/packages.json').read_text())['packages']
-    (build / 'mkosi.conf').write_text(
-        '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
-        f'Snapshot={inputs["DEBIAN_SNAPSHOT"]}\n\n[Output]\nFormat=tar\n'
-        f'ImageId=lanrith\nImageVersion={version}\nOutput=lanrith-base\nOutputDirectory=/work/output\n'
-        'ManifestFormat=json\nCompressOutput=gz\n\n[Content]\nBootable=no\nPackages=' + ','.join(package_list) + '\n')
+    from lanrith.image import base_configuration, initrd_configuration
+    (build / 'mkosi.conf').write_text(base_configuration(inputs['DEBIAN_SNAPSHOT'], version, package_list))
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work) + ':/work', '-w', '/work/image', builder,
         'mkosi', '--force', 'build')
     initrd = args.work/'initrd-image'
     initrd.mkdir()
-    (initrd/'mkosi.conf').write_text(
-        '[Include]\nInclude=mkosi-initrd\n'
-        '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
-        f'Snapshot={inputs["DEBIAN_SNAPSHOT"]}\n'
-        '[Output]\nFormat=tar\nOutput=lanrith-initrd-base\nOutputDirectory=/work/output\nCompressOutput=gz\nManifestFormat=json\n'
-        '[Content]\nPackages=linux-image-amd64,python3,openssl,coreutils,util-linux,fdisk,dmsetup,e2fsprogs,cryptsetup-bin,systemd-cryptsetup,systemd-repart,tpm2-tools\n')
+    (initrd/'mkosi.conf').write_text(initrd_configuration(inputs['DEBIAN_SNAPSHOT']))
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work)+':/work', '-w', '/work/initrd-image',
         builder, 'mkosi', '--force', 'build')
     generated = args.work / 'output'
@@ -168,6 +186,8 @@ def main():
                            ('lanrith-initrd-base.tar.gz', 'lanrith-initrd-base.tar.gz'),
                            ('lanrith-base.manifest', 'inventory.json')):
         shutil.copyfile(generated / source, args.output / target)
+    shutil.copyfile(generated/'lanrith-base.apt-metadata', args.output/'apt-metadata')
+    shutil.copyfile(packages/'alloy-beyla.scan', args.output/'alloy-beyla.scan')
     shutil.copyfile(PROJECT / 'build-inputs.json', args.output / 'inputs.json')
     shutil.copyfile(args.work / 'custom-security.json', args.output / 'custom-security.json')
     with urllib.request.urlopen('https://security-tracker.debian.org/tracker/data/json', timeout=90) as response:
@@ -177,9 +197,8 @@ def main():
     run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
         '-v', str(args.output)+':/output', builder, 'python3', '/source/scripts/base-evidence.py',
         '--directory', '/output', '--version', version)
-    # Export this exact builder. The publishing job binds the registry digest into provenance.
-    run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
-    run('docker', 'save', '--output', str(args.output / 'builder.tar'), builder)
+    # The canonical scan archive retains this subject; the raw handoff is temporary.
+    (args.output/'alloy-beyla.scan').unlink()
     import tarfile
     with tarfile.open(args.output/'tools.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT) as archive:
         for name in ('lanrith', 'scripts', 'security', 'mkosi', 'pyproject.toml', 'requirements.txt', 'LICENSE'):
@@ -191,6 +210,14 @@ def main():
                                        'sbom': 'sbom.spdx.json', 'security': 'security.json', 'inputs': 'inputs.json',
                                        'tools': 'tools.tar.gz'})
     (args.output / 'release.json').write_bytes(canonical(manifest))
+    # Qualification has its own disposable authority and regular-file disks.
+    # No production key or owner configuration enters the public build.
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
+        '-v', str(args.output)+':/output', builder, 'python3', '/source/tests/vm.py',
+        '--base', '/output/lanrith-base.tar.gz', '--initrd-base', '/output/lanrith-initrd-base.tar.gz',
+        '--work', '/work/vm-qualification', '--result', '/output/native-qualification.json')
+    run(sys.executable, str(PROJECT/'scripts/qualify-base.py'), '--directory', str(args.output))
 
 
 if __name__ == '__main__':

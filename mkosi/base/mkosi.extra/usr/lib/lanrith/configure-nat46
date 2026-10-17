@@ -4,7 +4,7 @@
 # TUN and translator routes; forwarding remains owned by nftables.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/network-checks.sh
 
 interface=$lanrith_nat46_interface

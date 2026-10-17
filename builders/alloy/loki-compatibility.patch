@@ -1,0 +1,11 @@
+--- a/github.com/grafana/loki/v3/pkg/storage/chunk/cache/memcached_client.go
++++ b/github.com/grafana/loki/v3/pkg/storage/chunk/cache/memcached_client.go
+@@ -151,7 +151,7 @@
+ 		hostname:    cfg.Host,
+ 		service:     cfg.Service,
+ 		logger:      logger,
+-		provider:    dns.NewProvider(logger, dnsProviderRegisterer, dns.GolangResolverType),
++		provider:    dns.NewProvider(dns.GolangResolverType, 0, logger, dnsProviderRegisterer),
+ 		cbs:         make(map[string]*gobreaker.CircuitBreaker[interface{}]),
+ 		cbFailures:  cfg.CBFailures,
+ 		cbInterval:  cfg.CBInterval,

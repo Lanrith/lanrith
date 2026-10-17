@@ -67,13 +67,23 @@ def normalize(value):
     require(isinstance(hostname, str) and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', hostname),
             'Hostname must be a simple DNS label.')
     hardware = value['hardware']
-    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id'}, {'interfaces'})
+    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id', 'watchdog'}, {'interfaces'})
     if 'machine_id' in hardware:
         require(isinstance(hardware['machine_id'], str) and
                 re.fullmatch(r'[0-9a-f]{32}', hardware['machine_id']) and hardware['machine_id'] != '0'*32,
                 'Machine identity must be a nonzero 32-digit lowercase hexadecimal ID.')
     require(hardware.get('architecture', 'x86-64') == 'x86-64',
             'This release qualifies x86-64; additional architectures require a supported build profile.')
+    watchdog = hardware.setdefault('watchdog', {})
+    fields(watchdog, {'mode', 'device', 'timeout_seconds'})
+    watchdog.setdefault('mode', 'auto')
+    watchdog.setdefault('device', '/dev/watchdog0')
+    watchdog.setdefault('timeout_seconds', 60)
+    require(watchdog['mode'] in ('auto', 'required', 'disabled') and
+            isinstance(watchdog['device'], str) and
+            re.fullmatch(r'/dev/watchdog(?:[0-9]|[12][0-9]|3[01])', watchdog['device']) and
+            type(watchdog['timeout_seconds']) is int and 10 <= watchdog['timeout_seconds'] <= 3600,
+            'Invalid hardware watchdog policy.')
     boot = hardware.setdefault('boot', {'secure_boot': True, 'tpm': 'required'})
     fields(boot, {'secure_boot', 'tpm', 'console', 'recovery_console'})
     require(type(boot.get('secure_boot', True)) is bool and boot.get('tpm', 'required') in ('required', 'disabled'),
@@ -99,9 +109,12 @@ def normalize(value):
         fields(hardware['acceleration'], {'pci', 'hugepages_mib'}, {'pci', 'hugepages_mib'})
         require(isinstance(hardware['acceleration']['pci'], list) and hardware['acceleration']['pci'] and
                 all(isinstance(pci, str) and re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]', pci)
-                    for pci in hardware['acceleration']['pci']), 'Invalid acceleration device selection.')
+                    for pci in hardware['acceleration']['pci']) and
+                len(set(hardware['acceleration']['pci'])) == len(hardware['acceleration']['pci']),
+                'Invalid or duplicate acceleration device selection.')
         require(type(hardware['acceleration']['hugepages_mib']) is int and
-                2 <= hardware['acceleration']['hugepages_mib'] <= 1024 * 1024,
+                2 <= hardware['acceleration']['hugepages_mib'] <= 1024 * 1024 and
+                hardware['acceleration']['hugepages_mib'] % 2 == 0,
                 'Invalid hugepage allocation.')
     interfaces = hardware['interfaces']
     require(isinstance(interfaces, dict) and 2 <= len(interfaces) <= 64, 'Declare the physical/virtual interfaces.')
@@ -283,6 +296,8 @@ def render(value):
     value = normalize(value)
     user = value['administration']['username']
     files = {'etc/hostname': value['hostname'] + '\n',
+             'etc/hosts': '127.0.0.1 localhost\n127.0.1.1 '+value['hostname']+'\n'
+                 '::1 localhost ip6-localhost ip6-loopback\n',
              'etc/sysctl.d/90-lanrith-routing.conf': 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n',
              'etc/ssh/sshd_config.d/00-lanrith.conf':
                  'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n'
@@ -398,7 +413,10 @@ def render(value):
                 text += f'allow {ipaddress.ip_interface(address).network}\n'
         files['etc/chrony/chrony.conf'] = text
     if value['services'].get('dns', {}).get('enabled'):
-        text = 'server:\n  interface: 127.0.0.1\n  interface: ::1\n  access-control: 0.0.0.0/0 refuse\n  access-control: ::/0 refuse\n'
+        # Address configuration and IPv6 DAD can finish after network.target.
+        # Bind only these explicit addresses before they are ready; health
+        # still requires the declared gateway addresses before acceptance.
+        text = 'server:\n  ip-freebind: yes\n  interface: 127.0.0.1\n  interface: ::1\n  access-control: 0.0.0.0/0 refuse\n  access-control: ::/0 refuse\n'
         for network in networks.values():
             if network.get('dns'):
                 for address in network['addresses']:

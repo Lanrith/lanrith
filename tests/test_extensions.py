@@ -38,13 +38,55 @@ class IntegrationTests(unittest.TestCase):
                 extensions.admit(root, pin)
 
     def test_protected_files_and_uninventoried_content_fail_closed(self):
-        for name in ('etc/ssh/sshd_config', 'etc/sudoers.d/root', 'usr/bin/lanrith-runtime',
-                     'usr/share/lanrith/owner.crt', 'usr/lib/repart.d/10-root.conf'):
+        for name in ('etc/ssh/sshd_config', 'etc/sudoers.d/root', 'etc/passwd', 'etc/group', 'usr/bin/lanrith-runtime',
+                     'usr/share/lanrith/owner.crt', 'usr/lib/repart.d/10-root.conf',
+                     'usr/lib/systemd/system-generators/owner-hook', 'etc/ld.so.preload',
+                     'etc/systemd/system.conf.d/99-owner.conf',
+                     'usr/lib/systemd/system.conf.d/60-lanrith-watchdog.conf',
+                     'usr/local/lib/systemd/system.conf.d/99-owner.conf',
+                     'usr/lib/systemd/system/var.mount', 'etc/systemd/system/efi.automount.d/owner.conf'):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 pin = self.make(root, name)
                 with self.assertRaises(ReleaseError):
                     extensions.admit(root, pin)
+
+    def test_owner_state_mount_can_be_required_without_replacing_core_storage(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make(root, 'usr/lib/systemd/system/var-lib-owner\x2dservice.mount')
+            value = json.loads((root/'extension.json').read_text())
+            value['health_units'] = ['var-lib-owner\x2dservice.mount']
+            encoded = canonical(value)
+            (root/'extension.json').write_bytes(encoded)
+            pin = hashlib.sha256(encoded).hexdigest()
+            settings = {'extensions': ['routing'],
+                        'services': {'bgp': {'enabled': True, 'configuration': 'routing'}}}
+            result = extensions.overlay(settings, {'routing': (root, pin)}, root/'output')
+            self.assertEqual(result['health_units'], value['health_units'])
+        for unit in ('var.mount', 'efi.automount', '-.mount', 'sysroot.mount'):
+            self.assertFalse(extensions.health_unit(unit))
+
+    def test_owner_service_identities_are_locked_and_cannot_alias_core_authority(self):
+        accounts = {'passwd': b'root:*:0:0:root:/root:/bin/bash\nadmin:x:982:982:Admin:/home/admin:/bin/bash\n',
+                    'group': b'root:x:0:\nadmin:x:982:\n'}
+        selected = extensions.identity_declarations({'users': [{'name': 'owner-service', 'uid': 2000, 'gid': 2000}],
+            'groups': [{'name': 'owner-service', 'gid': 2000, 'members': ['admin']}]})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            extensions.account_overlay(accounts, [selected], root)
+            self.assertTrue((root/'etc/passwd').read_bytes().startswith(accounts['passwd']))
+            self.assertIn('owner-service:*:2000:2000:', (root/'etc/passwd').read_text())
+            self.assertIn('/usr/sbin/nologin', (root/'etc/passwd').read_text())
+            self.assertIn('owner-service:x:2000:admin', (root/'etc/group').read_text())
+        for uid, gid in ((0, 2000), (True, 2000), (2000, 0)):
+            with self.subTest(uid=uid, gid=gid), self.assertRaises(ReleaseError):
+                extensions.identity_declarations({'users': [{'name': 'owner-service', 'uid': uid, 'gid': gid}]})
+        for change in ({'uid': 982}, {'name': 'admin'}, {'gid': 2001}):
+            changed = {**selected, 'users': [{**selected['users'][0], **change}]}
+            with tempfile.TemporaryDirectory() as temporary, self.assertRaises(ReleaseError):
+                extensions.account_overlay(accounts, [changed], Path(temporary))
 
     def test_missing_extension_or_unimplemented_feature_cannot_build(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -62,3 +104,20 @@ class IntegrationTests(unittest.TestCase):
             config = {'extensions': ['routing'], 'services': {}}
             with self.assertRaises(ReleaseError):
                 extensions.overlay(config, {'routing': (root, pin)}, root/'output', base_files={'usr/bin/openssl'})
+
+    def test_disabled_features_do_not_activate_integrations_and_feature_units_are_independent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.make(root)
+            import json
+            value = json.loads((root/'extension.json').read_text())
+            value.update(features=['bgp', 'policy'], health_units=[],
+                         health_units_by_feature={'bgp': ['frr.service'], 'policy': ['owner-policy.service']})
+            encoded = canonical(value)
+            (root/'extension.json').write_bytes(encoded)
+            pin = hashlib.sha256(encoded).hexdigest()
+            selected = {'routing': (root, pin)}
+            config = {'extensions': ['routing'], 'services': {'bgp': {'enabled': False, 'configuration': 'routing'}}}
+            self.assertEqual(extensions.overlay(config, selected, root/'disabled')['health_units'], [])
+            config['services']['bgp']['enabled'] = True
+            self.assertEqual(extensions.overlay(config, selected, root/'enabled')['health_units'], ['frr.service'])

@@ -5,7 +5,7 @@
 # or a broad route.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/network-checks.sh
 
 interface=$lanrith_nat64_interface

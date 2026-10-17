@@ -1,0 +1,11 @@
+--- a/plugins/outputs/sql/sql.go
++++ b/plugins/outputs/sql/sql.go
+@@ -18,7 +18,7 @@
+ 	_ "github.com/jackc/pgx/v4/stdlib"                      // pgx (postgres)
+ 	_ "github.com/microsoft/go-mssqldb"                     // mssql (sql server)
+ 	_ "github.com/microsoft/go-mssqldb/integratedauth/krb5" // integrated auth for mssql
+-	_ "github.com/snowflakedb/gosnowflake"                  // snowflake
++	_ "github.com/snowflakedb/gosnowflake/v2"                  // snowflake
+ 
+ 	"github.com/influxdata/telegraf"
+ 	"github.com/influxdata/telegraf/config"

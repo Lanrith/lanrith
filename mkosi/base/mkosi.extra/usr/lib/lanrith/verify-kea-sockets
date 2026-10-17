@@ -4,7 +4,7 @@
 # directly attached IPv4 VLAN before service startup or boot health succeeds.
 set -eu
 
-profile=${HOMELAB_ROUTER_NETWORK_PROFILE:-/usr/lib/lanrith/network-profile.sh}
+profile=${LANRITH_NETWORK_PROFILE:-/etc/lanrith/integrations/network-profile.sh}
 wait_for_sockets=0
 case "${1:-}" in
   '') ;;
@@ -24,7 +24,7 @@ esac
 . "$profile"
 
 if [ "$wait_for_sockets" -eq 1 ]; then
-  max_attempts=${HOMELAB_ROUTER_KEA_SOCKET_WAIT_ATTEMPTS:-30}
+  max_attempts=${LANRITH_KEA_SOCKET_WAIT_ATTEMPTS:-30}
 else
   max_attempts=1
 fi

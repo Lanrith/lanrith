@@ -15,15 +15,29 @@ class AdmissionTests(unittest.TestCase):
             root = Path(temporary)
             (root/'inventory.json').write_bytes(b'{"synthetic":true}\n')
             digest = release.file_record(root/'inventory.json')['sha256']
-            selection = {'files': {'inventory.json': digest}}
+            selection = {'source_commit': 'a'*40, 'files': {'inventory.json': digest}}
             value = {'schema': 1, 'inventory_sha256': digest, 'assessed_at': now.isoformat(),
                      'production_qualified': False}
             (root/'security.json').write_bytes(release.canonical(value))
             with self.assertRaises(release.ReleaseError):
                 admission.assess(root, selection, now)
             # A synthetic qualification record exercises the admission interface only.
+            record = {'schema': 1, 'result': 'pass', 'specification': 'SLSA v1.2', 'build_level': 3,
+                      'source_commit': selection['source_commit'], 'runner_environment': 'github-hosted',
+                      'workflow': 'Lanrith/lanrith/.github/workflows/build-base.yml'}
+            for field, name in (('filesystem_sha256', 'lanrith-base.tar.gz'),
+                                ('initrd_sha256', 'lanrith-initrd-base.tar.gz'),
+                                ('storage_sha256', 'storage-qualification.json')):
+                (root/name).write_bytes(b'synthetic unit-test evidence')
+                record[field] = selection['files'][name] = release.file_record(root/name)['sha256']
+            (root/'native-qualification.json').write_bytes(release.canonical({'result': 'pass',
+                'filesystem_sha256': record['filesystem_sha256'], 'initrd_sha256': record['initrd_sha256']}))
+            record['native_sha256'] = selection['files']['native-qualification.json'] = \
+                release.file_record(root/'native-qualification.json')['sha256']
+            (root/'qualification.json').write_bytes(release.canonical(record))
+            selection['files']['qualification.json'] = release.file_record(root/'qualification.json')['sha256']
             value.update(production_qualified=True, slsa_build_level=3, slsa_spec='1.2',
-                         qualification={'result': 'pass'})
+                         qualification={'result': 'pass', 'record_sha256': selection['files']['qualification.json']})
             (root/'security.json').write_bytes(release.canonical(value))
             admission.assess(root, selection, now)
             with self.assertRaises(release.ReleaseError):

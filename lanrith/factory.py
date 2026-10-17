@@ -96,6 +96,19 @@ def target(installed, boot_disk):
     return device
 
 
+def enrollment_tokens(luks, *, tpm_required):
+    entries = luks.get('tokens', {})
+    require(isinstance(entries, dict) and all(isinstance(item, dict) for item in entries.values()),
+            'State encryption token metadata is malformed.')
+    tokens = [item.get('type') for item in entries.values()]
+    if tpm_required:
+        require('systemd-tpm2' in tokens, 'State lacks its required TPM enrollment.')
+        require(all(item.get('tpm2-pcrs') == [7] for item in entries.values()
+                    if item.get('type') == 'systemd-tpm2'),
+                'State TPM enrollment differs from the selected Secure Boot policy.')
+    return tokens
+
+
 def initialize(installed):
     disk, active = verified_root()
     rows = geometry(disk)
@@ -108,21 +121,16 @@ def initialize(installed):
     var = [row for row in rows if row['type'].lower() == VAR_GUID]
     require(len(var) == 1 and var[0]['label'] == 'var', 'The state volume is absent or ambiguous.')
     # Use the verified disk's partition number; global label symlinks are not authority.
-    listing = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PARTN', disk]))
-    parts = listing['blockdevices'][0].get('children', [])
-    devices = [item['name'] for item in parts if item.get('partn') == var[0]['number']]
-    require(len(devices) == 1, 'Cannot resolve the selected encrypted state partition.')
-    command(['cryptsetup', 'isLuks', devices[0]])
+    device = var[0]['device']
+    command(['cryptsetup', 'isLuks', device])
     source = command(['findmnt', '--noheadings', '--output', 'SOURCE', '/var']).strip()
     require(source.startswith(('/dev/mapper/', '/dev/dm-')), 'Persistent state is not mounted through encryption.')
     status = command(['cryptsetup', 'status', source])
     backing = re.findall(r'^\s*device:\s+(\S+)\s*$', status, re.MULTILINE)
-    require(len(backing) == 1 and Path(backing[0]).resolve() == Path(devices[0]).resolve(),
+    require(len(backing) == 1 and Path(backing[0]).resolve() == Path(device).resolve(),
             'Mounted state is not backed by the selected encrypted partition.')
-    luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', devices[0]]))
-    tokens = [item.get('type') for item in luks.get('tokens', {}).values()]
-    if installed['boot'].get('tpm', 'required') == 'required':
-        require('systemd-tpm2' in tokens, 'State lacks its required TPM enrollment.')
+    luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', device]))
+    tokens = enrollment_tokens(luks, tpm_required=installed['boot'].get('tpm', 'required') == 'required')
     directory = Path(installed['state_directory'])
     directory.mkdir(mode=0o700, exist_ok=True)
     require(not directory.is_symlink() and directory.stat().st_uid == 0 and
@@ -132,7 +140,7 @@ def initialize(installed):
         with marker.open('xb') as stream:
             stream.write(canonical({'schema': 1, 'disk': disk}))
         marker.chmod(0o600)
-    return devices[0], tokens
+    return device, tokens
 
 
 def recovery(installed):
@@ -176,7 +184,7 @@ def repartition(installed, disk, *, installed_root):
             del first
             command([*arguments, '--key-file='+str(key), disk], timeout=600)
     else:
-        command([*arguments, disk], timeout=600)
+        command([*arguments, '--tpm2-pcrs=7', '--tpm2-pcrlock=', disk], timeout=600)
     command(['udevadm', 'settle', '--timeout=30'])
 
 
@@ -205,11 +213,7 @@ def prepare_state(installed, disk, active):
     require(len(state) == 1 and state[0]['label'] == 'var' and
             state[0]['size'] >= installed['storage']['state_mib']*1024*1024,
             'Selected persistent state partition is absent or undersized.')
-    devices = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PARTN', disk]))
-    parts = [part['name'] for part in devices['blockdevices'][0].get('children', [])
-             if part.get('type') == 'part' and part.get('partn') == state[0]['number']]
-    require(len(parts) == 1, 'Cannot identify the selected persistent state partition.')
-    command(['cryptsetup', 'isLuks', parts[0]])
+    command(['cryptsetup', 'isLuks', state[0]['device']])
 
 
 def provision():
@@ -217,6 +221,7 @@ def provision():
     installed = json.loads(read(Path('/sysroot/usr/share/lanrith/installed.json'), 65536))
     secure_boot(installed['boot'].get('secure_boot', True))
     disk, active = verified_root('/sysroot')
+    command(['udevadm', 'settle', '--timeout=30'])
     table = json.loads(command(['lsblk', '--json', '--paths', '--output', 'NAME,TYPE,PKNAME,PARTLABEL']))
     pending, media = list(table['blockdevices']), []
     while pending:
@@ -240,7 +245,7 @@ def provision():
         try:
             payload = mount/'release'
             manifest = verify(payload, Path('/sysroot'+installed['certificate']), purpose='factory',
-                              image_id=installed['image_id'], configuration_sha256=installed['configuration_sha256'])
+                              image_id=installed['image_id'], expected_configuration=installed['configuration_sha256'])
             require(manifest['deployment_sequence'] == installed['deployment_sequence'] and
                     manifest['platform_version'] == installed['platform_version'], 'Media does not match the booted root.')
             rows = geometry(disk)
@@ -256,14 +261,19 @@ def provision():
             command(['sfdisk', '--relocate', 'gpt-bak-std', chosen])
             if installed['boot'].get('tpm', 'required') == 'disabled':
                 repartition(installed, chosen, installed_root=False)
-            print('Installation read-back passed. Remove the factory medium after power-off.')
-            command(['systemctl', '--no-block', 'poweroff'])
-            # Never return into initrd-switch-root on the removable installation medium.
-            while True:
-                import time
-                time.sleep(60)
         finally:
             command(['umount', str(mount)])
+    command(['sync'])
+    print('Installation read-back passed. Remove the factory medium after power-off.', flush=True)
+    # The installer holds initrd-switch-root while awaiting confirmation. Ask
+    # the manager to terminate processes and unmount filesystems directly,
+    # without waiting for that unfinished initrd boot transaction to complete.
+    # All target writes are synced and the read-only payload is unmounted first.
+    command(['systemctl', '--force', 'poweroff'])
+    # Never return into initrd-switch-root on the removable installation medium.
+    while True:
+        import time
+        time.sleep(60)
 
 
 def main(arguments=None):

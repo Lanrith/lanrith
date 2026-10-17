@@ -24,8 +24,12 @@ UUID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
 
 def command(arguments, timeout=30):
-    result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
-                            text=True, timeout=timeout, env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+    try:
+        result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, timeout=timeout, env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+    except OSError as error:
+        from .release import ReleaseError
+        raise ReleaseError('Update command could not start: '+Path(arguments[0]).name) from error
     require(result.returncode == 0, 'Update command failed: ' + Path(arguments[0]).name)
     return result.stdout
 
@@ -100,14 +104,14 @@ def transfers(value, root, esp):
         target = value['partitions'][role]
         result[f'{index}-{role}.transfer'] = (
             f'[Transfer]\nProtectVersion={value["protected_sequence"]}\n\n'
-            f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=explicit\nMatchPattern={image}_@v_@u.{role}.raw\n'
+            f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=root\nMatchPattern={image}_@v_@u.{role}.raw\n'
             f'\n[Target]\nType=partition\nPath={value["disk"]}\n'
             f'MatchPattern=l_@v_{role.replace("-", "_")}\n'
             f'MatchPartitionType={target["type"]}\nReadOnly=yes\n')
     result['59-uki.transfer'] = (
         f'[Transfer]\nProtectVersion={value["protected_sequence"]}\n\n'
-        f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=explicit\nMatchPattern={image}_@v.efi\n'
-        f'\n[Target]\nType=regular-file\nPath={esp}/EFI/Linux\nPathRelativeTo=explicit\n'
+        f'[Source]\nType=regular-file\nPath={root}\nPathRelativeTo=root\nMatchPattern={image}_@v.efi\n'
+        f'\n[Target]\nType=regular-file\nPath={esp}/EFI/Linux\nPathRelativeTo=root\n'
         f'MatchPattern={image}_@v+@l-@d.efi {image}_@v+@l.efi {image}_@v.efi\n'
         'TriesLeft=3\nTriesDone=0\nInstancesMax=2\n')
     return result
@@ -138,19 +142,58 @@ def root_disk(mountpoint='/'):
     return disks.pop(), numbers
 
 
-def geometry(disk):
+def geometry(disk, *, sysfs=Path('/sys/class/block')):
+    # Partition GUIDs and labels in udev can still describe the pre-repartition
+    # disk after its kernel devices are ready. Read identity from the GPT itself;
+    # use the kernel view for device numbers, capacity and in-use detection.
+    table = json.loads(command(['sfdisk', '--json', disk]))['partitiontable']
+    require(table.get('label') == 'gpt' and table.get('device') == disk and
+            table.get('unit') == 'sectors' and table.get('sectorsize') in (512, 4096),
+            'Cannot bind GPT geometry to the observed disk.')
+    entries = table.get('partitions', [])
+    require(isinstance(entries, list) and 1 <= len(entries) <= 128 and
+            all(isinstance(part, dict) and isinstance(part.get('node'), str) for part in entries),
+            'GPT partition geometry is malformed.')
+    partitions = {part['node']: part for part in entries}
+    require(len(partitions) == len(entries), 'GPT contains duplicate partition devices.')
     data = json.loads(command(['lsblk', '--json', '--bytes', '--paths', '--output',
-                              'NAME,TYPE,PKNAME,PARTTYPE,PARTLABEL,PARTN,PARTUUID,SIZE,MOUNTPOINTS', disk]))
+                              'NAME,TYPE,PKNAME,SIZE,MOUNTPOINTS', disk]))
     result, pending = [], list(data.get('blockdevices', []))
+    seen = set()
+    numbers = set()
     while pending:
         device = pending.pop()
         pending.extend(device.get('children', []))
         if device.get('type') != 'part':
             continue
-        result.append({'disk': device.get('pkname'), 'number': device.get('partn'),
-                       'type': device.get('parttype') or '', 'label': device.get('partlabel'),
-                       'uuid': device.get('partuuid'),
-                       'size': device.get('size'), 'mounted': any(device.get('mountpoints') or [])})
+        name = device.get('name')
+        require(name in partitions and name not in seen and device.get('pkname') == disk,
+                'Kernel partition devices differ from the selected GPT.')
+        seen.add(name)
+        part = partitions[name]
+        kernel_device = sysfs/Path(name).name
+        number = (kernel_device/'partition').read_text().strip()
+        require(number.isdecimal() and 1 <= int(number) <= 128 and int(number) not in numbers,
+                'Kernel partition numbers are invalid or duplicated.')
+        number = int(number)
+        numbers.add(number)
+        require(type(part.get('size')) is int and part['size'] > 0 and
+                type(device.get('size')) is int and device['size'] == part['size']*table['sectorsize'],
+                'Kernel partition capacity differs from the selected GPT.')
+        require(all(isinstance(part.get(key), str) and re.fullmatch(UUID, part[key].lower())
+                    for key in ('type', 'uuid')), 'GPT partition identities are malformed.')
+        descendants, busy = [device], False
+        while descendants:
+            child = descendants.pop()
+            busy = busy or any(child.get('mountpoints') or [])
+            descendants.extend(child.get('children', []))
+        holders = kernel_device/'holders'
+        busy = busy or holders.is_dir() and any(holders.iterdir())
+        result.append({'disk': device.get('pkname'), 'device': name, 'number': number,
+                       'type': part['type'].lower(), 'label': part.get('name'),
+                       'uuid': part['uuid'].lower(),
+                       'size': device.get('size'), 'mounted': bool(busy)})
+    require(seen == set(partitions), 'A GPT partition has no matching kernel device.')
     return result
 
 
@@ -166,6 +209,35 @@ def accepted_boot(current, expected, esp):
     return stable
 
 
+def boot_esp(installed, *, disk=None):
+    """Resolve the mounted ESP and bind it to the observed verified-root disk."""
+    selected = installed.get('esp', 'auto')
+    esp = Path(command(['bootctl', '--print-esp-path']).strip() if selected == 'auto' else selected)
+    require(esp.is_absolute() and esp.resolve() == esp and esp.is_dir() and
+            esp.stat().st_uid == 0 and not esp.stat().st_mode & 0o022,
+            'EFI mount path is unsafe.')
+    # Crossing the automount first ensures findmnt observes vfat, not autofs.
+    require((esp/'EFI').is_dir() and esp.is_mount(), 'EFI filesystem must be mounted.')
+    # util-linux 2.41 can report both the autofs trigger and its mounted
+    # filesystem for --target. --uniq selects the visible filesystem.
+    mount = json.loads(command(['findmnt', '--uniq', '--json', '--target', str(esp/'EFI'),
+                                '--output', 'SOURCE,FSTYPE,TARGET']))
+    rows = mount.get('filesystems', [])
+    require(len(rows) == 1 and rows[0].get('target') == str(esp) and rows[0].get('fstype') == 'vfat' and
+            isinstance(rows[0].get('source'), str) and rows[0]['source'].startswith('/dev/'),
+            'EFI filesystem is not a mounted FAT block partition.')
+    device = str(Path(rows[0]['source']).resolve())
+    partition = json.loads(command(['lsblk', '--json', '--nodeps', '--paths', '--output',
+                                   'NAME,TYPE,PKNAME,PARTTYPE', device])).get('blockdevices', [])
+    if disk is None:
+        disk, _ = root_disk()
+    require(len(partition) == 1 and partition[0].get('name') == device and
+            partition[0].get('type') == 'part' and partition[0].get('pkname') == disk and
+            (partition[0].get('parttype') or '').lower() == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b',
+            'EFI partition differs from the verified root disk.')
+    return esp
+
+
 def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
     """Do not overwrite the last accepted fallback from an unaccepted running slot."""
     data = read(variable, 4096)
@@ -176,6 +248,35 @@ def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEnt
         from .release import ReleaseError
         raise ReleaseError('Boot-default EFI variable is malformed.') from error
     require(entry == accepted.name, 'Accept the running boot as default before staging another update.')
+
+
+def select_boot_once(entry, *, variable=Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
+    """Make the admitted pending UKI durable before publishing its boot choice."""
+    descriptor = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    descriptor = os.open(entry.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    # Resolve the installed bootloader's ID for this exact admitted file.
+    # Debian's loader normalizes boot counters out of the entry ID.
+    entries = json.loads(command(['bootctl', '--json=short', 'list']))
+    require(isinstance(entries, list), 'Boot loader entry inventory is malformed.')
+    matches = [item for item in entries if isinstance(item, dict) and
+               item.get('type') == 'type2' and item.get('source') == 'esp' and
+               item.get('path') == str(entry)]
+    stable = re.sub(r'[+][0-9]+(?:-[0-9]+)?(?=[.]efi$)', '', entry.name)
+    require(len(matches) == 1 and matches[0].get('id') in (entry.name, stable),
+            'Boot loader does not identify exactly the admitted pending image.')
+    identifier = matches[0]['id']
+    command(['bootctl', 'set-oneshot', identifier])
+    data = read(variable, 4096)
+    require(6 <= len(data) and data[4:].decode('utf-16-le').rstrip('\x00') == identifier,
+            'Boot loader did not retain the requested one-shot entry.')
 
 
 def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
@@ -190,7 +291,7 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
             'Update must be an exclusive root-owned inbox directory.')
     require(command(['systemctl', 'is-active', 'boot-complete.target']).strip() == 'active',
             'Running boot has not completed acceptance.')
-    esp = Path(installed['esp'])
+    esp = boot_esp(installed)
     current = Path(command(['bootctl', '--print-stub-path']).strip())
     accepted = accepted_boot(current, installed['uki_name'], esp)
     lock_path = Path(installed.get('lock_path', '/run/lock/lanrith-update.lock'))
@@ -240,12 +341,7 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         require(observed_uki['sha256'] == expected['sha256'] and observed_uki['size'] == expected['size'],
                 'Staged UKI differs from the admitted bytes.')
         require_default(accepted)
-        # Type-2 boot entry IDs omit the boot-counting suffix.
-        command(['bootctl', 'set-oneshot', value['uki']])
-        variable = Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')
-        data = variable.read_bytes()
-        require(6 <= len(data) <= 4096 and data[4:].decode('utf-16-le').rstrip('\x00') == value['uki'],
-                'Boot loader did not retain the requested one-shot entry.')
+        select_boot_once(candidates[0])
         return value
     finally:
         os.close(descriptor)
@@ -264,8 +360,11 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
     from .release import document, canonical
     manifest = document(canonical(manifest))
     require(manifest['purpose'] == 'update', 'Only update payloads can be promoted.')
-    limits = installed.get('payload_limits', {'root': 2048*1024*1024, 'verity': 300*1024*1024,
-                                             'verity-sig': 16384, 'uki': 256*1024*1024})
+    esp = boot_esp(installed)
+    require(esp.is_mount(), 'EFI filesystem must be mounted before upload admission.')
+    disk, active = root_disk()
+    limits = upload_limits(manifest, installed, geometry(disk), disk=disk,
+                           active_partitions=active, esp_available=shutil.disk_usage(esp).free)
     members = {'release.json': 65536, 'release.json.sig': 16384}
     for artifact in manifest['artifacts']:
         require(artifact['size'] <= limits[artifact['role']], 'Upload exceeds installed payload capacity.')
@@ -294,8 +393,8 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
                         (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) and
                         size == before.st_size, 'Upload changed during promotion.')
                 output.flush()
+                os.fchmod(output.fileno(), 0o600)
                 os.fsync(output.fileno())
-            (root/name).chmod(0o600)
         verified = verify(root, Path(installed['certificate']), purpose='update',
                           image_id=installed['update_image_id'], minimum_sequence=installed['deployment_sequence'])
         require(verified == manifest, 'Manifest changed during promotion.')
@@ -305,4 +404,29 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json')):
         else:
             os.rename(root, destination)
             root.mkdir(mode=0o700)  # Preserve TemporaryDirectory's cleanup ownership.
+    # Commit the file names and the publication rename before disk staging.
+    for directory in (destination, inbox):
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     return stage(destination, installed_path)
+
+
+def upload_limits(manifest, installed, partitions, *, disk, active_partitions, esp_available):
+    """Bound upload copies to actual inactive slots and explicit owner policy."""
+    value = plan(manifest, installed, partitions, disk=disk, active_partitions=active_partitions,
+                 esp_available=esp_available)
+    limits = {role: next(part['size'] for part in partitions if part['number'] == target['number'])
+              for role, target in value['partitions'].items()}
+    limits['uki'] = esp_available-32*1024*1024
+    policy = installed.get('payload_limits')
+    if policy is not None:
+        require(isinstance(policy, dict) and set(policy) == set(limits) and
+                all(type(size) is int and size > 0 for size in policy.values()),
+                'Installed upload capacity policy is malformed.')
+        limits = {role: min(limit, policy[role]) for role, limit in limits.items()}
+    require(all(artifact['size'] <= limits[artifact['role']] for artifact in manifest['artifacts']),
+            'Upload exceeds installed payload capacity.')
+    return limits

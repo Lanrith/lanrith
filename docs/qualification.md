@@ -23,3 +23,29 @@ package inventory, artifacts and profile.
 Qualification prereleases remain ineligible for production until these gates
 pass. Private owner topologies and their evidence stay in the owner's repository.
 Do not transplant qualification claims from an earlier repository or release.
+
+`tests/packets.py` exercises the generated firewall using real IPv4 and IPv6
+connections in disposable namespaces. It checks management access, unsolicited
+uplink traffic, inter-network isolation, directional port grants, disabled
+service ports, spoof rejection, NAT44 and IPv6 source preservation. These
+results cover the generic compiler policy. Advanced integrations and physical
+hardware still need their own candidate-specific tests.
+
+`tests/storage.py` creates a signed synthetic EROFS image and expands it with
+the matching builder's `systemd-repart`. It verifies that the second slot and
+state appear without moving or changing signed data, hashes or signatures.
+It uses regular files and a disposable test authority. TPM and encrypted-state
+boot behavior remain separate qualification requirements.
+
+`tests/vm.py` is the native UEFI qualification runner used by the full base
+build. It creates regular-file disks, a disposable TPM, its own SSH agent and
+a test signing authority in tmpfs. Restricted guest networking permits only
+loopback administration. It exercises installation read-back, Secure Boot,
+verity, TPM and manual state encryption, recovery acknowledgment, SSH/PAM,
+automatic boot observation and inactive optional services,
+one-shot updates, explicit acceptance, replay and tamper rejection,
+interrupted staging, failed-health fallback and populated state. Only the
+bounded JSON result is retained publicly; test disk images, recovery keys,
+serial transcripts and test credentials are not release artifacts. Adding
+this runner does not establish a passing result: the actual candidate must
+complete it before production admission can be enabled.

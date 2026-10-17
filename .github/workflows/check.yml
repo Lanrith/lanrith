@@ -25,6 +25,7 @@ jobs:
         run: |
           python3 scripts/check-source.py
           sudo python3 tests/native.py
+          sudo python3 tests/packets.py
   workflows:
     runs-on: ubuntu-24.04
     steps:

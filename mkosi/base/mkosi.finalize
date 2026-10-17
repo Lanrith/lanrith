@@ -7,47 +7,126 @@ from pathlib import Path
 import shutil
 import subprocess
 
-root = Path(os.environ['BUILDROOT'])
-metadata = root/'usr/share/lanrith'
-metadata.mkdir(parents=True, exist_ok=True)
-result = subprocess.run(['chroot', str(root), 'apt-cache', 'dumpavail'],
-                        check=True, capture_output=True, timeout=60)
-(metadata/'apt-metadata').write_bytes(result.stdout)
-identities = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
-              for line in (root/'etc/passwd').read_text().splitlines()
-              if line and (row := line.split(':'))}
-(metadata/'service-identities.json').write_text(json.dumps(identities, sort_keys=True)+'\n')
-for path in (root/'etc/ssh').glob('ssh_host_*'):
-    path.unlink()
-for name in ('var/log', 'var/lib/dhcp', 'var/lib/kea', 'var/lib/systemd/random-seed',
-             'var/lib/dbus/machine-id', 'etc/machine-id', 'etc/hostname'):
-    path = root/name
-    if path.is_dir():
-        shutil.rmtree(path)
-    else:
-        path.unlink(missing_ok=True)
-(root/'etc/machine-id').touch()
-(root/'etc/hostname').write_text('lanrith\n')
-# Consumers explicitly activate features after rendering. Optional packages
-# must not start a listener merely because their maintainer scripts enabled it.
-for pattern in ('etc/systemd/system/*.wants/*', 'etc/systemd/system/*.requires/*'):
-    for path in root.glob(pattern):
-        if path.is_symlink() and not path.name.startswith('systemd-'):
+def minimize(root):
+    removed = {}
+
+    def delete(path):
+        if path.is_symlink() or path.is_file():
+            removed[path.relative_to(root).as_posix()] = path.lstat().st_size
             path.unlink()
-(root/'etc/resolv.conf').unlink(missing_ok=True)
-(root/'etc/resolv.conf').write_text('nameserver 127.0.0.1\nnameserver ::1\n')
-# Prevent D-Bus, socket or dependency activation of an unselected optional daemon.
-optional = {'unbound.service','chrony.service','named.service','freeradius.service','frr.service',
-            'kea-dhcp4-server.service',
-            'suricata.service','tayga.service','avahi-daemon.service','avahi-daemon.socket',
-            'prometheus-node-exporter.service','alloy.service','snmpd.service','vpp.service',
-            'discovery-bridge.service','discovery-bridge-dns.service'}
-for path in (root/'usr/lib/systemd/system').iterdir():
-    if path.name.startswith(('lanrith-policy-', 'lanrith-radius-', 'lanrith-nat', 'lanrith-vpp-', 'lanrith-unbound-')):
-        optional.add(path.name)
-for name in optional:
-    mask = root/'etc/systemd/system'/name
-    if mask.exists() or mask.is_symlink():
-        mask.unlink()
-    mask.parent.mkdir(parents=True,exist_ok=True)
-    mask.symlink_to('/dev/null')
+        elif path.is_dir():
+            for child in list(path.iterdir()):
+                delete(child)
+            path.rmdir()
+
+    # Retain license texts and all custom component notices, including compressed
+    # notices. Package examples, API documentation and translations stay outside
+    # the appliance; libc's C.UTF-8 locale remains available.
+    documentation = root/'usr/share/doc'
+    if documentation.exists():
+        for path in list(documentation.rglob('*')):
+            if path.is_file() or path.is_symlink() and not path.is_dir():
+                name = path.name.lower()
+                if not name.startswith(('copyright', 'license', 'copying', 'notice', 'third-party-notice')):
+                    delete(path)
+    for pattern in ('usr/lib/systemd/portable',
+                    'usr/share/man', 'usr/share/info', 'usr/share/groff', 'usr/share/gtk-doc',
+                    'usr/share/locale', 'usr/lib/python3.*/test', 'usr/lib/python3.*/idlelib',
+                    '**/__pycache__', 'boot/initrd.img-*', 'boot/initrd.img',
+                    'usr/bin/dpkg*', 'usr/sbin/dpkg*', 'usr/lib/dpkg', 'usr/share/dpkg',
+                    'usr/bin/make', 'usr/bin/gmake', 'usr/share/make',
+                    'var/lib/dpkg', 'var/lib/apt', 'var/cache/apt'):
+        for path in list(root.glob(pattern)):
+            if path.exists() or path.is_symlink():
+                delete(path)
+    (root/'etc/default').mkdir(parents=True, exist_ok=True)
+    (root/'etc/default/locale').write_text('LANG=C.UTF-8\n')
+    return {'schema': 1, 'removed_bytes': sum(removed.values()),
+            'removed_paths': len(removed), 'runtime_package_installation': False}
+
+
+def main():
+    root = Path(os.environ['BUILDROOT'])
+    metadata = root/'usr/share/lanrith'
+    metadata.mkdir(parents=True, exist_ok=True)
+    version = (metadata/'platform-version').read_text().strip()
+    os_release = root/'usr/lib/os-release'
+    lines = os_release.read_text().splitlines()
+    branding = {'NAME':'Lanrith','PRETTY_NAME':'Lanrith '+version,'ID':'lanrith','ID_LIKE':'debian',
+                'VERSION':version,'VERSION_ID':version,'IMAGE_ID':'lanrith','IMAGE_VERSION':version,
+                'HOME_URL':'https://github.com/Lanrith/lanrith',
+                'SUPPORT_URL':'https://github.com/Lanrith/lanrith/blob/main/docs/operations.md',
+                'BUG_REPORT_URL':'https://github.com/Lanrith/lanrith/security'}
+    lines = [line for line in lines if line.partition('=')[0] not in branding]
+    os_release.write_text('\n'.join(lines+[key+'='+json.dumps(value) for key,value in branding.items()])+'\n')
+    # mkosi supplies this wrapper with the installation's authenticated APT lists
+    # and status database. APT is a builder tool, not a router runtime dependency.
+    result = subprocess.run(['apt-cache', 'dumpavail'],
+                            check=True, capture_output=True, timeout=60)
+    (Path(os.environ['OUTPUTDIR'])/'lanrith-base.apt-metadata').write_bytes(result.stdout)
+    identities = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
+                  for line in (root/'etc/passwd').read_text().splitlines()
+                  if line and (row := line.split(':'))}
+    (metadata/'service-identities.json').write_text(json.dumps(identities, sort_keys=True)+'\n')
+    for path in (root/'etc/ssh').glob('ssh_host_*'):
+        path.unlink()
+    # Package installation can generate per-image TLS credentials. They must never
+    # become a shared identity in the public base; enabled owner integrations supply
+    # their own provisioning after admission.
+    for pattern in ('etc/ssl/private/*', 'etc/freeradius/*/certs/*.key',
+                    'etc/freeradius/*/certs/*.pem', 'etc/freeradius/*/certs/*.p12',
+                    'home/*/.ssh/authorized_keys', 'root/.ssh/*',
+                    'etc/security/authorized_keys', 'etc/security/admin.serial-passphrase.hash'):
+        for path in root.glob(pattern):
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+    for name in ('var/log', 'var/lib/dhcp', 'var/lib/kea', 'var/lib/lanrith', 'var/lib/systemd/random-seed',
+                 'var/lib/dbus/machine-id', 'etc/machine-id', 'etc/hostname'):
+        path = root/name
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+    (root/'etc/machine-id').touch()
+    (root/'etc/hostname').write_text('lanrith\n')
+    # Consumers explicitly activate features after rendering. Optional packages
+    # must not start a listener merely because their maintainer scripts enabled it.
+    for pattern in ('etc/systemd/system/*.wants/*', 'etc/systemd/system/*.requires/*'):
+        for path in root.glob(pattern):
+            if path.is_symlink() and not path.name.startswith('systemd-'):
+                path.unlink()
+    (root/'etc/resolv.conf').unlink(missing_ok=True)
+    (root/'etc/resolv.conf').write_text('nameserver 127.0.0.1\nnameserver ::1\n')
+    # Prevent D-Bus, socket or dependency activation of an unselected optional daemon.
+    optional = {'unbound.service','chrony.service','named.service','freeradius.service','frr.service',
+                'kea-dhcp4-server.service',
+                'suricata.service','tayga.service','avahi-daemon.service','avahi-daemon.socket',
+                'prometheus-node-exporter.service','alloy.service','snmpd.service','vpp.service',
+                'discovery-bridge.service','discovery-bridge-dns.service','dpdk.service',
+                # Only the authenticated staging helper owns image updates and
+                # reboot selection. Package presets must not schedule either.
+                'systemd-sysupdate.service','systemd-sysupdate.timer',
+                'systemd-sysupdate-reboot.service','systemd-sysupdate-reboot.timer'}
+    for path in (root/'usr/lib/systemd/system').iterdir():
+        # Every bundled advanced integration is inactive until owner assembly
+        # explicitly selects its health units. This includes dependency activation.
+        if path.name.startswith(('lanrith-', 'discovery-bridge-', 'router-policy-', 'chrony', 'frr@')):
+            optional.add(path.name)
+    for name in optional:
+        mask = root/'etc/systemd/system'/name
+        if mask.exists() or mask.is_symlink():
+            mask.unlink()
+        mask.parent.mkdir(parents=True,exist_ok=True)
+        mask.symlink_to('/dev/null')
+    postinst = json.loads((Path(os.environ['OUTPUTDIR'])/'lanrith-base.container-pruning.json').read_bytes())
+    if postinst.get('schema') != 1 or any(type(postinst.get(key)) is not int or postinst[key] < 0
+                                        for key in ('removed_bytes', 'removed_paths')):
+        raise ValueError('Updater package pruning evidence is malformed.')
+    footprint = minimize(root)
+    for key in ('removed_bytes', 'removed_paths'):
+        footprint[key] += postinst[key]
+    (metadata/'image-footprint.json').write_text(json.dumps(footprint, sort_keys=True)+'\n')
+
+
+if __name__ == '__main__':
+    main()

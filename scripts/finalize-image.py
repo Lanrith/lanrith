@@ -10,6 +10,16 @@ import tempfile
 root = Path(os.environ['BUILDROOT']).resolve()
 root.chmod(0o755)
 profile = json.loads((root/'usr/share/lanrith/resolved.json').read_text())
+installed = json.loads((root/'usr/share/lanrith/installed.json').read_text())
+os_release = root/'usr/lib/os-release'
+lines = os_release.read_text().splitlines()
+branding = {'NAME':'Lanrith','PRETTY_NAME':'Lanrith '+installed['platform_version'],
+            'ID':'lanrith','ID_LIKE':'debian','VERSION':installed['platform_version'],
+            'VERSION_ID':installed['platform_version'],'IMAGE_ID':installed['image_id'],
+            'IMAGE_VERSION':installed['platform_version'],
+            'LANRITH_DEPLOYMENT_SEQUENCE':str(installed['deployment_sequence'])}
+lines = [line for line in lines if line.partition('=')[0] not in branding]
+os_release.write_text('\n'.join(lines+[key+'='+json.dumps(value) for key,value in branding.items()])+'\n')
 username = profile['administration']['username']
 if username != 'admin':
     if any(line.split(':')[0] == username for line in (root/'etc/passwd').read_text().splitlines()):
@@ -46,7 +56,34 @@ for name, identity in expected.items():
         name = username
     if users.get(name) != identity:
         raise ValueError('A persistent service identity changed during assembly.')
-required = ['multi-user.target', 'boot-complete.target', 'lanrith-health.service', 'lanrith-observation.service']
+home = root/'home'/username
+ssh = home/'.ssh'
+authorized = ssh/'authorized_keys'
+if home.is_symlink() or ssh.is_symlink() or authorized.is_symlink() or not authorized.is_file():
+    raise ValueError('Administrator SSH identity has an unsafe final path.')
+for path, mode in ((home, 0o700), (ssh, 0o700), (authorized, 0o600)):
+    path.chmod(mode)
+    os.chown(path, users[username]['uid'], users[username]['gid'])
+integration_identities = root/'usr/share/lanrith/integration-identities.json'
+if integration_identities.exists():
+    extra = json.loads(integration_identities.read_text())
+    groups = {row[0]: {'gid': int(row[2]), 'members': set(filter(None, row[3].split(',')))}
+              for line in (root/'etc/group').read_text().splitlines() if line and (row := line.split(':'))}
+    for item in extra['users']:
+        if users.get(item['name']) != {key: item[key] for key in ('uid', 'gid')}:
+            raise ValueError('An integration service identity changed during assembly.')
+    for item in extra['groups']:
+        members = {username if name == 'admin' else name for name in item.get('members', [])}
+        if groups.get(item['name']) != {'gid': item['gid'], 'members': members}:
+            raise ValueError('An integration service group changed during assembly.')
+for parent, unit in (('boot-complete.target.requires', 'lanrith-health.service'),
+                     ('boot-complete.target.requires', 'systemd-boot-check-no-failures.service'),
+                     ('multi-user.target.wants', 'lanrith-observation.service')):
+    link = root/'usr/lib/systemd/system'/parent/unit
+    if not link.is_symlink() or link.readlink() != Path('/usr/lib/systemd/system')/unit:
+        raise ValueError('Final assembly lost a required boot-acceptance activation.')
+required = ['default.target', 'multi-user.target', 'boot-complete.target',
+            'systemd-boot-check-no-failures.service', 'lanrith-health.service', 'lanrith-observation.service']
 required.extend(json.loads((root/'usr/share/lanrith/installed.json').read_text())['integration_health_units'])
 with tempfile.TemporaryDirectory(prefix='boot-transaction.', dir=root/'run') as temporary:
     fixture = Path(temporary)

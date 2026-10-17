@@ -5,7 +5,7 @@ After=lanrith-policy-helper.service
 
 [Service]
 Type=oneshot
-ExecCondition=/usr/sbin/nft list table inet homelab_policy_boot
+ExecCondition=/usr/sbin/nft list table inet lanrith_policy_boot
 ExecStart=/usr/lib/lanrith/policy-runtime open-boot
 TimeoutStartSec=20
 UMask=0077

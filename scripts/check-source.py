@@ -2,11 +2,17 @@
 """Reject credentials and generated state from the public source tree."""
 
 from pathlib import Path
+import re
 import subprocess
 
 root = Path(__file__).resolve().parents[1]
-result = subprocess.run(['git', 'ls-files', '-z'], cwd=root, capture_output=True)
-paths = [root/name for name in result.stdout.decode().split('\0') if name] if result.returncode == 0 else [
+try:
+    result = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+                            cwd=root, capture_output=True)
+except FileNotFoundError:
+    result = subprocess.CompletedProcess([], 128, b'')
+paths = [root/name for name in result.stdout.decode().split('\0') if name and
+         ((root/name).exists() or (root/name).is_symlink())] if result.returncode == 0 else [
     path for path in root.rglob('*') if path.is_file() and '.git' not in path.parts and '__pycache__' not in path.parts]
 errors = []
 for path in paths:
@@ -15,6 +21,10 @@ for path in paths:
         errors.append(name)
         continue
     data = path.read_bytes()
+    if name.startswith('mkosi/base/') and (any(pattern in (name.encode()+data).lower() for pattern in
+            (b'x'+b'710', b'i'+b'40e', b'home'+b'lab', b'standalone'+b'_lab')) or
+            re.search(rb'vm[.]nr_hugepages\s*=\s*[0-9]+', data)):
+        errors.append(name)
     # Construct patterns so the checker does not match its own source.
     if any(pattern in data for pattern in (b'-----BEGIN '+b'PRIVATE KEY-----',
                                           b'-----BEGIN RSA '+b'PRIVATE KEY-----',

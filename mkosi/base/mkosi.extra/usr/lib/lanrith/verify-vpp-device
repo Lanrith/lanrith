@@ -1,24 +1,19 @@
 #!/bin/sh
-# Prove that VPP owns the exact X710 while keeping its interface down and
+# Prove that VPP owns the exact PCI function while keeping its interface down and
 # without a default route. This is not an edge-routing configuration.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/network-checks.sh
 
 bdf=$lanrith_vpp_bdf
 expected_group=$lanrith_vpp_iommu_group
-device="/sys/bus/pci/devices/$bdf"
-
-[ -d "$device" ]
-[ "$(readlink -f "$device/iommu_group")" = "/sys/kernel/iommu_groups/$expected_group" ]
-[ "$(find "/sys/kernel/iommu_groups/$expected_group/devices" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]
-[ "$(basename "$(readlink -f "$device/driver")")" = vfio-pci ]
-[ ! -d "$device/net" ]
+/usr/bin/python3 -I -c 'import sys; sys.path.insert(0,"/usr/lib/lanrith"); from lanrith.hardware import main; sys.exit(main())' \
+  verify --bdf "$bdf" --group "$expected_group"
 test -c /dev/vfio/vfio
 test -c "/dev/vfio/$expected_group"
 
-systemctl is-active --quiet lanrith-vpp-x710.service
+systemctl is-active --quiet lanrith-vpp-device.service
 systemctl is-active --quiet vpp.service
 test -x /usr/bin/vppctl
 
@@ -51,4 +46,4 @@ expected_plugins=$(printf '%s\n' af_packet_plugin.so dpdk_plugin.so ping_plugin.
 router_wait_for require_vpp_drop_default /run/vpp/cli.sock 4
 router_wait_for require_vpp_drop_default /run/vpp/cli.sock 6
 
-echo 'VPP X710 ownership base verified.'
+echo 'VPP PCI function ownership base verified.'

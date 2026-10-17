@@ -13,8 +13,8 @@ router_boot_now() {
 }
 
 router_boot_deadline_start() {
-  if [ -n "${HOMELAB_ROUTER_BOOT_DEADLINE_EPOCH:-}" ]; then
-    case "$HOMELAB_ROUTER_BOOT_DEADLINE_EPOCH" in
+  if [ -n "${LANRITH_BOOT_DEADLINE_EPOCH:-}" ]; then
+    case "$LANRITH_BOOT_DEADLINE_EPOCH" in
       *[!0-9]*|'')
         echo 'Router boot deadline is not a positive integer epoch.' >&2
         return 64
@@ -23,7 +23,7 @@ router_boot_deadline_start() {
     return 0
   fi
 
-  timeout_seconds=${HOMELAB_ROUTER_BOOT_TIMEOUT_SECONDS:-120}
+  timeout_seconds=${LANRITH_BOOT_TIMEOUT_SECONDS:-120}
   case "$timeout_seconds" in
     *[!0-9]*|''|0)
       echo 'Router boot timeout must be a positive integer number of seconds.' >&2
@@ -40,8 +40,8 @@ router_boot_deadline_start() {
       return 1
       ;;
   esac
-  HOMELAB_ROUTER_BOOT_DEADLINE_EPOCH=$((now + timeout_seconds))
-  export HOMELAB_ROUTER_BOOT_DEADLINE_EPOCH
+  LANRITH_BOOT_DEADLINE_EPOCH=$((now + timeout_seconds))
+  export LANRITH_BOOT_DEADLINE_EPOCH
 }
 
 router_boot_seconds_remaining() {
@@ -50,7 +50,7 @@ router_boot_seconds_remaining() {
   case "$now" in
     *[!0-9]*|'') return 1 ;;
   esac
-  remaining=$((HOMELAB_ROUTER_BOOT_DEADLINE_EPOCH - now))
+  remaining=$((LANRITH_BOOT_DEADLINE_EPOCH - now))
   [ "$remaining" -gt 0 ] || return 1
   printf '%s\n' "$remaining"
 }
@@ -79,7 +79,7 @@ router_wait_for() {
 vppctl_bounded() {
   [ "$#" -gt 0 ] || return 64
   router_boot_deadline_start || return $?
-  maximum_seconds=${HOMELAB_ROUTER_VPPCTL_MAX_SECONDS:-5}
+  maximum_seconds=${LANRITH_VPPCTL_MAX_SECONDS:-5}
   case "$maximum_seconds" in
     *[!0-9]*|''|0) return 64 ;;
   esac

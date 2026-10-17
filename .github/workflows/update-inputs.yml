@@ -4,19 +4,37 @@ on:
     - cron: '17 4 * * *'
   workflow_dispatch:
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+  contents: read
 concurrency:
   group: dependency-proposal
   cancel-in-progress: false
 jobs:
   propose:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    environment: lanrith-updates
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Require the repository-scoped update App
+        env:
+          APP_ID: ${{ vars.LANRITH_UPDATE_APP_ID }}
+          APP_KEY: ${{ secrets.LANRITH_UPDATE_APP_PRIVATE_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          assert os.environ['APP_ID'].isdigit() and os.environ['APP_KEY'], 'Configure the update App in lanrith-updates; see docs/build-and-trust.md'
+          PY
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_UPDATE_APP_ID }}
+          private-key: ${{ secrets.LANRITH_UPDATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -25,17 +43,17 @@ jobs:
       - id: proposal
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
+          token: ${{ steps.app-token.outputs.token }}
           branch: automation/dependency-inputs
           title: Review router package and component updates
           commit-message: Propose reviewed router build input updates
           body: |
             Refreshes public snapshot and qualified component selections. Review package versions,
-            upstream advisories, locked patches and source changes. Production signing remains gated
+            supported toolchain proposals, upstream source candidates, advisories and locked patches.
+            Source upgrades need their own patch and behavior review. Production signing remains gated
             by fresh security admission and native qualification. This PR does not approve itself.
           add-paths: |
             build-inputs.json
-            builders/build-inputs.lock
+            builders/**
+            docs/upstream-proposals.json
             security/policy.json
-      - name: Explicitly run checks for the bot proposal
-        if: steps.proposal.outputs.pull-request-number
-        run: gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref automation/dependency-inputs

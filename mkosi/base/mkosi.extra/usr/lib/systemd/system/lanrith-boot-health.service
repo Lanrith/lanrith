@@ -1,20 +1,10 @@
 [Unit]
-Description=Verify the OOB router base before accepting a pending boot
-Requires=nftables.service ssh.service systemd-networkd.service lanrith-network-base.service named.service
-After=nftables.service ssh.service systemd-networkd.service lanrith-network-base.service named.service
+Description=Verify selected router services before boot acceptance
+Requires=nftables.service ssh.service systemd-networkd.service
+After=nftables.service ssh.service systemd-networkd.service
 Before=boot-complete.target
 
 [Service]
 Type=oneshot
-TimeoutStartSec=30s
-TimeoutStopSec=10s
+TimeoutStartSec=60s
 ExecStart=/usr/lib/lanrith/verify-boot-health
-# A staged update can boot either through a boot-counting filename (for
-# example, +3-0) or a stable one-shot filename. Finalize the former only
-# after every local readiness check succeeds; a stable one-shot boot is
-# already ready for the controller's explicit promotion step.
-ExecStartPost=/usr/lib/lanrith/finalize-boot-entry
-ExecStartPost=/usr/lib/lanrith/publish-boot-observation
-
-[Install]
-RequiredBy=boot-complete.target

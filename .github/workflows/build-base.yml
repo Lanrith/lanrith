@@ -27,7 +27,14 @@ jobs:
           go-version: '1.27.2'
           cache: false
       - name: Install the reviewed scanner
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - name: Reserve disk for the complete source and filesystem build
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          python3 - <<'PY'
+          import os,shutil
+          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
+          PY
       - id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -37,6 +44,8 @@ jobs:
       - name: Build packages and the neutral filesystem
         env:
           GH_TOKEN: ${{ github.token }}
+          LANRITH_REUSABLE_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          LANRITH_REUSABLE_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
         run: python3 scripts/build-base.py --work "$RUNNER_TEMP/lanrith-work" --output "$RUNNER_TEMP/lanrith-output"
       - id: builder
         name: Publish the exact builder to its immutable digest
@@ -136,7 +145,18 @@ jobs:
           artifact-ids: ${{ needs.attest.outputs.artifact-id }}
           path: release
           merge-multiple: true
-      - name: Publish qualification release
+      - name: Publish the assessed release
         run: |
-          gh release create "v$PLATFORM_VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Lanrith $PLATFORM_VERSION" --prerelease --generate-notes release/*
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          root=pathlib.Path('release')
+          security=json.loads((root/'security.json').read_text())
+          qualified=security.get('production_qualified') is True and security.get('slsa_spec')=='1.2' and \
+              security.get('slsa_build_level')==3 and security.get('qualification',{}).get('result')=='pass'
+          files=sorted(root.iterdir())
+          assert all(p.is_file() and not p.is_symlink() and p.stat().st_size < 2*1024**3 for p in files), 'A release asset exceeds the GitHub limit'
+          command=['gh','release','create','v'+os.environ['PLATFORM_VERSION'],'--repo',os.environ['GITHUB_REPOSITORY'],
+              '--target',os.environ['GITHUB_SHA'],'--title','Lanrith '+os.environ['PLATFORM_VERSION'],'--generate-notes']
+          if not qualified: command.append('--prerelease')
+          subprocess.run(command+[str(p) for p in files],check=True)
+          PY

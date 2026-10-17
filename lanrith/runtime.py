@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from .release import canonical, read, require, ReleaseError
-from .update import accepted_boot, command, promote, stage
+from .update import accepted_boot, boot_esp, command, promote, stage
 from . import factory
 
 
@@ -36,6 +36,26 @@ def installed():
     return json.loads(read(INSTALLED, 65536))
 
 
+def watchdog_health(policy, *, sysfs=Path('/sys/class/watchdog'), manager_fds=Path('/proc/1/fd')):
+    if not policy or policy['mode'] == 'disabled':
+        return
+    device = Path(policy['device'])
+    observed = sysfs/device.name
+    if not observed.exists():
+        require(policy['mode'] == 'auto', 'Required hardware watchdog is absent.')
+        return
+    require((observed/'state').read_text().strip() == 'active',
+            'Configured hardware watchdog is not active.')
+    for descriptor in manager_fds.iterdir():
+        try:
+            if descriptor.readlink() == device:
+                return
+        except OSError:
+            # Unrelated manager descriptors can close while being observed.
+            continue
+    require(False, 'System manager does not own the configured hardware watchdog.')
+
+
 def health():
     value = installed()
     require(Path('/etc/machine-id').read_text().strip() == value['machine_id'],
@@ -49,7 +69,12 @@ def health():
     for key, setting in expected.items():
         require(Path('/proc/sys', key.replace('.', '/')).read_text().strip() == str(setting),
                 'Required kernel hardening is not active.')
+    loaded = {line.split()[0] for line in Path('/proc/modules').read_text().splitlines() if line}
+    require(not loaded & {'dccp', 'sctp', 'rds', 'tipc', 'can', 'can_raw', 'can_bcm', 'can_gw',
+                          'bluetooth', 'btusb', 'af_802154', 'ieee802154', 'mac802154', 'nfc'},
+            'A disabled kernel protocol module is loaded.')
     factory.secure_boot(value['boot'].get('secure_boot', True))
+    watchdog_health(value.get('watchdog'))
     factory.initialize(value)
     require(Path(value['state_directory'], 'recovery-key-enrolled').is_file(),
             'Offline recovery-key storage is not acknowledged.')
@@ -61,6 +86,8 @@ def health():
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
         if resolved['services'].get(feature, {}).get('enabled'):
             units.append(unit)
+    if resolved['administration']['serial']['enabled']:
+        units.append('lanrith-serial-idle-watchdog.service')
     for unit in units:
         require(command(['systemctl', 'is-active', unit]).strip() == 'active', 'Required service is not active.')
     for network in resolved['networks'].values():
@@ -82,7 +109,7 @@ def publish():
     expected = value['uki_name']
     if current.name != expected:
         command(['/usr/lib/systemd/systemd-bless-boot', 'good'])
-    stable = accepted_boot(current, expected, Path(value['esp']))
+    stable = accepted_boot(current, expected, boot_esp(value))
     boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     require(re.fullmatch(r'[0-9a-f-]{36}', boot_id), 'Invalid boot identity.')
     observation = {'schema': 1, 'accepted': True, 'boot_complete': True, 'boot_id': boot_id,
@@ -144,7 +171,16 @@ def main(arguments=None):
         else:
             print(json.dumps(promote(args.directory), sort_keys=True))
     except (ReleaseError, OSError, ValueError, KeyError) as error:
-        print(str(error) if isinstance(error, ReleaseError) else 'Runtime operation failed.', file=sys.stderr)
+        if isinstance(error, ReleaseError):
+            message = str(error)
+        else:
+            # Paths, command arguments and parser input can contain owner data.
+            # Report only the fixed operation, exception category and errno.
+            details = 'operation='+args.command+'; exception='+type(error).__name__
+            if isinstance(error, OSError) and type(error.errno) is int:
+                details += '; errno='+str(error.errno)
+            message = 'Runtime operation failed. ['+details+']'
+        print(message, file=sys.stderr)
         return 1
     return 0
 

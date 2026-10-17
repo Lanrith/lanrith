@@ -16,6 +16,7 @@ import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
+from lanrith.sbom import go_modules
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,7 +69,7 @@ def main():
             base.locks(ROOT/'builders/vpp-source.lock')['VPP_SECURITY_PATCH_SHA256'],
             'Reviewed VPP security patch differs from its lock.')
     scanner = shutil.which('govulncheck')
-    require(scanner is not None and 'govulncheck@v1.8.0' in
+    require(scanner is not None and 'govulncheck@v1.9.0' in
             run(scanner, '-version', capture_output=True, text=True).stdout,
             'Custom binaries require the reviewed govulncheck version.')
     with tempfile.TemporaryDirectory(prefix='lanrith-custom.', dir=args.output.parent) as temporary:
@@ -84,9 +85,10 @@ def main():
         run('docker', 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--user', str(os.getuid())+':'+str(os.getgid()),
             '--env', 'GOCACHE=/work/go-cache', '--env', 'GOMODCACHE=/work/go-mod', '--env', 'GOENV=off',
+            '--env', 'LANRITH_GO_VERSION='+pin['go_version'],
             '-v', str(work)+':/work', '-v', str(scanner)+':/scanner:ro', '-w', '/work/node-exporter',
             pin['builder'], 'sh', '-ec',
-            'test "$(go env GOVERSION)" = go1.26.9; go mod download all; go mod verify; '
+            'test "$(go env GOVERSION)" = "$LANRITH_GO_VERSION"; go mod download all; go mod verify; '
             './ttar -C collector/fixtures -x -f collector/fixtures/sys.ttar; '
             './ttar -C collector/fixtures -x -f collector/fixtures/udev.ttar; '
             'go test ./...; /scanner ./... > /work/exporter-source.txt; '
@@ -97,19 +99,21 @@ def main():
                       '1.12.1-1+lanrith1', args.output, work/'exporter-notices.txt')
         reports['node-exporter'] = {'source_commit': pin['commit'], 'patch_sha256':
                                     file_record(ROOT/'builders/node-exporter/dependencies.patch')['sha256'],
+                                    'binary_sha256': {'prometheus-node-exporter':
+                                        file_record(work/'node_exporter')['sha256']},
+                                    'go_modules': {'prometheus-node-exporter': go_modules(json.loads(
+                                        run('go', 'version', '-m', '-json', str(work/'node_exporter'),
+                                            capture_output=True, text=True).stdout))},
                                     'scans': {name: file_record(work/name)['sha256']
                                               for name in ('exporter-source.txt', 'exporter-binary.txt')}}
-        alloy = base.locks(ROOT/'builders/alloy-source.lock')
-        package = args.output/f'alloy_{alloy["ALLOY_DEBIAN_VERSION"]}_amd64.deb'
-        run('gh', 'release', 'download', 'v'+alloy['ALLOY_VERSION'], '--repo', 'grafana/alloy',
-            '--pattern', 'alloy-'+alloy['ALLOY_VERSION']+'-1.amd64.deb', '--output', str(package))
-        require(file_record(package)['sha256'] == alloy['ALLOY_DEB_SHA256'], 'Alloy package differs from its lock.')
-        extracted = work/'alloy'
-        run('dpkg-deb', '--extract', str(package), str(extracted))
-        with (work/'alloy-binary.txt').open('w') as stream:
-            run(scanner, '-mode=binary', str(extracted/'usr/bin/alloy'), stdout=stream)
-        reports['alloy'] = {'package_sha256': alloy['ALLOY_DEB_SHA256'],
-                            'scan_sha256': file_record(work/'alloy-binary.txt')['sha256']}
+        run(sys.executable, str(ROOT/'scripts/build-alloy.py'), '--work', str(work/'alloy-build'),
+            '--output', str(args.output), '--evidence', str(work/'alloy-assessment.json'))
+        reports['alloy'] = json.loads((work/'alloy-assessment.json').read_text())
+        # The assessed package contains its notices. Release the large source,
+        # vendor and compiler caches before assembling the remaining filesystem.
+        run('go', 'clean', '-modcache', cwd=work, env={**os.environ, 'GOENV': 'off', 'GOTOOLCHAIN': 'local',
+            'GOMODCACHE': str(work/'alloy-build/modules')})
+        shutil.rmtree(work/'alloy-build')
         pam = work/'pam'
         commit = 'fb6e93908fa5c95fbad7682de081bcc70f341216'
         run('git', 'clone', '--recursive', 'https://github.com/z4yx/pam_rssh.git', str(pam))
@@ -120,19 +124,12 @@ def main():
         # Query every locked Cargo dependency, including build dependencies.
         import tomllib
         locked = tomllib.loads((pam/'Cargo.lock').read_text())
-        queries = [{'package': {'ecosystem': 'crates.io', 'name': package['name']}, 'version': package['version']}
-                   for package in locked['package'] if package.get('source', '').startswith('registry+')]
-        request = urllib.request.Request('https://api.osv.dev/v1/querybatch',
-                                         data=json.dumps({'queries': queries}).encode(),
-                                         headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            result = response.read(8*1024*1024)
-        coverage = json.loads(result)['results']
-        require(len(coverage) == len(queries) and all(not item.get('vulns') for item in coverage),
-                'PAM Cargo dependencies have unresolved advisories.')
+        from lanrith import advisories
+        queries = advisories.cargo_queries(locked)
+        feed_digest = advisories.assess(queries)
         shutil.copyfile(ROOT/'scripts/collect-notices.py', pam/'collect-notices.py')
         argv = ['docker', 'build', '--file', str(ROOT/'builders/pam/Containerfile'), '--tag', 'lanrith-pam:build']
-        argv += [argument for key in ('PAM_RSSH_BUILDER_OCI', 'DEBIAN_BOOKWORM_SNAPSHOT',
+        argv += [argument for key in ('PAM_RSSH_BUILDER_OCI', 'PAM_RSSH_RUST_VERSION', 'DEBIAN_BOOKWORM_SNAPSHOT',
                                      'DEBIAN_BOOKWORM_SECURITY_SNAPSHOT')
                  for argument in ('--build-arg', key+'='+inputs[key])]
         run(*argv, str(pam))
@@ -143,7 +140,7 @@ def main():
         finally:
             run('docker', 'rm', container, stdout=subprocess.DEVNULL)
         reports['pam-rssh'] = {'source_commit': commit, 'cargo_lock_sha256': file_record(pam/'Cargo.lock')['sha256'],
-                               'advisory_feed_sha256': hashlib.sha256(result).hexdigest(),
+                               'advisory_feed_sha256': feed_digest,
                                'queried_packages': len(queries), 'queries': queries}
         # Recheck the exact component binaries independently of their original release age.
         for package in args.output.glob('*.deb'):
@@ -160,6 +157,10 @@ def main():
                     run(scanner, '-mode=binary', str(binary), stdout=stream)
                 scanned[binary.name] = file_record(work/(binary.name+'.scan'))['sha256']
             reports[name] = {'package_sha256': file_record(package)['sha256'], 'scans': scanned}
+            reports[name]['binary_sha256'] = {binary.name: file_record(binary)['sha256'] for binary in binaries}
+            reports[name]['go_modules'] = {binary.name: go_modules(json.loads(
+                run('go', 'version', '-m', '-json', str(binary), capture_output=True, text=True).stdout))
+                for binary in binaries}
     args.evidence.write_bytes(canonical({'schema': 1, 'result': 'pass',
         'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'components': reports}))
 

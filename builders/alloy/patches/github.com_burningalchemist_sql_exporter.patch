@@ -1,0 +1,21 @@
+--- a/drivers.go
++++ b/drivers.go
+@@ -9,6 +9,6 @@
+ 	_ "github.com/lib/pq"
+ 	_ "github.com/microsoft/go-mssqldb/azuread"
+ 	_ "github.com/sijms/go-ora/v2"
+-	_ "github.com/snowflakedb/gosnowflake"
++	_ "github.com/snowflakedb/gosnowflake/v2"
+ 	_ "github.com/vertica/vertica-sql-go"
+ )
+--- a/drivers_gen.go
++++ b/drivers_gen.go
+@@ -24,7 +24,7 @@
+ 	"extra": {
+ 		"github.com/ClickHouse/clickhouse-go/v2",
+ 		"github.com/jackc/pgx/v5/stdlib",
+-		"github.com/snowflakedb/gosnowflake",
++		"github.com/snowflakedb/gosnowflake/v2",
+ 		"github.com/vertica/vertica-sql-go",
+ 		"github.com/sijms/go-ora/v2",
+ 	},

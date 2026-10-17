@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import tarfile
+import uuid
 
 from . import config, extensions, release
 from .release import require
@@ -35,11 +36,19 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     destination.mkdir(mode=0o700, parents=True)
     overlay = destination / 'mkosi.extra'
     digest = config.write(value, overlay)
-    base_files = set()
+    base_files, accounts = set(), {}
     if integrations:
         with tarfile.open(base) as archive:
-            base_files = {m.name.removeprefix('./').rstrip('/') for m in archive if not m.isdir()}
+            for member in archive:
+                name = member.name.removeprefix('./').rstrip('/')
+                if not member.isdir():
+                    base_files.add(name)
+                if name in ('etc/passwd', 'etc/group'):
+                    require(member.isfile() and 0 < member.size <= 1024*1024 and
+                            Path(name).name not in accounts, 'Base service account registry is ambiguous.')
+                    accounts[Path(name).name] = archive.extractfile(member).read()
     integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files)
+    extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
     # The effective intent includes every admitted integration, even when it adds no network fields.
     digest = hashlib.sha256(release.canonical({'configuration': value,
                                              'integrations': integration['digests'],
@@ -50,10 +59,13 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,
                  'update_image_id': image_id, 'platform_version': version, 'deployment_sequence': sequence,
                  'uki_name': f'{image_id}_{sequence}.efi', 'state_directory': '/var/lib/lanrith',
-                 'certificate': '/usr/share/lanrith/owner.crt', 'esp': '/efi',
+                 'certificate': '/usr/share/lanrith/owner.crt', 'esp': 'auto',
                  'integration_health_units': integration['health_units'],
                  'configuration_sha256': digest, 'storage': value['hardware']['storage'],
-                 'boot': value['hardware']['boot'],
+                 'payload_limits': {'root': value['hardware']['storage']['root_mib']*1024*1024,
+                    'verity': max(64, value['hardware']['storage']['root_mib']//16)*1024*1024,
+                    'verity-sig': 16384, 'uki': (value['hardware']['storage']['esp_mib']-32)*1024*1024},
+                 'boot': value['hardware']['boot'], 'watchdog': value['hardware']['watchdog'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
     metadata = overlay / 'usr/share/lanrith'
@@ -69,7 +81,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                         f'{value["administration"]["username"]} -\n')
     library = overlay / 'usr/lib/lanrith/lanrith'
     library.mkdir(parents=True)
-    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py'):
+    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)
@@ -87,14 +99,19 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
         if value['services'].get(feature, {}).get('enabled'):
             required.append(unit)
+    if value['administration']['serial']['enabled']:
+        required.append('lanrith-serial-idle-watchdog.service')
+    required = sorted(set(required))
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
-        f'Requires={" ".join(required)}\nAfter={" ".join(required)}\nBefore=boot-complete.target\n'
+        f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'
+        f'After=lanrith-recovery-key.service {" ".join(required)}\nBefore=boot-complete.target\n'
         '\n[Service]\nType=oneshot\nTimeoutStartSec=60s\nExecStart=/usr/bin/lanrith-runtime health\n'
         '\n[Install]\nRequiredBy=boot-complete.target\n')
     (units / 'lanrith-observation.service').write_text(
-        '[Unit]\nDescription=Publish accepted boot observation\nRequires=boot-complete.target\n'
-        'After=boot-complete.target systemd-bless-boot.service\n'
+        '[Unit]\nDescription=Publish accepted boot observation\nDefaultDependencies=no\n'
+        'Requires=boot-complete.target\nAfter=boot-complete.target systemd-bless-boot.service\n'
+        'Conflicts=shutdown.target\nBefore=shutdown.target\n'
         '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-runtime publish\n'
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
@@ -120,8 +137,13 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
         'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n'
         '\n[Install]\nRequiredBy=multi-user.target\n')
-    for name in ('lanrith-slot-initialization.service', 'lanrith-recovery-key.service', 'boot-complete.target'):
-        path = wants/'multi-user.target.requires'/name
+    # The standard boot check runs after multi-user.target. Pull acceptance in
+    # through the observer without ordering multi-user after its own completion
+    # check. The observer has explicit dependencies so it does not add an
+    # implicit Before=multi-user.target edge. Only its boot observation admits
+    # the running slot; reaching multi-user.target alone never accepts an image.
+    for name in ('lanrith-slot-initialization.service', 'lanrith-recovery-key.service'):
+        path = units/'multi-user.target.requires'/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/'+name)
     if recovery_console != 'tty0':
@@ -130,12 +152,17 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         dropin.write_text('[Unit]\nAfter=lanrith-recovery-key.service\n'
                           'ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n')
     for directory, unit in [('boot-complete.target.requires', 'lanrith-health.service'),
+                            ('boot-complete.target.requires', 'systemd-boot-check-no-failures.service'),
                             ('multi-user.target.wants', 'lanrith-observation.service')] + [
                                 ('multi-user.target.wants', unit) for unit in required]:
-        path = wants / directory / unit
+        # Vendor activation is part of the signed owner policy. Reapplying
+        # distribution presets must not remove a required acceptance check.
+        path = units / directory / unit
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/' + unit)
-    for unit in required:
+    for unit in sorted(set(required) | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
+                                       'lanrith-health.service', 'lanrith-observation.service',
+                                       'lanrith-ssh-host-key.service'}):
         # Replace the base's inactive mask only for explicitly selected health requirements.
         path = wants/unit
         require(not path.exists() and not path.is_symlink(), 'Integration conflicts with a selected service activation.')
@@ -144,13 +171,14 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         tty = value['administration']['serial'].get('tty', 'ttyS0')
         (units/'lanrith-serial-idle-watchdog.service').write_text(
             '[Unit]\nDescription=Expire idle serial administration\n'
+            'Requires=lanrith-recovery-key.service\nAfter=lanrith-recovery-key.service\n'
             f'Upholds=serial-getty@{tty}.service\n'
             'ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n'
             '\n[Service]\nType=exec\nExecStart=/usr/lib/lanrith/serial-idle-watchdog\n'
             'Restart=always\nRestartSec=2s\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n')
-        for unit in ('lanrith-serial-idle-watchdog.service', 'serial-getty@'+tty+'.service'):
-            path = wants/'multi-user.target.wants'/unit
-            path.symlink_to('/usr/lib/systemd/system/'+unit)
+        unit = 'serial-getty@'+tty+'.service'
+        path = units/'multi-user.target.wants'/unit
+        path.symlink_to('/usr/lib/systemd/system/'+unit)
     if certificate is not None:
         require(certificate.is_file() and private_key.is_file(), 'Signing inputs are unavailable.')
         release.public_key(certificate)
@@ -168,22 +196,39 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         part = 'root' if role == 'root' else 'root-' + role
         verity = {'root': 'data', 'verity': 'hash', 'verity-sig': 'signature'}[role]
         text = f'[Partition]\nType={part}\nLabel=l_{sequence}_{role.replace("-", "_")}\n'
+        if role == 'verity-sig':
+            # Permanent machine identity must not give successive deployments the
+            # same signature-partition UUID as the still-active accepted slot.
+            text += 'UUID='+str(uuid.uuid5(uuid.UUID(machine_id), f'{image_id}/{sequence}/{role}'))+'\n'
+        elif role == 'verity':
+            # Repart can grow the last existing root but cannot move it to make
+            # room for a preceding hash partition on first boot.
+            capacity = max(64, storage['root_mib']//16)
+            text += f'SizeMinBytes={capacity}M\nSizeMaxBytes={capacity}M\n'
         text += f'Verity={verity}\nVerityMatchKey=root\nSplitName={role}\n'
         if role == 'root':
-            text += 'Format=erofs\nCopyFiles=/\nExcludeFilesTarget=/var/\nMinimize=yes\n'
+            text += 'Format=erofs\nCopyFiles=/\nExcludeFilesTarget=/var/\nMinimize=best\n'
             if 'root_mib' in storage:
                 text += f'SizeMaxBytes={storage["root_mib"]}M\n'
         (repart / f'{index}-{role}.conf').write_text(text)
     initrd = destination/'mkosi.images/initrd'
     initrd.mkdir(parents=True)
     (initrd/'mkosi.conf').write_text(
-        '[Distribution]\nDistribution=debian\nRelease=trixie\nArchitecture=x86-64\n'
-        f'\n[Output]\nFormat=cpio\nOutput=initrd\nOutputDirectory={destination/"output"}\n'
+        '[Output]\nFormat=cpio\nOutput=initrd\n'
         'CompressOutput=zstd\nManifestFormat=\nSplitArtifacts=\n'
-        f'\n[Content]\nBaseTrees={initrd_base}\nBootable=no\nMakeInitrd=yes\nMachineID={machine_id}\n')
+        f'\n[Content]\nBaseTrees={initrd_base}\nBootable=no\nMakeInitrd=yes\n')
+    (initrd/'mkosi.machine-id').write_text(machine_id+'\n')
     initrd_overlay = initrd/'mkosi.extra'
     (initrd_overlay/'etc').mkdir(parents=True)
     (initrd_overlay/'etc/machine-id').write_text(machine_id+'\n')
+    watchdog = value['hardware']['watchdog']
+    timeout = 'off' if watchdog['mode'] == 'disabled' else str(watchdog['timeout_seconds'])+'s'
+    for tree in (overlay, initrd_overlay):
+        path = tree/'usr/lib/systemd/system.conf.d/60-lanrith-watchdog.conf'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('[Manager]\nWatchdogDevice='+watchdog['device']+'\n'
+                        'RuntimeWatchdogSec='+timeout+'\n'+
+                        ('RebootWatchdogSec=off\n' if watchdog['mode'] == 'disabled' else ''))
     initrd_masks = initrd_overlay/'etc/systemd/system'
     initrd_masks.mkdir(parents=True)
     (initrd_masks/'systemd-repart.service').symlink_to('/dev/null')
@@ -198,14 +243,21 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     entry.chmod(0o755)
     (initrd_units/'lanrith-factory.service').write_text(
         '[Unit]\nDescription=Verify factory media and explicitly provision the selected disk\n'
-        'DefaultDependencies=no\nRequires=initrd-root-fs.target\nAfter=initrd-root-fs.target\n'
-        'Before=initrd-switch-root.target\nOnFailure=emergency.target\n'
-        '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-factory provision\n'
+        'DefaultDependencies=no\nRequires=initrd-root-fs.target\nAfter=initrd-root-fs.target systemd-udev-trigger.service\n'
+        'Before=initrd-udevadm-cleanup-db.service initrd-cleanup.service initrd-switch-root.target shutdown.target\n'
+        'Conflicts=shutdown.target\n'
+        'OnFailure=emergency.target\nOnFailureJobMode=isolate\n'
+        '\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/lanrith-factory provision\n'
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
         'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n')
     link = initrd_overlay/'usr/lib/systemd/system/initrd-switch-root.target.requires/lanrith-factory.service'
     link.parent.mkdir(parents=True)
     link.symlink_to('../lanrith-factory.service')
+    # The distribution switch-root service only Wants its target. A failed
+    # requirement of that target must also prevent the service switching root.
+    boundary = initrd_units/'initrd-switch-root.service.d/60-lanrith-provisioning.conf'
+    boundary.parent.mkdir(parents=True)
+    boundary.write_text('[Unit]\nRequires=lanrith-factory.service\nAfter=lanrith-factory.service\n')
     trust_path = initrd_overlay/'etc/verity.d'
     trust_path.mkdir(parents=True)
     if certificate:
@@ -220,7 +272,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             f'\n[Output]\nFormat=disk\nImageId={image_id}\nImageVersion={sequence}\n'
             f'Output={image_id}_{sequence}\nOutputDirectory={destination / "output"}\n'
             'SplitArtifacts=uki,partitions\nManifestFormat=json\n'
-            f'\n[Content]\nBaseTrees={base}\nBootable=yes\nShimBootloader=signed\nInitrds=%O/initrd\nMachineID={machine_id}\n'
+            f'\n[Content]\nBaseTrees={base}\nBootable=yes\nShimBootloader=signed\nInitrds=%O/initrd\n'
             f'KernelCommandLine=console={boot.get("console", "tty0")} systemd.log_target=journal-or-kmsg '
             'systemd.journald.forward_to_console=0 systemd.journald.forward_to_kmsg=0 '
             f'systemd.journald.forward_to_wall=0{kernel}\n'

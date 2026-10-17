@@ -1,0 +1,54 @@
+#!/usr/bin/python3
+"""Keep the complete updater toolset before mkosi cleans package ownership data."""
+
+import json
+import os
+from pathlib import Path
+
+
+UPDATE_TOOLS = {'usr/lib/systemd/systemd-sysupdate', 'usr/lib/systemd/systemd-import',
+                'usr/lib/systemd/systemd-import-fs', 'usr/lib/systemd/systemd-pull'}
+
+
+def prune(root):
+    removed = {}
+
+    def delete(path):
+        if path.is_symlink() or path.is_file():
+            removed[path.relative_to(root).as_posix()] = path.lstat().st_size
+            path.unlink()
+        elif path.is_dir():
+            for child in list(path.iterdir()):
+                delete(child)
+            path.rmdir()
+
+    listings = list((root/'var/lib/dpkg/info').glob('systemd-container*.list'))
+    if len(listings) != 1:
+        raise ValueError('Required updater package ownership data is missing or ambiguous.')
+    entries = [entry.removeprefix('/') for entry in listings[0].read_text().splitlines()]
+    if not UPDATE_TOOLS <= set(entries):
+        raise ValueError('Debian updater package lacks its required helper set.')
+    removed_units = set()
+    for name in entries:
+        if Path(name).is_absolute() or '..' in Path(name).parts:
+            raise ValueError('Unsafe package-owned path.')
+        path = root/name
+        if name in UPDATE_TOOLS or name.startswith('usr/share/doc/systemd-container/'):
+            continue
+        if path.is_file() or path.is_symlink():
+            if name.startswith('usr/lib/systemd/system/'):
+                removed_units.add(path.name)
+            delete(path)
+    portable = root/'usr/lib/systemd/portable'
+    if portable.exists():
+        delete(portable)
+    for path in (root/'etc/systemd/system').rglob('*'):
+        if path.is_symlink() and path.name in removed_units and path.readlink() != Path('/dev/null'):
+            delete(path)
+    return {'schema': 1, 'removed_bytes': sum(removed.values()), 'removed_paths': len(removed)}
+
+
+if __name__ == '__main__':
+    result = prune(Path(os.environ['BUILDROOT']))
+    (Path(os.environ['OUTPUTDIR'])/'lanrith-base.container-pruning.json').write_text(
+        json.dumps(result, sort_keys=True)+'\n')

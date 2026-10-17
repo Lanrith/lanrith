@@ -12,9 +12,13 @@ def version(text):
     return tuple(map(int, text.split('.')))
 
 desired = version(Path('VERSION').read_text().strip())
-result = subprocess.run(['gh', 'api', 'repos/'+os.environ['GITHUB_REPOSITORY']+'/releases?per_page=100'],
+result = subprocess.run(['gh', 'api', '--paginate', '--slurp',
+                        'repos/'+os.environ['GITHUB_REPOSITORY']+'/releases?per_page=100'],
                         check=True, capture_output=True, text=True)
-published = [version(item['tag_name'][1:]) for item in json.loads(result.stdout)
+pages = json.loads(result.stdout)
+if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+    raise ValueError('Published release enumeration is malformed.')
+published = [version(item['tag_name'][1:]) for page in pages for item in page
              if not item['draft'] and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
 if published and desired <= max(published):
     last = max(published)

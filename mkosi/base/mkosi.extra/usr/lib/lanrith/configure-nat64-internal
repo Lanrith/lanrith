@@ -4,7 +4,7 @@
 # no IPv4 client gateway, DHCP scope, or NAT44 route.
 set -eu
 
-. /usr/lib/lanrith/network-profile.sh
+. /etc/lanrith/integrations/network-profile.sh
 . /usr/lib/lanrith/network-checks.sh
 
 interface=$lanrith_nat64_internal_interface

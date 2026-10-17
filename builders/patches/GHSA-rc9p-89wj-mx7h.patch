@@ -1,4 +1,4 @@
-From: Homelab router factory
+From: Lanrith router platform
 Subject: [PATCH] vrrp: bound traced address copies to packet and trace sizes
 Origin: https://github.com/FDio/vpp/security/advisories/GHSA-rc9p-89wj-mx7h
 Upstream-Commit: 5f8945c08a1ed15dc39d60ce32bdc3eb62a1ab74
