@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
-from lanrith import advisories, embedded
+from lanrith import advisories, build_cache, embedded
 
 
 def run(*arguments, **kwargs):
@@ -102,9 +102,26 @@ def main():
     tag = 'localhost/lanrith-alloy-builder:'+identity
     command = [args.engine, 'build', '--pull', '--platform', 'linux/amd64', '--file',
                str(definition/'Containerfile'), '--tag', tag]
+    if args.engine == 'docker':
+        command += build_cache.image_arguments('alloy')
     for name, value in sorted(image_inputs.items()):
         command += ['--build-arg', name+'='+value]
-    run(*command, str(definition))
+    if args.engine != 'docker' or not build_cache.reuse_image('alloy', tag):
+        run(*command, str(definition))
+    if args.engine == 'docker':
+        build_cache.record_image('alloy', tag)
+    compiler_identity = identity
+    if build_cache.state()[0] is not None:
+        try:
+            probe = run(args.engine, 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
+                '--security-opt', 'no-new-privileges', '--user', str(os.getuid())+':'+str(os.getgid()),
+                '-v', str(ROOT)+':/implementation:ro', tag, 'python3',
+                '/implementation/scripts/compiler-identity.py', capture_output=True, text=True,
+                timeout=180).stdout.strip()
+            require(re.fullmatch(r'[0-9a-f]{64}', probe), 'Invalid compiler environment fingerprint.')
+            compiler_identity = build_cache.compiler_key(image_inputs, probe)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            print('Compiler fingerprint unavailable; requiring the complete pinned builder identity.')
     scanner = shutil.which('govulncheck')
     require(scanner and 'govulncheck@v1.9.0' in
             run(scanner, '-version', capture_output=True, text=True).stdout, 'Unexpected Alloy scanner.')
@@ -119,6 +136,7 @@ def main():
     for name in ('home', 'cache', 'modules', 'gopath', 'tmp'):
         if not args.resume:
             (args.work/name).mkdir(mode=0o700)
+    ci_cache_reused = not args.resume and build_cache.restore_compiler(args.work/'cache', compiler_identity)
     if args.cache_from:
         require(not os.environ.get('GITHUB_ACTIONS') and args.cache_from.resolve() == args.cache_from and
                 args.cache_from.stat().st_uid == os.getuid() and not args.cache_from.stat().st_mode & 0o077,
@@ -202,7 +220,8 @@ def main():
     package_tools('dpkg-deb', '--build', '--root-owner-group', '/work/'+tree.name, '/packages/'+output.name)
     args.evidence.write_bytes(canonical({**evidence, 'package_sha256': file_record(output)['sha256'],
         'embedded_beyla': embedded_record,
-        'cache_reused': args.cache_from is not None,
+        'cache_reused': args.cache_from is not None or ci_cache_reused,
+        'compiler_identity': compiler_identity,
         'upstream_deb_sha256': pin['upstream_deb_sha256'], 'fresh_source_advisories': feeds,
         'source_fix_ancestry': source_fixes,
         'npm_osv_feed_sha256': npm_assessment,
@@ -210,6 +229,8 @@ def main():
                        'advisory_feed_sha256': java_assessment},
         'builder_definition_sha256': file_record(definition/'Containerfile')['sha256'],
         'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}))
+    if not args.resume:
+        build_cache.retain_compiler(args.work/'cache', compiler_identity)
     print('Pinned Alloy package built and freshly assessed.')
 
 

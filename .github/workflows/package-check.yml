@@ -3,14 +3,28 @@ on:
   pull_request:
     paths: ['builders/**', 'scripts/**', 'security/**', 'mkosi/**', 'lanrith/**', 'tests/**', 'build-inputs.json', 'VERSION', '.github/workflows/**']
   workflow_dispatch:
+    inputs:
+      cold_build:
+        description: Ignore cross-run cache data for an independent clean qualification
+        type: boolean
+        default: false
 permissions:
   contents: read
+cache-mode: none
 concurrency:
   group: package-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 jobs:
-  build:
-    name: Unsigned base and package checks
+  cache:
+    if: ${{ !inputs.cold_build }}
+    cache-mode: read
+    uses: ./.github/workflows/restore-cache.yml
+  packages:
+    needs: cache
+    if: ${{ !cancelled() }}
+    name: Unsigned package compilation
+    outputs:
+      artifact-id: ${{ steps.stage.outputs.artifact-id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -29,15 +43,62 @@ jobs:
           import os,shutil
           assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
           PY
-      - name: Build and assess the complete neutral filesystem
+      - name: Receive opaque cache data on the fresh build VM
+        if: needs.cache.outputs.artifact-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.cache.outputs.artifact-id }}
+          path: ${{ runner.temp }}/lanrith-cache-candidate
+          merge-multiple: true
+      - name: Compile and assess packages without privileged containers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/build-base.py --work "$RUNNER_TEMP/lanrith-work" --output "$RUNNER_TEMP/lanrith-output"
+          CACHE_ARTIFACT: ${{ needs.cache.outputs.artifact-id }}
+        run: |
+          args=()
+          if [[ -n "$CACHE_ARTIFACT" ]]; then args+=(--cache-input "$RUNNER_TEMP/lanrith-cache-candidate"); fi
+          python3 scripts/build-base.py --phase packages --work "$RUNNER_TEMP/lanrith-package-work" --output "$RUNNER_TEMP/lanrith-package-output" "${args[@]}"
+      - id: stage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-package-stage-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lanrith-package-output/package-stage.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+  build:
+    needs: packages
+    name: Unsigned filesystem and native qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Reserve native qualification disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          python3 - <<'PYTHON'
+          import os,shutil
+          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
+          PYTHON
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.packages.outputs.artifact-id }}
+          path: ${{ runner.temp }}/lanrith-package-stage
+          merge-multiple: true
+      - name: Assemble and qualify the exact package stage on a separate VM
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/build-base.py --phase image --work "$RUNNER_TEMP/lanrith-work" --output "$RUNNER_TEMP/lanrith-output" \
+            --package-stage "$RUNNER_TEMP/lanrith-package-stage/package-stage.tar.gz"
       - name: Retain qualification outputs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unsigned-package-qualification
+          name: unsigned-package-qualification-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/lanrith-output/*
             ${{ runner.temp }}/lanrith-work/packages/*

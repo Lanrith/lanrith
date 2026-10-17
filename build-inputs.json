@@ -27,7 +27,7 @@
     }
   },
   "custom_package_inputs": {
-    "builders/alloy/Containerfile": "b3201470534e6d3ceea573025e2546602353d4cc85b4d85a5705135ae5264857",
+    "builders/alloy/Containerfile": "d17ddaa1d0a7afd9a06b3843e33bd52c8a8a563a9da7f21e9d9cfcd0189661dc",
     "builders/alloy/dependencies.patch": "3fb12fe2fd01a8b37e173187f9083a74c6ec2873eb0d7f376d306c31ce7e2d46",
     "builders/alloy/licenses/ioctl-LICENSE": "27d4be84d5a5e09f13ddda42f80d4fe846b2f65cf830f70d21a2bf4b623ab885",
     "builders/alloy/loki-compatibility.patch": "a1e10fc5d80c3817829026e7c1b31c2241b2b653053c16af176d46814004096c",
@@ -37,17 +37,18 @@
     "builders/alloy/source.json": "28fe1c280a3f6aaaaa84a197208e232779a18f19750148ce860b4431d1cc1d00",
     "builders/alloy/ui-dependencies.patch": "12bd0cf639d82f128f364743a0873f2fab9357534d630449ce09e342fc698206",
     "builders/build-inputs.lock": "d1e6d19f8f1fc55eb5ecd5e7035d54063370c8ecf5f25b983cb6b22a37f8517c",
-    "builders/mkosi/Containerfile": "3921694024b8fd902059cfee85756162bfccaaf111a6fa08a8d2672385054351",
+    "builders/mkosi/Containerfile": "55e4e902a27db01837d7f88a69d4ad8e53887c4f93c08b0de0982e2795a40736",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "dafa25364dffccd9b4f575920fc26d1d09419d6a02524533ae06b1de3a800f97",
-    "builders/pam/Containerfile": "7e600fc05d7ab17fd228ed7b3ecfea2575f8af2954d2dd4ab976e53f2f677343",
+    "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",
+    "builders/pam/Containerfile": "5c65522d02b1062c5ea61441aee839f9d59f1f97d1b3eea795abb0d98e2e531f",
     "builders/patches/GHSA-rc9p-89wj-mx7h.patch": "331f3464663b277a29bdd924d9385672355d68e313d799889aa89ce0803414bb",
     "builders/tayga-source.lock": "47fe031be8568eb3db5751b366c88108cdf9adce3b32ff4d928536093e71d6dc",
-    "builders/tayga/Containerfile": "ba86edc0b1778e576213f574b0dc1d77d0264f07eb3f6a744b2559ccf0366be5",
+    "builders/tayga/Containerfile": "7907f28a5146ce1319147f2c7ed6d9e8f1cfa84c654eecd1344536b1967fcb89",
     "builders/unbound-source.lock": "50570574c939e538a95c30304acf6bb5b68ef694133c76077d656d5bfa3bd7d7",
-    "builders/unbound/Containerfile": "a6d4aad00d4197c225cb74885ccff0485e3797ceb4a43f3ae1b18b0dcee51fdf",
+    "builders/unbound/Containerfile": "5ab04367ffcdfaccbf631b09a17de6a3b42dc55f892a8c2358536e4de0e02289",
     "builders/vpp-source.lock": "aff9ec73e3c1f47e0cc968fe70eca5825c4658d0a724268ccce387401ba1f55f",
-    "builders/vpp/Containerfile": "eb86698d84e832d908023c4fbb9ca6ce594654429d837d0620eea83eb3c2e5c5"
+    "builders/vpp/Containerfile": "8e83ccd74bd7c747a3429e7fd76f685f3f15218bbd48ebab55fca270957b25fa"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
   "debian_snapshot": "20261016T100000Z",

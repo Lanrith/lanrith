@@ -29,6 +29,52 @@ advanced integrations require their own qualification.
 After changing a release workflow, reassess its controls and update the hashes
 in `security/slsa-assessment.json`. A stale assessment blocks publication.
 
+GitHub Actions caching saves package-builder images with BuildKit's inline
+cache metadata, plus up to 4 GiB of Alloy compiler objects. It does not retain
+owner inputs, signing keys, test VMs, filesystem output or security reports.
+Each compressed cache handoff is limited to 5 GiB; cache storage remains subject
+to GitHub's repository quota and eviction policy. No paid storage is enabled by
+the workflow. The first build and an evicted cache require a full build.
+
+The cache service is an untrusted download source. A separate runner restores
+its archive and forwards only opaque files by immutable artifact ID. The fresh
+build VM verifies both cache subjects with GitHub/Sigstore provenance, requiring
+this repository, hosted runners, `main`, and the exact source and signer commit.
+It independently checks the producer's Python code, container recipes, Alloy
+source definitions and workflows against GitHub's source tree. A signature from
+an incompatible historical workflow is insufficient. Cached Docker imports can
+create only the selected Lanrith tags; they cannot replace pinned base images.
+
+An image with the same complete input identity is reused directly. BuildKit
+matches other available image layers against their build inputs. Alloy compiler reuse
+also requires identical reviewed source definitions and a fingerprint of the
+installed tools, headers, C libraries, loader configuration and symlink choices.
+The compiler key also includes the reviewed Debian, Go and Node OCI digests;
+a different base cannot substitute matching probe output.
+A new Debian snapshot can reuse compiler data when those actual bytes remain
+identical. A compiler, library or Alloy source change forces the affected work
+to rebuild. Source checkouts and dependency verification remain fresh. Alloy's
+behavior tests use `-count=1` so a compiler cache cannot suppress test execution.
+
+Package compilation runs without privileged containers on its own VM. It seals
+and uploads package and cache data by immutable artifact ID. Image assembly and
+VM qualification run on a different fresh VM, which cannot change the compiler
+job's artifact or its control-plane output. The attestation job receives cache
+data directly from the compiler job, and signs it only after production
+qualification succeeds. It then saves that authenticated data to Actions caching.
+Build jobs have no cache-write capability; PRs receive read-only cache access
+and cannot publish cache entries. Every release still assembles new filesystems,
+fetches current vulnerability data, scans the actual binaries, runs native
+boot and update qualification, and signs the resulting subjects independently.
+Missing, corrupt, unverifiable or unavailable cache data causes a clean build.
+Cache export failure does not block an otherwise qualified release.
+
+The manual Package qualification workflow accepts `cold_build: true` to ignore
+cross-run data. Use it to compare a clean qualification with a warm run. The
+release's `build-cache.json` records cache admission, and Alloy evidence records
+whether its compiler cache was used. Cache hits alone are not a performance
+measurement; compare completed hosted runs before reporting a time saving.
+
 `platform.lock` pins the Lanrith repository, release, source commit, signer
 workflow commit, security workflow commit, manifest, all selected files and the
 matching builder digest. `gh attestation verify` enforces the repository,

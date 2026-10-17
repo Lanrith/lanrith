@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import stat
 import sys
 import tempfile
 import urllib.request
@@ -16,6 +17,7 @@ import gzip
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require, unsigned_manifest
+from lanrith import build_cache, package_stage
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -46,14 +48,19 @@ def image(component, work, inputs):
     if component != 'mkosi':
         values.update(locks(PROJECT / 'builders' / (component + '-source.lock')))
     identifier = hashlib.sha256(canonical({'arguments': values, 'files': {
-        p.relative_to(context).as_posix(): file_record(p)['sha256']
+        p.relative_to(context).as_posix(): {'sha256': file_record(p)['sha256'],
+                                         'mode': stat.S_IMODE(p.stat().st_mode)}
         for p in sorted(context.rglob('*')) if p.is_file()}})).hexdigest()
     tag = 'lanrith-' + component + ':' + identifier
+    if build_cache.reuse_image(component, tag):
+        return tag
     argv = ['docker', 'build', '--pull', '--platform', 'linux/amd64', '--file', str(context / 'Containerfile'),
             '--tag', tag]
+    argv += build_cache.image_arguments(component)
     for key, value in sorted(values.items()):
         argv += ['--build-arg', key + '=' + value]
     run(*argv, str(context))
+    build_cache.record_image(component, tag)
     return tag
 
 
@@ -93,27 +100,12 @@ def components(selection, destination):
             shutil.copyfile(path, destination / path.name)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--work', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    args = parser.parse_args()
-    args.work = args.work.resolve()
-    args.output = args.output.resolve()
-    require(not args.work.exists() and not args.output.exists(), 'Build directories must be new.')
-    selection = json.loads((PROJECT / 'build-inputs.json').read_text())
-    recipes = {p.relative_to(PROJECT).as_posix(): file_record(p)['sha256']
-               for p in sorted((PROJECT/'builders').rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
-    require(selection['custom_package_inputs'] == recipes, 'Builder recipes differ from the reviewed input lock.')
-    # Resolve these before allocating an expensive builder. Empty pins are deliberately ineligible.
-    require(set(selection['component_releases']) == {'discovery-bridge', 'router-policy-agent'},
-            'Fresh Lanrith component release pins are required; old release evidence cannot be reused.')
-    args.work.mkdir(mode=0o700)
-    args.output.mkdir(mode=0o755)
+def compile_packages(args, selection, inputs):
+    cache_receipt = build_cache.initialize(PROJECT, args.work, args.cache_input, os.environ)
+    (args.output/'build-cache.json').write_bytes(canonical(cache_receipt))
     packages = args.work / 'packages'
     packages.mkdir()
     components(selection['component_releases'], packages)
-    inputs = locks(PROJECT / 'builders/build-inputs.lock')
     for key in ('DEBIAN_RELEASE_SHA256', 'DEBIAN_SECURITY_RELEASE_SHA256',
                 'DEBIAN_BOOKWORM_RELEASE_SHA256', 'DEBIAN_BOOKWORM_SECURITY_RELEASE_SHA256'):
         prefix = 'DEBIAN_BOOKWORM' if 'BOOKWORM' in key else 'DEBIAN'
@@ -145,6 +137,53 @@ def main():
     shutil.copyfile(args.work/'custom-security.json',args.output/'custom-security.json')
     run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
     run('docker', 'save', '--output', str(args.output / 'builder.tar'), builder)
+    return builder
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--cache-input', type=Path)
+    parser.add_argument('--cache-output', type=Path)
+    parser.add_argument('--phase', choices=('all', 'packages', 'image'), default='all')
+    parser.add_argument('--package-stage', type=Path)
+    args = parser.parse_args()
+    args.work = args.work.resolve()
+    args.output = args.output.resolve()
+    require(not args.work.exists() and not args.output.exists(), 'Build directories must be new.')
+    selection = json.loads((PROJECT / 'build-inputs.json').read_text())
+    recipes = {p.relative_to(PROJECT).as_posix(): file_record(p)['sha256']
+               for p in sorted((PROJECT/'builders').rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
+    require(selection['custom_package_inputs'] == recipes, 'Builder recipes differ from the reviewed input lock.')
+    # Resolve these before allocating an expensive builder. Empty pins are deliberately ineligible.
+    require(set(selection['component_releases']) == {'discovery-bridge', 'router-policy-agent'},
+            'Fresh Lanrith component release pins are required; old release evidence cannot be reused.')
+    args.work.mkdir(mode=0o700)
+    args.output.mkdir(mode=0o755)
+    inputs = locks(PROJECT / 'builders/build-inputs.lock')
+    version = (PROJECT/'VERSION').read_text().strip()
+    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
+    if args.phase == 'image':
+        require(args.package_stage is not None and args.cache_input is None and args.cache_output is None,
+                'Image qualification accepts only its immutable same-run package stage.')
+        os.environ.pop('LANRITH_BUILD_CACHE', None)
+        builder = package_stage.restore(args.package_stage, PROJECT, args.work, args.output,
+                                        version, os.environ['GITHUB_SHA'])
+        build_cache.validate_images(args.output/'builder.tar', {'mkosi': builder})
+        run('docker', 'load', '--input', str(args.output/'builder.tar'))
+        run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:'+os.environ['GITHUB_SHA'])
+    else:
+        require(args.package_stage is None and (args.cache_output is None or args.phase == 'packages'),
+                'Cache production must be isolated from privileged image qualification.')
+        builder = compile_packages(args, selection, inputs)
+        if args.phase == 'packages':
+            cache_seal = build_cache.export(PROJECT, args.cache_output, os.environ) if args.cache_output else None
+            package_stage.write(PROJECT, args.work, args.output, builder, version, os.environ['GITHUB_SHA'])
+            if args.cache_output:
+                build_cache.offer(args.cache_output, cache_seal, os.environ)
+            return
+    packages = args.work/'packages'
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',
         '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
         '-v', str(args.output)+':/output', builder,
@@ -153,8 +192,6 @@ def main():
     build = args.work / 'image'
     build.mkdir()
     shutil.copytree(PROJECT / 'mkosi/base', build, dirs_exist_ok=True)
-    version = (PROJECT / 'VERSION').read_text().strip()
-    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version), 'Invalid platform release version.')
     platform = build/'mkosi.extra/usr/share/lanrith'
     platform.mkdir(parents=True,exist_ok=True)
     (platform/'platform-version').write_text(version+'\n')
@@ -218,6 +255,9 @@ def main():
         '--base', '/output/lanrith-base.tar.gz', '--initrd-base', '/output/lanrith-initrd-base.tar.gz',
         '--work', '/work/vm-qualification', '--result', '/output/native-qualification.json')
     run(sys.executable, str(PROJECT/'scripts/qualify-base.py'), '--directory', str(args.output))
+    if json.loads((args.output/'security.json').read_text()).get('production_qualified') is True and os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('production-qualified=true\n')
 
 
 if __name__ == '__main__':

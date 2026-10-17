@@ -5,7 +5,9 @@
     "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating",
     "https://docs.github.com/en/actions/concepts/runners/github-hosted-runners",
     "https://docs.github.com/en/actions/reference/security/oidc",
-    "https://docs.github.com/en/actions/reference/workflows-and-actions/variables"
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/variables",
+    "https://slsa.dev/spec/v1.2/threats#poison-the-build-cache",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching"
   ],
   "requirements": {
     "appropriate-platform": {
@@ -29,7 +31,7 @@
       "result": "satisfied-by-design"
     },
     "isolated-caches": {
-      "evidence": "No cross-run build cache is restored. setup-go cache is disabled; Alloy rejects retained local cache inputs in GitHub Actions. Dependency/image downloads use the reviewed hashes, commits or OCI digests.",
+      "evidence": "Cache-service extraction is isolated on a disposable read-only-cache runner. The separate package compilation VM authenticates SHA-256 provenance for both cache subjects, pins repository/main/hosted/source/signer identity, and independently compares producer Python, container recipes, Alloy definitions and workflows with GitHub source. Exact input identities govern complete image reuse; BuildKit keys govern remaining layers. Alloy also requires matching installed tool/header/library/loader bytes. Compilation uses no privileged containers. Package and cache outputs are sealed and uploaded by immutable artifact ID before a different VM performs privileged image and boot qualification. The signing job receives cache data directly from the compiler job and attests/saves it only after the native job records production qualification. Native code cannot change the compiler job artifact or its control-plane output. Build workers have cache-mode none; restore is read-only and signing/save is write-only. Invalid or unavailable cache data falls back to a clean build; reports, scans and native qualification are fresh.",
       "result": "satisfied-by-design"
     },
     "isolated-concurrent-builds": {
@@ -67,9 +69,10 @@
   },
   "result": "design-assessed",
   "reviewed_workflows": {
-    ".github/workflows/build-base.yml": "6f2a07ac7c3684baac2ca37ac182875966f29f9776e351ac0d131c6279217fd6",
-    ".github/workflows/check.yml": "099ceaf4bf444d5829e21f0f083908c9f983e9a435a6f2f1364c6fb67aa90d22",
-    ".github/workflows/release.yml": "5779d5ad5b487e3a270737dbd1548797141bbb64e4b7ecddbd884ce3d95beae8"
+    ".github/workflows/build-base.yml": "2b89f365dd4c466ad49d0c5072d7437934d180a538d9f0b73430013fb2a05c38",
+    ".github/workflows/check.yml": "d18d0ec6571e1972c4fe92374fcf23b98fe66bb5717b1263848e08ae7c833183",
+    ".github/workflows/release.yml": "5779d5ad5b487e3a270737dbd1548797141bbb64e4b7ecddbd884ce3d95beae8",
+    ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f"
   },
   "schema": 1,
   "specification": "SLSA v1.2",

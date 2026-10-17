@@ -44,7 +44,8 @@ class QualificationTests(unittest.TestCase):
         (directory/'storage-qualification.json').write_bytes(release.canonical({'schema': 1, 'result': 'pass',
             'test': 'factory-slot-expansion', 'initial_partitions': 4, 'expanded_partitions': 8}))
         workflows = {}
-        for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml', '.github/workflows/check.yml'):
+        for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
+                     '.github/workflows/check.yml', '.github/workflows/restore-cache.yml'):
             path = project/name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('synthetic workflow fixture')

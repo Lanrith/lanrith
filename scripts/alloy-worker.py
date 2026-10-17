@@ -165,7 +165,7 @@ def main():
     run('go', 'mod', 'vendor', cwd=beyla)
     evidence = work/'evidence'
     evidence.mkdir()
-    run('go', 'test', '-mod=vendor', './pkg/config', './pkg/helpers/config', './pkg/beyla',
+    run('go', 'test', '-count=1', '-mod=vendor', './pkg/config', './pkg/helpers/config', './pkg/beyla',
         cwd=beyla, env={**os.environ, 'CGO_ENABLED': '0'})
     beyla_binary = work/'beyla-security'
     flags = ('-X github.com/grafana/beyla/v3/pkg/buildinfo.Version=v'+selected['beyla']['version']+
@@ -212,9 +212,9 @@ def main():
     module_copy(work, 'github.com/grafana/loki/v3', 'v3.7.8', loki)
     patch(loki, definition/'loki-compatibility.patch', strip=5)
     run('go', 'mod', 'edit', '-replace=github.com/grafana/loki/v3=./lanrith-patches/loki', cwd=source)
-    run('go', 'test', '-mod=mod', '-race', './internal/component/loki/write',
+    run('go', 'test', '-count=1', '-mod=mod', '-race', './internal/component/loki/write',
         './internal/component/prometheus/exporter/snowflake', './internal/web/ui', cwd=source)
-    run('go', 'test', '-mod=mod', 'github.com/burningalchemist/sql_exporter/config', cwd=source)
+    run('go', 'test', '-count=1', '-mod=mod', 'github.com/burningalchemist/sql_exporter/config', cwd=source)
     require(hashlib.sha256(original_components).hexdigest() == file_record(source/component_file)['sha256'],
             'Alloy component registration changed; removing features is not an accepted security fix.')
     binary = work/'alloy-security'

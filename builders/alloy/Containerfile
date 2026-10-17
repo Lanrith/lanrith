@@ -9,6 +9,8 @@ ARG DEBIAN_SNAPSHOT
 ARG DEBIAN_SECURITY_SNAPSHOT
 ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=go /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
+
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
  && printf '%s\n' 'Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";' \
       > /etc/apt/apt.conf.d/99-lanrith-tls \

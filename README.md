@@ -36,6 +36,9 @@ hooks. See [configuration and integrations](docs/configuration.md).
 
 Public CI builds the complete package universe, a neutral root filesystem,
 neutral initrd filesystem, compiler tools and the matching builder image.
+GitHub Actions reuses authenticated builder and compiler cache data; security
+assessment and native qualification run again for each release. Cache misses
+fall back to a full build. See [cache admission and clean builds](docs/build-and-trust.md).
 [Package policy](security/policy.json) and [package selection](mkosi/packages.json)
 are reviewed inputs. [Discovery Bridge](https://github.com/Lanrith/discovery-bridge)
 and [Router Policy Agent](https://github.com/Lanrith/router-policy-agent) have

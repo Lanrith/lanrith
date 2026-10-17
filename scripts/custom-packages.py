@@ -17,6 +17,7 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
 from lanrith.sbom import go_modules
+from lanrith import build_cache
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,12 +129,24 @@ def main():
         queries = advisories.cargo_queries(locked)
         feed_digest = advisories.assess(queries)
         shutil.copyfile(ROOT/'scripts/collect-notices.py', pam/'collect-notices.py')
-        argv = ['docker', 'build', '--file', str(ROOT/'builders/pam/Containerfile'), '--tag', 'lanrith-pam:build']
+        shutil.copyfile(ROOT/'builders/pam/.dockerignore', pam/'.dockerignore')
+        pam_inputs = {key: inputs[key] for key in ('PAM_RSSH_BUILDER_OCI', 'PAM_RSSH_RUST_VERSION',
+            'DEBIAN_BOOKWORM_SNAPSHOT', 'DEBIAN_BOOKWORM_SECURITY_SNAPSHOT')}
+        identity = hashlib.sha256(canonical({'arguments': pam_inputs, 'commit': commit,
+            'containerfile': file_record(ROOT/'builders/pam/Containerfile')['sha256'],
+            'context_filter': file_record(ROOT/'builders/pam/.dockerignore')['sha256'],
+            'notices': file_record(work/'collect-notices.py')['sha256']})).hexdigest()
+        pam_tag = 'lanrith-pam:'+identity
+        argv = ['docker', 'build', '--pull', '--platform', 'linux/amd64',
+                '--file', str(ROOT/'builders/pam/Containerfile'), '--tag', pam_tag]
+        argv += build_cache.image_arguments('pam')
         argv += [argument for key in ('PAM_RSSH_BUILDER_OCI', 'PAM_RSSH_RUST_VERSION', 'DEBIAN_BOOKWORM_SNAPSHOT',
                                      'DEBIAN_BOOKWORM_SECURITY_SNAPSHOT')
                  for argument in ('--build-arg', key+'='+inputs[key])]
-        run(*argv, str(pam))
-        container = run('docker', 'create', 'lanrith-pam:build', '/none', capture_output=True, text=True).stdout.strip()
+        if not build_cache.reuse_image('pam', pam_tag):
+            run(*argv, str(pam))
+        build_cache.record_image('pam', pam_tag)
+        container = run('docker', 'create', pam_tag, '/none', capture_output=True, text=True).stdout.strip()
         try:
             run('docker', 'cp', container+':/libpam_rssh.so', str(args.output/'pam_rssh.so'))
             run('docker', 'cp', container+':/notices.txt', str(args.output/'pam-rssh.notices.txt'))
