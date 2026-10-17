@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, document, file_record, read, require, unique
@@ -31,6 +32,21 @@ CHECKS = {
 
 def value(path):
     return json.loads(read(path, 4*1024*1024), object_pairs_hook=unique)
+
+
+def publish(path, data):
+    # Container-created evidence can be root-owned and read-only to this job.
+    # Replace it inside the job-owned output directory without changing ownership
+    # or making the original evidence writable.
+    descriptor, temporary = tempfile.mkstemp(prefix='.'+path.name+'.', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def qualify(directory, project, environment, *, now=None):
@@ -97,16 +113,16 @@ def qualify(directory, project, environment, *, now=None):
         'filesystem_sha256': file_record(directory/'lanrith-base.tar.gz')['sha256'],
         'initrd_sha256': file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
         'requires_consumer_verified_file_and_oci_provenance': True}
-    (directory/'qualification.json').write_bytes(canonical(record))
+    publish(directory/'qualification.json', canonical(record))
     security.update(production_qualified=True, slsa_spec='1.2', slsa_build_level=3,
         qualification={'result': 'pass', 'scope': record['scope'],
                        'record_sha256': file_record(directory/'qualification.json')['sha256']})
-    (directory/'security.json').write_bytes(canonical(security))
+    publish(directory/'security.json', canonical(security))
     manifest = document(read(directory/'release.json', 65536))
     artifact = next(item for item in manifest['artifacts'] if item['role'] == 'security')
     actual = file_record(directory/artifact['name'])
     artifact.update(size=actual['size'], sha256=actual['sha256'])
-    (directory/'release.json').write_bytes(canonical(document(canonical(manifest))))
+    publish(directory/'release.json', canonical(document(canonical(manifest))))
     return True
 
 

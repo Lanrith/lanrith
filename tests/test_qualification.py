@@ -3,9 +3,12 @@
 import datetime
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
+import traceback
 import unittest
+from unittest import mock
 
 from lanrith import release
 
@@ -15,6 +18,13 @@ spec.loader.exec_module(qualification)
 
 
 class QualificationTests(unittest.TestCase):
+    def hosted_environment(self):
+        return {'GITHUB_ACTIONS': 'true', 'GITHUB_REF': 'refs/heads/main',
+            'GITHUB_REPOSITORY': 'Lanrith/lanrith', 'RUNNER_ENVIRONMENT': 'github-hosted',
+            'GITHUB_WORKFLOW_REF': 'Lanrith/lanrith/.github/workflows/release.yml@refs/heads/main',
+            'LANRITH_REUSABLE_WORKFLOW_REPOSITORY': 'Lanrith/lanrith', 'LANRITH_REUSABLE_WORKFLOW_SHA': 'a'*40,
+            'GITHUB_SHA': 'a'*40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
+
     def fixture(self, root):
         directory, project = root/'release', root/'project'
         directory.mkdir()
@@ -68,11 +78,7 @@ class QualificationTests(unittest.TestCase):
     def test_hosted_main_claim_is_bound_to_native_subjects_and_the_new_security_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory, project, now, _ = self.fixture(Path(temporary))
-            environment = {'GITHUB_ACTIONS': 'true', 'GITHUB_REF': 'refs/heads/main',
-                'GITHUB_REPOSITORY': 'Lanrith/lanrith', 'RUNNER_ENVIRONMENT': 'github-hosted',
-                'GITHUB_WORKFLOW_REF': 'Lanrith/lanrith/.github/workflows/release.yml@refs/heads/main',
-                'LANRITH_REUSABLE_WORKFLOW_REPOSITORY': 'Lanrith/lanrith', 'LANRITH_REUSABLE_WORKFLOW_SHA': 'a'*40,
-                'GITHUB_SHA': 'a'*40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
+            environment = self.hosted_environment()
             self.assertTrue(qualification.qualify(directory, project, environment, now=now))
             security = json.loads((directory/'security.json').read_text())
             record = json.loads((directory/'qualification.json').read_text())
@@ -82,6 +88,59 @@ class QualificationTests(unittest.TestCase):
                             if item['role'] == 'security')
             self.assertEqual(artifact['sha256'], release.file_record(directory/'security.json')['sha256'])
             self.assertEqual(artifact['size'], (directory/'security.json').stat().st_size)
+
+    def test_hosted_main_publishes_non_writable_container_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory, project, now, _ = self.fixture(root)
+            for name in ('security.json', 'release.json'):
+                (directory/name).chmod(0o444)
+            worker = os.geteuid()
+            if worker == 0:
+                # Reproduce root-owned container files in a directory owned by
+                # the unprivileged workflow user, including actual UID changes.
+                worker = 65534
+                root.chmod(0o755)
+                os.chown(directory, worker, worker)
+                child = os.fork()
+                if child == 0:
+                    try:
+                        os.setgroups([])
+                        os.setgid(worker)
+                        os.setuid(worker)
+                        self.assertTrue(qualification.qualify(directory, project,
+                            self.hosted_environment(), now=now))
+                    except BaseException:
+                        traceback.print_exc()
+                        os._exit(1)
+                    os._exit(0)
+                _, status = os.waitpid(child, 0)
+                self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+            else:
+                self.assertTrue(qualification.qualify(directory, project,
+                    self.hosted_environment(), now=now))
+            self.assertTrue(json.loads((directory/'security.json').read_text())['production_qualified'])
+            for name in ('security.json', 'release.json', 'qualification.json'):
+                self.assertEqual((directory/name).stat().st_uid, worker)
+            manifest = release.document((directory/'release.json').read_bytes())
+            artifact = next(item for item in manifest['artifacts'] if item['role'] == 'security')
+            self.assertEqual(artifact['sha256'], release.file_record(directory/'security.json')['sha256'])
+            self.assertEqual(artifact['size'], (directory/'security.json').stat().st_size)
+
+    def test_failed_evidence_publication_preserves_ineligible_security_and_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory, project, now, _ = self.fixture(Path(temporary))
+            previous = {name: (directory/name).read_bytes() for name in ('security.json', 'release.json')}
+            replace = os.replace
+            def fail_security(source, destination):
+                if Path(destination).name == 'security.json':
+                    raise OSError('synthetic failed evidence publication')
+                return replace(source, destination)
+            with mock.patch.object(qualification.os, 'replace', side_effect=fail_security), self.assertRaises(OSError):
+                qualification.qualify(directory, project, self.hosted_environment(), now=now)
+            self.assertEqual(previous, {name: (directory/name).read_bytes() for name in previous})
+            self.assertFalse(json.loads((directory/'security.json').read_text())['production_qualified'])
+            self.assertEqual(list(directory.glob('.security.json.*')), [])
 
     def test_incomplete_stale_and_wrong_subject_native_reports_are_rejected(self):
         for alteration in ('subject', 'stale', 'missing-failure-path', 'missing-automatic-observation',
