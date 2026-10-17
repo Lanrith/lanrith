@@ -46,7 +46,7 @@ jobs:
       - name: Receive opaque cache data on the fresh build VM
         if: needs.cache.outputs.artifact-id != ''
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.cache.outputs.artifact-id }}
           path: ${{ runner.temp }}/lanrith-cache-candidate
@@ -83,7 +83,7 @@ jobs:
           import os,shutil
           assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
           PYTHON
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.packages.outputs.artifact-id }}
           path: ${{ runner.temp }}/lanrith-package-stage
