@@ -287,6 +287,15 @@ class NativeCompilerCacheTests(unittest.TestCase):
 
 
 class CompilerIdentityTests(unittest.TestCase):
+    def test_a_different_base_cannot_spoof_the_same_compiler_payload(self):
+        images = {'DEBIAN_IMAGE': 'debian@sha256:'+('a'*64), 'GO_IMAGE': 'go@sha256:'+('b'*64),
+                  'NODE_IMAGE': 'node@sha256:'+('c'*64), 'DEBIAN_SNAPSHOT': '20261016T100000Z'}
+        before = cache.compiler_key(images, 'd'*64)
+        images['DEBIAN_SNAPSHOT'] = '20261017T100000Z'
+        self.assertEqual(cache.compiler_key(images, 'd'*64), before)
+        images['DEBIAN_IMAGE'] = 'different@sha256:'+('e'*64)
+        self.assertNotEqual(cache.compiler_key(images, 'd'*64), before)
+
     def test_library_bytes_and_symlink_selection_invalidate_reuse_without_file_timestamps(self):
         spec = importlib.util.spec_from_file_location('compiler_identity',
             Path(__file__).parents[1]/'scripts/compiler-identity.py')

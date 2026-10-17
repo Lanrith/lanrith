@@ -119,7 +119,7 @@ def main():
                 '/implementation/scripts/compiler-identity.py', capture_output=True, text=True,
                 timeout=180).stdout.strip()
             require(re.fullmatch(r'[0-9a-f]{64}', probe), 'Invalid compiler environment fingerprint.')
-            compiler_identity = probe
+            compiler_identity = build_cache.compiler_key(image_inputs, probe)
         except (OSError, subprocess.SubprocessError, ValueError):
             print('Compiler fingerprint unavailable; requiring the complete pinned builder identity.')
     scanner = shutil.which('govulncheck')

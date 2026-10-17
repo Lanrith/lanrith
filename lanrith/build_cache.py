@@ -57,6 +57,13 @@ def key(project):
     return PREFIX+hashlib.sha256(canonical(inputs)).hexdigest()
 
 
+def compiler_key(arguments, payload):
+    # The probe runs inside the image. Bind its result to the independently
+    # reviewed OCI inputs so a different base cannot spoof an equal fingerprint.
+    return hashlib.sha256(canonical({'payload_sha256': payload,
+        'images': {name: arguments[name] for name in ('DEBIAN_IMAGE', 'GO_IMAGE', 'NODE_IMAGE')}})).hexdigest()
+
+
 def ordinary(path, limit):
     value = path.lstat()
     require(stat.S_ISREG(value.st_mode) and value.st_nlink == 1 and value.st_uid == os.getuid() and

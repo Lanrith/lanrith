@@ -49,6 +49,8 @@ An image with the same complete input identity is reused directly. BuildKit
 matches other available image layers against their build inputs. Alloy compiler reuse
 also requires identical reviewed source definitions and a fingerprint of the
 installed tools, headers, C libraries, loader configuration and symlink choices.
+The compiler key also includes the reviewed Debian, Go and Node OCI digests;
+a different base cannot substitute matching probe output.
 A new Debian snapshot can reuse compiler data when those actual bytes remain
 identical. A compiler, library or Alloy source change forces the affected work
 to rebuild. Source checkouts and dependency verification remain fresh. Alloy's
