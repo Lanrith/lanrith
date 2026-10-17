@@ -1,0 +1,47 @@
+name: Restore untrusted build cache
+on:
+  workflow_call:
+    outputs:
+      artifact-id:
+        value: ${{ jobs.restore.outputs.artifact-id }}
+permissions:
+  contents: read
+cache-mode: read
+jobs:
+  restore:
+    if: github.repository == 'Lanrith/lanrith'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: key
+        run: python3 scripts/build-cache-key.py
+      - name: Reserve disk for the cache handoff
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      # Cache extraction happens on this disposable VM, with no signing or
+      # publication permission. The build receives opaque files by artifact ID
+      # and authenticates both their provenance and producer before importing.
+      - id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/lanrith-cache-handoff
+          key: ${{ steps.key.outputs.key }}
+          restore-keys: |
+            ${{ steps.key.outputs.key }}-
+            lanrith-build-v1-Linux-X64-
+      - id: upload
+        if: steps.restore.outputs.cache-matched-key != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: untrusted-build-cache-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/lanrith-cache-handoff/cache.json
+            ${{ runner.temp }}/lanrith-cache-handoff/cache.tar.gz
+            ${{ runner.temp }}/lanrith-cache-handoff/cache.intoto.jsonl
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 1

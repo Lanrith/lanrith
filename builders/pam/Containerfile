@@ -7,6 +7,8 @@ ARG DEBIAN_BOOKWORM_SNAPSHOT
 ARG DEBIAN_BOOKWORM_SECURITY_SNAPSHOT
 ARG PAM_RSSH_RUST_VERSION
 
+RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
+
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       ca-certificates \
