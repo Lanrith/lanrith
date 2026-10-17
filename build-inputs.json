@@ -36,7 +36,7 @@
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
     "builders/alloy/source.json": "28fe1c280a3f6aaaaa84a197208e232779a18f19750148ce860b4431d1cc1d00",
     "builders/alloy/ui-dependencies.patch": "12bd0cf639d82f128f364743a0873f2fab9357534d630449ce09e342fc698206",
-    "builders/build-inputs.lock": "d1e6d19f8f1fc55eb5ecd5e7035d54063370c8ecf5f25b983cb6b22a37f8517c",
+    "builders/build-inputs.lock": "f70975efa7e40666e1ebee5b082e5d2a4c373575ae6b2b2d3d35e25715971226",
     "builders/mkosi/Containerfile": "3921694024b8fd902059cfee85756162bfccaaf111a6fa08a8d2672385054351",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "dafa25364dffccd9b4f575920fc26d1d09419d6a02524533ae06b1de3a800f97",
@@ -50,10 +50,10 @@
     "builders/vpp/Containerfile": "eb86698d84e832d908023c4fbb9ca6ce594654429d837d0620eea83eb3c2e5c5"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261016T100000Z",
+  "debian_snapshot": "20261017T080000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "8f835d0dd6ca7fb6884eb209ce33bb627b847765c4da8e021f79ca4d4c2b688c",
-  "security_snapshot": "20261016T100000Z"
+  "security_release_sha256": "08a2ef0c2340e5a2b965146879ba5d89b48d484bac2c2d3ee76f32818516413d",
+  "security_snapshot": "20261017T080000Z"
 }
