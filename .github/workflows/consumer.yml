@@ -5,8 +5,25 @@ on:
       publish:
         type: boolean
         default: false
+      signing-profile:
+        type: string
+        default: protected
+    secrets:
+      LANRITH_BOOT_KEY:
+        required: false
+      LANRITH_BOOT_CERTIFICATE:
+        required: false
+      LANRITH_SERIAL_PASSPHRASE_HASH:
+        required: false
+      LANRITH_EVIDENCE_KEY:
+        required: false
+      LANRITH_EVIDENCE_CERTIFICATE:
+        required: false
 permissions:
   contents: read
+cache-mode: none
+env:
+  LANRITH_SIGNING_PROFILE: ${{ inputs.signing-profile }}
 concurrency:
   group: owner-image-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
@@ -54,11 +71,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   sign:
-    if: inputs.publish && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: inputs.publish && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    environment: lanrith-signing
+    environment: ${{ inputs.signing-profile == 'protected' && 'lanrith-signing' || '' }}
     permissions:
       contents: read
       actions: read
@@ -92,7 +109,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install --yes python3-yaml
-      - name: Check repository and signing environment protections
+      - name: Check the selected private signing profile
         run: python3 tools/scripts/consumer.py check-setup --owner owner
       - name: Reverify the request and fetch the builder before accessing keys
         run: |
@@ -117,7 +134,7 @@ jobs:
     needs: sign
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    environment: lanrith-evidence
+    environment: ${{ inputs.signing-profile == 'protected' && 'lanrith-evidence' || '' }}
     permissions:
       contents: read
       actions: read

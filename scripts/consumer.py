@@ -51,14 +51,30 @@ def fetch(selection, directory):
     return reference
 
 
+def signing_profile():
+    profile = os.environ.get('LANRITH_SIGNING_PROFILE', 'protected')
+    release.require(profile in ('protected', 'repository'), 'Unknown private signing profile.')
+    return profile
+
+
 def protections(repository):
     require = release.require
+    profile = signing_profile()
     require(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository), 'Invalid owner repository.')
+    require(os.environ.get('GITHUB_REF') == 'refs/heads/main' and
+            os.environ.get('GITHUB_EVENT_NAME') in ('push', 'workflow_dispatch'),
+            'Private signing requires a main-branch push or manual run.')
     def api(suffix):
         return json.loads(run('gh', 'api', 'repos/'+repository+suffix, capture_output=True, text=True).stdout)
     description = api('')
     require(description['private'], 'The standard signing workflow requires a private configuration repository.')
-    require(description['default_branch'] == 'main', 'The template requires protected main as its release branch.')
+    require(description['default_branch'] == 'main', 'The template requires main as its release branch.')
+    if profile == 'repository':
+        # Repository secrets are available to repository writers, including on
+        # Free. This mode does not claim environment or branch enforcement.
+        return {'repository': repository, 'private': True, 'signing_profile': profile,
+                'protected_signing': False, 'credential_scope': 'repository',
+                'writer_trust': 'all-repository-writers'}
     rules = api('/rules/branches/main?per_page=100')
     require(isinstance(rules, list) and any(rule['type'] == 'pull_request' and
             rule.get('parameters', {}).get('required_approving_review_count', 0) >= 1 and
@@ -71,7 +87,8 @@ def protections(repository):
         policy = environment.get('deployment_branch_policy') or {}
         require(policy.get('protected_branches') is True and not policy.get('custom_branch_policies'),
                 'Signing environments must allow only protected branches.')
-    return {'repository': repository, 'private': True, 'protected_signing': True}
+    return {'repository': repository, 'private': True, 'signing_profile': profile,
+            'protected_signing': True, 'credential_scope': 'environment'}
 
 
 def integration_pins(owner, value):
@@ -89,11 +106,14 @@ def integration_pins(owner, value):
 
 
 def preflight(owner, bundle):
+    profile = signing_profile()
     selection = trust.lock(owner/'platform.lock')
     fetch(selection, bundle)
     value = config.load(owner/'config.yaml')
     for name in ('boot.crt', 'evidence.crt'):
         release.public_key(owner/'trust'/name)
+    release.require(release.public_key(owner/'trust/boot.crt') != release.public_key(owner/'trust/evidence.crt'),
+                    'Boot and evidence signing authorities must be separate.')
     pins = integration_pins(owner, value)
     return {'schema': 1, 'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'integration_digests': {name: pin[1] for name, pin in pins.items()},
@@ -101,7 +121,7 @@ def preflight(owner, bundle):
             'boot_certificate_sha256': release.file_record(owner/'trust/boot.crt')['sha256'],
             'evidence_certificate_sha256': release.file_record(owner/'trust/evidence.crt')['sha256'],
             'source_commit': os.environ['GITHUB_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
-            'workflow_commit': os.environ['LANRITH_WORKFLOW_COMMIT']}
+            'workflow_commit': os.environ['LANRITH_WORKFLOW_COMMIT'], 'signing_profile': profile}
 
 
 def assemble(owner, bundle, request, output):
@@ -114,6 +134,7 @@ def assemble(owner, bundle, request, output):
     age = datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(receipt['admitted_at'])
     release.require(actual == expected and datetime.timedelta(0) <= age <= datetime.timedelta(minutes=30),
                     'Signing request differs from its fresh isolated admission.')
+    release.require(actual['signing_profile'] == signing_profile(), 'Signing profile changed after admission.')
     release.require(release.file_record(owner/'platform.lock')['sha256'] == actual['platform_lock_sha256'] and
                     hashlib.sha256(release.canonical(config.load(owner/'config.yaml'))).hexdigest() ==
                     actual['configuration_sha256'], 'Signing inputs changed after admission.')
@@ -131,7 +152,7 @@ def assemble(owner, bundle, request, output):
         private.chmod(0o700)
         for name, variable in (('boot.key','LANRITH_BOOT_KEY'), ('boot.crt','LANRITH_BOOT_CERTIFICATE')):
             data = os.environ.pop(variable, '')
-            release.require(bool(data), 'Protected signing material is incomplete.')
+            release.require(bool(data), 'Private signing material is incomplete.')
             path = private/name
             path.write_text(data)
             path.chmod(0o600)
