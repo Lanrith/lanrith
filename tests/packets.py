@@ -42,11 +42,12 @@ while True:
 
 CLIENT = '''
 import json,socket,sys
-address,port,protocol=sys.argv[1:]
+address,port,protocol=sys.argv[1:4]
 family=socket.AF_INET6 if ':' in address else socket.AF_INET
 with socket.socket(family,socket.SOCK_STREAM if protocol=='tcp' else socket.SOCK_DGRAM) as stream:
     stream.settimeout(0.6)
     try:
+        if len(sys.argv)>4:stream.bind((sys.argv[4],0))
         stream.connect((address,int(port)))
         if protocol=='udp':stream.send(b'lanrith-packet-test')
         result=json.loads(stream.recv(4096))
@@ -92,13 +93,14 @@ def ns(name, *arguments):
     return run('nsenter', '--net=/run/netns/'+name, '--', *arguments)
 
 
-def probe(namespace, address, port, allowed, protocol='tcp', peer=None, user=None):
+def probe(namespace, address, port, allowed, protocol='tcp', peer=None, user=None, source=None):
     client = CLIENT
     if user is not None:
         # Synthetic package-account check; never run against a real router.
         client = 'import os,pwd; account=pwd.getpwnam('+repr(user)+'); os.setgroups([]); os.setgid(account.pw_gid); os.setuid(account.pw_uid)\n'+client
     result = subprocess.run(['nsenter', '--net=/run/netns/'+namespace, '--', sys.executable, '-c', client,
-                             address, str(port), protocol], capture_output=True, text=True, timeout=5)
+                             address, str(port), protocol, *([source] if source else [])],
+                             capture_output=True, text=True, timeout=5)
     if result.returncode not in (0, 10) or (result.returncode == 0) != allowed:
         raise AssertionError(f'{namespace} to {address}:{port}/{protocol}: expected allowed={allowed}; '
                              f'exit={result.returncode}; diagnostic={result.stderr[-1024:]}')
@@ -154,12 +156,15 @@ def server(namespace, path):
 
 def exercise(example):
     value = config.load(Path(__file__).resolve().parents[1]/'examples'/example)
+    next(iter(value['networks'].values()))['routed_prefixes'] = ['10.30.0.0/16']
     with tempfile.TemporaryDirectory(prefix='lanrith-packets.') as temporary:
         work = Path(temporary)
         run('ip', 'netns', 'add', 'router')
         processes, namespaces = [], ['router', 'upstream']
         try:
-            ns('router', 'sysctl', '-qw', 'net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1')
+            sysctls = work/'routing.conf'
+            sysctls.write_text(config.render(value)['etc/sysctl.d/90-lanrith-routing.conf'])
+            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
             wan = value['hardware']['interfaces'][value['uplink']['interface']]['name']
             uplink = connection(wan, 'upstream', ['198.51.100.1/24', '2001:db8:ffff::1/64'], 0)
             for gateway, remote, family in uplink:
@@ -169,11 +174,18 @@ def exercise(example):
                 namespace = 'client'+str(index)
                 namespaces.append(namespace)
                 clients.append((namespace, key, connection(network['name'], namespace, network['addresses'], index)))
+            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
             rules = work/'policy.nft'
             rules.write_text(config.render(value)['etc/nftables.conf'])
             ns('router', 'nft', '--file', str(rules))
             for namespace in namespaces:
                 processes.append(server(namespace, work))
+            first_client = clients[0]
+            next_hop = next(address for _, address, family in first_client[2] if family == 4)
+            ns(first_client[0], 'ip', 'address', 'add', '10.30.0.2/16', 'dev', 'eth0')
+            ns('router', 'ip', 'route', 'add', '10.30.0.0/16', 'via', next_hop)
+            upstream = next(address for _, address, family in uplink if family == 4)
+            probe(first_client[0], upstream, 8888, True, peer='198.51.100.1', source='10.30.0.2')
             for namespace, key, addresses in clients:
                 for gateway, address, family in addresses:
                     probe(namespace, gateway, value['administration'].get('ssh_port', 22),

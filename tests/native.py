@@ -12,6 +12,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith import config
+from vm import network_hardening
 
 if '--isolated' not in sys.argv:
     if os.geteuid() != 0:
@@ -24,21 +25,30 @@ for example in ('minimal.yaml', 'segmented.yaml'):
     with tempfile.TemporaryDirectory(prefix='lanrith-native.') as temporary:
         output = Path(temporary)/'root'
         config.write(value, output)
-        # All generated keys are network-namespace scoped. Check the active
-        # kernel accepts the hardening, not only the configuration syntax.
         sysctls = output/'etc/sysctl.d/90-lanrith-routing.conf'
-        subprocess.run(['sysctl', '--quiet', '--load', str(sysctls)], check=True)
-        for line in sysctls.read_text().splitlines():
-            key, expected = line.split('=', 1)
-            observed = subprocess.run(['sysctl', '--values', key], check=True, capture_output=True, text=True)
-            if observed.stdout.strip() != expected:
-                raise AssertionError('Generated network hardening did not take effect in the isolated namespace.')
         names = {network['name'] for network in value['networks'].values()}
         names.add(value['hardware']['interfaces'][value['uplink']['interface']]['name'])
+        early = 'early.link'
         try:
+            # Reproduce a device that appears before systemd-sysctl and has
+            # unsafe per-link values. All writes stay in this fresh netns.
+            subprocess.run(['ip', 'link', 'add', early, 'type', 'dummy'], check=True)
+            subprocess.run(['sysctl', '--quiet', '--write', 'net/ipv4/conf/'+early+'/send_redirects=1',
+                            'net/ipv6/conf/'+early+'/accept_source_route=0'], check=True)
+            try:
+                network_hardening()
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError('Unsafe interface positive control was not detected.')
+            subprocess.run(['/usr/lib/systemd/systemd-sysctl', str(sysctls)], check=True)
+            network_hardening()
             for name in names:
                 subprocess.run(['ip', 'link', 'add', name, 'type', 'dummy'], check=True)
                 subprocess.run(['ip', 'link', 'set', name, 'up'], check=True)
+            # Later links must inherit the safe defaults too. Reading actual
+            # procfs values avoids trusting the generated file as its own oracle.
+            network_hardening()
             subprocess.run(['nft', '--check', '--file', str(output/'etc/nftables.conf')], check=True)
             subprocess.run(['nft', '--file', str(output/'etc/nftables.conf')], check=True)
             subprocess.run(['unbound-checkconf', str(output/'etc/unbound/unbound.conf.d/lanrith.conf')], check=True)
@@ -84,7 +94,7 @@ for example in ('minimal.yaml', 'segmented.yaml'):
             finally:
                 candidate.unlink()
         finally:
-            for name in names:
+            for name in names | {early}:
                 subprocess.run(['ip', 'link', 'delete', name], check=False, capture_output=True)
 # Parse less common generic selectors too; every value is synthetic.
 value = config.load(Path(__file__).resolve().parents[1]/'examples/segmented.yaml')

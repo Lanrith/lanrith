@@ -85,7 +85,8 @@ expansions fail validation before assembly.
 
 Set `uplink.masquerade: true` if internal IPv4 traffic needs source NAT on the
 uplink. This changes address translation; access rules still decide which traffic
-may pass. It defaults to false for the generic rules model. Translation mappings,
+may pass. It covers connected and declared routed IPv4 source prefixes, excluding
+attachments with forwarding disabled. It defaults to false for the generic rules model. Translation mappings,
 service addresses, directory policy and routing peers belong to their components.
 They do not add platform-specific access sections or implicit grants.
 
@@ -118,7 +119,12 @@ DHCP bootstrap is restricted to the selected interface and local/broadcast
 destinations. Uplink DHCP and RA rules follow the configured modes. IPv6 link
 control uses declared interfaces, required hop limits and message codes; link-local
 traffic cannot become routed transit. Network source-route and redirect protections
-are generated with the active routing configuration. The implementation preserves
+cover global defaults and interfaces present before or after sysctl activation,
+including VLAN names containing dots. IPv6 routing headers are disabled rather
+than retaining the kernel's type-2 exception. See the
+[kernel sysctl reference](https://docs.kernel.org/networking/ip-sysctl.html) and
+[systemd interface handling](https://www.freedesktop.org/software/systemd/man/latest/sysctl.d.html).
+The implementation preserves
 essential IPv6 control/error traffic described in
 [RFC 4890](https://www.rfc-editor.org/rfc/rfc4890.html).
 

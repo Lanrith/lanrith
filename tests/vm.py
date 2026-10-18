@@ -530,11 +530,28 @@ def boot(guest, *, manual=False, first=False):
     guest.ready()
 
 
+def network_hardening():
+    """Check kernel policy independently of the generated sysctl assignments."""
+    for family, options in (
+        ('ipv4', {'accept_source_route': 0, 'accept_redirects': 0, 'secure_redirects': 0, 'send_redirects': 0}),
+        ('ipv6', {'accept_source_route': -1, 'accept_redirects': 0}),
+    ):
+        for scope in (Path('/proc/sys/net')/family/'conf').iterdir():
+            for option, expected in options.items():
+                if (scope/option).read_text().strip() != str(expected):
+                    raise AssertionError('Network hardening is not effective on every current/default interface.')
+    for key, expected in {'ipv4/ip_forward': 1, 'ipv6/conf/all/forwarding': 1,
+                          'ipv4/tcp_syncookies': 1, 'ipv4/icmp_echo_ignore_broadcasts': 1,
+                          'ipv4/icmp_ignore_bogus_error_responses': 1}.items():
+        if (Path('/proc/sys/net')/key).read_text().strip() != str(expected):
+            raise AssertionError('Global routing hardening is not effective.')
+
+
 def firewall_failure(guest):
     """Core listeners stop with nftables and cannot start if its activation fails."""
     # A transient unit survives the SSH listener it deliberately stops. Every
     # write is under /run in this disposable guest; restore before reconnecting.
-    script = inspect.cleandoc('''
+    script = inspect.getsource(network_hardening)+'\n'+inspect.cleandoc('''
         import json
         from pathlib import Path
         import subprocess
@@ -556,6 +573,8 @@ def firewall_failure(guest):
         time.sleep(3)
         record = {'result': 'fail'}
         try:
+            network_hardening()
+            record['effective_kernel_hardening'] = True
             for unit in listeners:
                 if command('is-active', '--quiet', unit, check=False).returncode != 0:
                     raise RuntimeError('A selected listener was inactive before the probe.')
@@ -588,7 +607,7 @@ def firewall_failure(guest):
         if result.returncode == 0:
             record = json.loads(result.stdout)
             release.require(record == {'result': 'pass', 'stopped_with_firewall': True,
-                                       'blocked_on_firewall_failure': True},
+                                       'blocked_on_firewall_failure': True, 'effective_kernel_hardening': True},
                             'Core listeners did not enforce the firewall activation boundary.')
             guest.ready()
             return

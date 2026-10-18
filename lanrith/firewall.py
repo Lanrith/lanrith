@@ -12,11 +12,13 @@ NEIGHBOURS = 'nd-neighbor-solicit, nd-neighbor-advert'
 def sysctls():
     lines = ['net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1']
     for family in ('ipv4', 'ipv6'):
-        for scope in ('all', 'default'):
-            lines.extend(f'net.{family}.conf.{scope}.{option}=0'
-                         for option in ('accept_source_route', 'accept_redirects'))
+        # Defaults protect later links; globs also fix already-present links,
+        # including names with dots. IPv6 zero still permits type-2 headers.
+        for scope in ('all', 'default', '*'):
+            lines.append(f'net/{family}/conf/{scope}/accept_source_route={-1 if family == "ipv6" else 0}')
+            lines.append(f'net/{family}/conf/{scope}/accept_redirects=0')
             if family == 'ipv4':
-                lines.extend(f'net.ipv4.conf.{scope}.{option}=0' for option in ('secure_redirects', 'send_redirects'))
+                lines.extend(f'net/ipv4/conf/{scope}/{option}=0' for option in ('secure_redirects', 'send_redirects'))
     lines += ['net.ipv4.tcp_syncookies=1', 'net.ipv4.icmp_echo_ignore_broadcasts=1',
               'net.ipv4.icmp_ignore_bogus_error_responses=1']
     return '\n'.join(lines)+'\n'
@@ -164,6 +166,6 @@ def render(value):
         masqueraded = []
     for key in masqueraded:
         if networks[key].get('forwarding', True):
-            lines.extend(f'  ip saddr {address.network} oifname "{wan}" masquerade'
-                         for address in addresses(networks[key], 4))
+            lines.extend(f'  ip saddr {prefix} oifname "{wan}" masquerade'
+                         for prefix in prefixes(networks[key], 4))
     return '\n'.join(lines + [' }', '}'])+'\n'

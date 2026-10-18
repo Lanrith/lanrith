@@ -88,6 +88,16 @@ class FirewallDefaultsTests(unittest.TestCase):
         self.value['services']['ntp'] = {'enabled': True}
         self.assertIn('meta skuid "_chrony" udp dport 123 accept', self.firewall())
 
+    def test_selected_masquerading_includes_routed_sources_without_granting_access(self):
+        self.value['networks']['home']['routed_prefixes'] = ['10.30.0.0/16']
+        self.value['access'] = {'rules': []}
+        text = self.firewall()
+        self.assertIn('ip saddr 10.30.0.0/16 oifname "wan" masquerade', text)
+        forward = text[text.index('chain forward'):text.index('chain output')]
+        self.assertNotIn('iifname "lan.10" oifname "wan"', forward)
+        self.value['networks']['home']['forwarding'] = False
+        self.assertNotIn('ip saddr 10.30.0.0/16 oifname "wan" masquerade', self.firewall())
+
     def test_overlapping_or_unbounded_routed_prefixes_are_rejected(self):
         for prefixes in (['0.0.0.0/0'], ['172.20.20.0/24'], ['10.30.0.0/16', '10.30.1.0/24'],
                          ['fe80::/64'], ['bad'], ['10.30.0.0/16']*33):
