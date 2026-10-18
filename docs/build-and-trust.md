@@ -144,6 +144,16 @@ manual run, and bind the chosen profile into the admitted request and private
 provenance. The evidence job validates the owner signature and request identities
 without executing an image or builder. Its DSSE SLSA statement remains private;
 no public transparency log is used by default.
+
+Private evidence records two configuration digests. `configuration_sha256`
+identifies the normalized owner config used in preflight.
+`effective_configuration_sha256` also includes the admitted extension pins and
+the digest of selected serial-provisioning material. Both signed image manifests
+and installed metadata use this effective digest. The signing runner and fresh
+evidence runner independently check that binding. The private statement records
+the extension and serial digests; it contains no serial passphrase or provisioning
+hash bytes. Disabled serial administration requires no provisioning digest.
+
 The statement records whether protected signing was required. It does not
 certify the owner image's SLSA level. Public platform Build L3 evidence remains
 independently verified. See the [template signing profiles](https://github.com/Lanrith/config-template#signing-profiles)

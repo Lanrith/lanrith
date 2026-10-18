@@ -38,16 +38,26 @@ release.require(hashlib.sha256(release.canonical(value)).hexdigest() == receipt[
 integrations = consumer.integration_pins(args.owner, value)
 release.require({name: pin[1] for name, pin in integrations.items()} == receipt['integration_digests'],
                 'Owner integrations changed after isolated admission.')
+serial_hash = args.private/'serial.hash' if value['administration']['serial']['enabled'] else None
+serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
+effective_digest = config.effective_digest(value, receipt['integration_digests'], serial_digest)
+release.require(serial_digest == receipt['serial_provisioning_sha256'] and
+                effective_digest == receipt['effective_configuration_sha256'],
+                'Effective configuration changed after isolated admission.')
 identity = build.assembly(value, args.platform/'lanrith-base.tar.gz', args.workspace,
                           version=selection['version'][1:], sequence=args.sequence,
                           certificate=args.private/'boot.crt', private_key=args.private/'boot.key',
                           initrd_base=args.platform/'lanrith-initrd-base.tar.gz', integrations=integrations,
-                          serial_hash=args.private/'serial.hash' if value['administration']['serial']['enabled'] else None)
+                          serial_hash=serial_hash)
+release.require(identity['configuration_sha256'] == effective_digest,
+                'Assembly identity differs from the admitted effective configuration.')
 build.run(args.workspace)
 build.update_payload(args.workspace, identity, args.output)
 release.sign(args.output, args.private/'boot.key')
-release.verify(args.output, args.private/'boot.crt', purpose='update', image_id=identity['image_id'])
+release.verify(args.output, args.private/'boot.crt', purpose='update', image_id=identity['image_id'],
+               expected_configuration=effective_digest)
 factory=args.output.parent/'factory'
 build.factory_payload(args.workspace,identity,args.output,factory,consume=True)
 release.sign(factory,args.private/'boot.key')
-release.verify(factory,args.private/'boot.crt',purpose='factory',image_id=identity['image_id'])
+release.verify(factory,args.private/'boot.crt',purpose='factory',image_id=identity['image_id'],
+               expected_configuration=effective_digest)

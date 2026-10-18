@@ -13,6 +13,8 @@ import copy
 import yaml
 
 from .release import canonical, require, ReleaseError
+from . import access as access_rules
+from . import firewall
 
 
 FEATURES = {'dns', 'dhcp4', 'ntp', 'discovery', 'radius', 'policy', 'bgp', 'nat64',
@@ -55,6 +57,21 @@ def load(path):
     except (yaml.YAMLError, RecursionError) as error:
         raise ReleaseError('Invalid YAML configuration.') from error
     return normalize(value)
+
+
+def effective_digest(value, integrations, serial_provisioning_sha256=None):
+    """Bind normalized intent, admitted integrations and selected serial material."""
+    value = normalize(value)
+    require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
+            all(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest)
+                for digest in integrations.values()), 'Effective integration digests differ from configuration.')
+    enabled = value['administration']['serial']['enabled']
+    require((serial_provisioning_sha256 is not None) == enabled and
+            (serial_provisioning_sha256 is None or isinstance(serial_provisioning_sha256, str) and
+             re.fullmatch(r'[0-9a-f]{64}', serial_provisioning_sha256)),
+            'Effective serial provisioning differs from configuration.')
+    return hashlib.sha256(canonical({'configuration': value, 'integrations': integrations,
+                                    'serial_provisioning_sha256': serial_provisioning_sha256})).hexdigest()
 
 
 def normalize(value):
@@ -138,7 +155,8 @@ def normalize(value):
         require(type(interface.get('mtu', 1500)) is int and 1280 <= interface.get('mtu', 1500) <= 9216,
                 'Unsupported interface MTU.')
     uplink = value['uplink']
-    fields(uplink, {'interface', 'ipv4', 'ipv6', 'addresses', 'gateways', 'upload_shaping'}, {'interface'})
+    fields(uplink, {'interface', 'ipv4', 'ipv6', 'addresses', 'gateways', 'upload_shaping', 'masquerade'}, {'interface'})
+    require(type(uplink.get('masquerade', False)) is bool, 'Uplink masquerading must be a boolean.')
     require(uplink['interface'] in interfaces, 'Uplink interface is not declared.')
     require(uplink.get('ipv4', 'dhcp') in ('dhcp', 'static', 'disabled') and
             uplink.get('ipv6', 'ra') in ('ra', 'static', 'disabled'), 'Unsupported uplink address mode.')
@@ -170,7 +188,8 @@ def normalize(value):
     network_names = set()
     for key, network in networks.items():
         require(IDENTIFIER.fullmatch(key), 'Invalid network key.')
-        fields(network, {'interface', 'vlan', 'addresses', 'dhcp4', 'ra', 'dns', 'name', 'namespace'},
+        fields(network, {'interface', 'vlan', 'addresses', 'dhcp4', 'ra', 'dns', 'name', 'namespace',
+                         'forwarding', 'routed_prefixes'},
                {'interface', 'addresses'})
         require(network['interface'] in interfaces and network['interface'] != uplink['interface'],
                 'Internal networks cannot use the uplink.')
@@ -198,8 +217,8 @@ def normalize(value):
             subnets.append(address.network)
             require(all(address.version != wan.version or not address.network.overlaps(wan.network)
                         for wan in wan_addresses), 'Internal and uplink networks overlap.')
-        for option in ('ra', 'dns'):
-            require(type(network.get(option, False)) is bool, 'Network feature flags must be booleans.')
+        for option, default in (('ra', False), ('dns', False), ('forwarding', True)):
+            require(type(network.get(option, default)) is bool, 'Network feature flags must be booleans.')
         require(not network.get('ra') or any(address.version == 6 and address.network.prefixlen == 64
                                            for address in parsed), 'SLAAC requires an IPv6 /64.')
         if 'dhcp4' in network:
@@ -211,18 +230,40 @@ def normalize(value):
             require(len(ranges) == 1 and first <= last and first in ranges[0].network and last in ranges[0].network and
                     not first <= ranges[0].ip <= last and first != ranges[0].network.network_address and
                     last != ranges[0].network.broadcast_address, 'DHCP pool conflicts with its gateway or subnet.')
+    routed = []
+    for network in networks.values():
+        entries = network.get('routed_prefixes', [])
+        require(isinstance(entries, list) and len(entries) <= 32, 'Declare bounded routed source prefixes.')
+        for entry in entries:
+            require(isinstance(entry, str) and '%' not in entry, 'Invalid routed source prefix.')
+            try:
+                prefix = ipaddress.ip_network(entry, strict=True)
+            except ValueError:
+                raise ReleaseError('Invalid routed source prefix.') from None
+            require(prefix.prefixlen > 0 and not (prefix.is_multicast or prefix.is_loopback or
+                    prefix.is_link_local or prefix.network_address.is_unspecified) and
+                    not any(prefix.version == other.version and prefix.overlaps(other) for other in subnets+routed+[
+                        address.network for address in wan_addresses]),
+                    'Routed source prefixes must be distinct from connected and other routed networks.')
+            routed.append(prefix)
     access = value.setdefault('access', {})
-    fields(access, {'internet', 'between_networks'})
-    require(isinstance(access.get('internet', []), list) and
-            all(key in networks for key in access.get('internet', [])), 'Unknown internet-access network.')
-    require(isinstance(access.get('between_networks', []), list), 'Invalid connection rules.')
-    for rule in access.get('between_networks', []):
-        fields(rule, {'from', 'to', 'protocol', 'ports'}, {'from', 'to', 'protocol', 'ports'})
-        require(rule['from'] in networks and rule['to'] in networks and rule['from'] != rule['to'],
-                'Connection rule references invalid networks.')
-        require(rule['protocol'] in ('tcp', 'udp') and isinstance(rule['ports'], list) and
-                1 <= len(rule['ports']) <= 64 and
-                all(type(port) is int and 1 <= port <= 65535 for port in rule['ports']), 'Invalid connection ports.')
+    require(isinstance(access, dict), 'Access configuration must be a mapping.')
+    if 'rules' in access or 'default' in access:
+        access_rules.render(access, networks, interfaces, uplink)
+    else:
+        # Admit existing owner files without mixing their implicit ordering
+        # with the new explicit, first-match policy.
+        fields(access, {'internet', 'between_networks'})
+        require(isinstance(access.get('internet', []), list) and
+                all(key in networks for key in access.get('internet', [])), 'Unknown internet-access network.')
+        require(isinstance(access.get('between_networks', []), list), 'Invalid connection rules.')
+        for rule in access.get('between_networks', []):
+            fields(rule, {'from', 'to', 'protocol', 'ports'}, {'from', 'to', 'protocol', 'ports'})
+            require(rule['from'] in networks and rule['to'] in networks and rule['from'] != rule['to'],
+                    'Connection rule references invalid networks.')
+            require(rule['protocol'] in ('tcp', 'udp') and isinstance(rule['ports'], list) and
+                    1 <= len(rule['ports']) <= 64 and
+                    all(type(port) is int and 1 <= port <= 65535 for port in rule['ports']), 'Invalid connection ports.')
     administration = value['administration']
     fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial', 'host_key_state'},
            {'networks', 'authorized_keys'})
@@ -298,7 +339,7 @@ def render(value):
     files = {'etc/hostname': value['hostname'] + '\n',
              'etc/hosts': '127.0.0.1 localhost\n127.0.1.1 '+value['hostname']+'\n'
                  '::1 localhost ip6-localhost ip6-loopback\n',
-             'etc/sysctl.d/90-lanrith-routing.conf': 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n',
+             'etc/sysctl.d/90-lanrith-routing.conf': firewall.sysctls(),
              'etc/ssh/sshd_config.d/00-lanrith.conf':
                  'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n'
                  f'AllowUsers {user}\nHostKey {value["administration"]["host_key_state"]}/ssh_host_ed25519_key\n'
@@ -355,56 +396,7 @@ def render(value):
         files[f'etc/systemd/network/25-{parent}-trunk.network'] = (
             f'[Match]\nName={parent}\n\n[Network]\nLinkLocalAddressing=no\n' +
             ''.join(f'VLAN={vlan}\n' for vlan in vlans))
-    rules = ['#!/usr/sbin/nft -f', 'flush ruleset', 'table inet lanrith {',
-             ' chain input { type filter hook input priority filter; policy drop;',
-             '  iifname "lo" accept', '  ct state invalid drop', '  ct state established,related accept',
-             '  meta l4proto ipv6-icmp icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-neighbor-solicit, nd-neighbor-advert } accept',
-             f'  iifname "{wan}" udp sport 67 udp dport 68 accept',
-             f'  iifname "{wan}" icmpv6 type nd-router-advert accept']
-    for key, network in networks.items():
-        name = network['name']
-        if key in value['administration']['networks']:
-            rules.append(f'  iifname "{name}" tcp dport {value["administration"].get("ssh_port", 22)} accept')
-        if 'dhcp4' in network:
-            rules.append(f'  iifname "{name}" udp sport 68 udp dport 67 accept')
-        if network.get('dns'):
-            rules.extend(f'  iifname "{name}" {protocol} dport 53 accept' for protocol in ('tcp', 'udp'))
-        if value['services'].get('ntp', {}).get('enabled'):
-            rules.append(f'  iifname "{name}" udp dport 123 accept')
-    rules += [' }', ' chain source_guard { type filter hook prerouting priority -300; policy accept;']
-    for network in networks.values():
-        name = network['name']
-        if 'dhcp4' in network:
-            rules.append(f'  iifname "{name}" ip saddr 0.0.0.0 udp sport 68 udp dport 67 accept')
-        for family, prefix in ((4, 'ip'), (6, 'ip6')):
-            prefixes = [str(ipaddress.ip_interface(address).network) for address in network['addresses']
-                        if ipaddress.ip_interface(address).version == family]
-            if family == 6 and prefixes:
-                # DAD may use the unspecified source only for its neighbor solicitation.
-                rules.append(f'  iifname "{name}" ip6 saddr :: icmpv6 type nd-neighbor-solicit accept')
-                prefixes.append('fe80::/10')
-            if prefixes:
-                rules.append(f'  iifname "{name}" {prefix} saddr != {{ {", ".join(prefixes)} }} drop')
-            else:
-                rules.append(f'  iifname "{name}" meta nfproto {"ipv4" if family == 4 else "ipv6"} drop')
-    rules += [' }', ' chain forward { type filter hook forward priority filter; policy drop;',
-              '  ip6 saddr { ::/128, fe80::/10 } drop', '  ip6 daddr fe80::/10 drop',
-              '  ct state invalid drop', '  ct state established,related accept']
-    for key in value['access'].get('internet', []):
-        rules.append(f'  iifname "{networks[key]["name"]}" oifname "{wan}" accept')
-    for rule in value['access'].get('between_networks', []):
-        ports = ', '.join(str(port) for port in sorted(set(rule['ports'])))
-        rules.append(f'  iifname "{networks[rule["from"]]["name"]}" oifname "{networks[rule["to"]]["name"]}" '
-                     f'{rule["protocol"]} dport {{ {ports} }} accept')
-    rules += [' }', ' chain output { type filter hook output priority filter; policy accept; }', '}',
-              'table ip lanrith_nat {', ' chain postrouting { type nat hook postrouting priority srcnat; policy accept;']
-    for key in value['access'].get('internet', []):
-        for address in networks[key]['addresses']:
-            parsed = ipaddress.ip_interface(address)
-            if parsed.version == 4:
-                rules.append(f'  ip saddr {parsed.network} oifname "{wan}" masquerade')
-    rules += [' }', '}']
-    files['etc/nftables.conf'] = '\n'.join(rules) + '\n'
+    files['etc/nftables.conf'] = firewall.render(value)
     if value['services'].get('ntp', {}).get('enabled'):
         text = ('pool 2.pool.ntp.org iburst\ndriftfile /var/lib/chrony/chrony.drift\n'
                 'rtcsync\nmakestep 1 3\ncmdport 0\n')

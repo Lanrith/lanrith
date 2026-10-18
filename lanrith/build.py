@@ -50,10 +50,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files)
     extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
     # The effective intent includes every admitted integration, even when it adds no network fields.
-    digest = hashlib.sha256(release.canonical({'configuration': value,
-                                             'integrations': integration['digests'],
-                                             'serial_provisioning_sha256': release.file_record(serial_hash)['sha256']
-                                             if serial_hash else None})).hexdigest()
+    digest = config.effective_digest(value, integration['digests'],
+                                     release.file_record(serial_hash)['sha256'] if serial_hash else None)
     (overlay / 'usr/share/lanrith/configuration.sha256').write_text(digest + '\n')
     image_id = value.get('release', {}).get('image_id', 'lanrith')
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,

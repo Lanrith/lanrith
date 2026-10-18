@@ -14,13 +14,135 @@ selectors and undeclared management networks fail validation. See the
 | `hardware.boot` | Secure Boot, TPM requirement and boot/recovery consoles |
 | `hardware.watchdog` | `auto` (default), `required` or `disabled`; device and timeout in seconds |
 | `hardware.acceleration` | Explicit PCI ownership and hugepage allocation |
-| `uplink` | DHCP/static IPv4, RA/static IPv6, gateways and optional CAKE upload rate |
-| `networks` | Tagged or untagged attachments, gateway addresses, RA, DNS and DHCP pools |
-| `access` | Explicit internet access and directional TCP/UDP inter-network permits |
+| `uplink` | DHCP/static IPv4, RA/static IPv6, gateways, optional IPv4 masquerading and CAKE upload rate |
+| `networks` | Tagged or untagged attachments, gateways, RA, DNS, DHCP pools, optional routed source prefixes and forwarding isolation |
+| `access` | An ordered list of generic routed allow/deny rules; unmatched new connections are denied |
 | `administration` | Management networks, administrator public keys, account, port and optional serial login |
 | `services` | Independent optional feature selection |
 | `extensions` | IDs of separately reviewed integration manifests |
 | `release` | Owner image identity and monotonic `sequence_floor` |
+
+## Access rules
+
+Use the same rules for every routed destination. Network names come from your
+`networks` map. `uplink` selects the declared uplink interface; `any` imposes no
+interface restriction. An IP address or CIDR selects that address range. A list
+matches any of its entries.
+
+```yaml
+access:
+  rules:
+    - name: Block a specific external host
+      action: deny
+      from: home
+      to: {network: uplink, addresses: 203.0.113.9}
+    - name: Allow home and guest Internet access
+      action: allow
+      from: [home, guest]
+      to: uplink
+    - name: Allow home access to the guest web service
+      action: allow
+      from: home
+      to: {network: guest, addresses: 172.20.20.7}
+      protocol: tcp
+      ports: [443]
+```
+
+`name` is an optional human-readable label. Use 1–96 printable characters,
+without leading or trailing whitespace. Named rules must be unique, ignoring
+case. Names are preserved in the image's resolved configuration for inspection
+and future console display. They are metadata: renaming a rule does not change
+its match, position or permissions, and the compiler does not insert names into
+firewall code. Unnamed rules remain valid.
+
+The first matching rule decides. A selector with both `network` and `addresses`
+requires both to match; a host exception therefore stays restricted to its
+declared interface. An optional source `mac` adds another requirement. Use
+`interface` instead of `network` for a declared integration's tunnel, transit
+or namespace interface. Selectors never create interfaces, addresses or routes.
+
+Omitted `protocol` means any protocol. Supported names are `tcp`, `udp`, `sctp`,
+`icmp`, `icmpv6`, `gre`, `esp` and `ah`. `ports` are destination ports for TCP,
+UDP or SCTP. An optional `family` restricts a rule to `ipv4` or `ipv6`;
+address selectors and ICMP also determine the packet family.
+
+Rules normally match `new`, `established` and `related` connection states.
+They run before the automatic established/related return permit, so an explicit
+deny also applies to matching existing traffic. Denies apply in either connection
+direction unless `direction: original` or `direction: reply` narrows them.
+Unmatched new connections are denied; an empty rule list grants no routed access.
+`default: deny` can be written explicitly; `default: allow` is rejected.
+Administration networks and enabled local service listeners remain separate.
+
+Optional `states`, `direction`, `tcp_flags`, `icmp_types` and numeric `icmp_codes`
+narrow an ordinary rule. States are limited to `new`, `established` and `related`.
+Asymmetric returns that need an invalid/untracked exception belong to an admitted,
+qualified routing capability with exact source/interface/target bounds. Ordinary
+rules cannot bypass the earlier source, isolation or invalid-packet guards.
+Descriptions are optional review text and are never interpreted as firewall code.
+Unknown fields, malformed selectors, incompatible families and oversized rule
+expansions fail validation before assembly.
+
+Set `uplink.masquerade: true` if internal IPv4 traffic needs source NAT on the
+uplink. This changes address translation; access rules still decide which traffic
+may pass. It covers connected and declared routed IPv4 source prefixes, excluding
+attachments with forwarding disabled. It defaults to false for the generic rules model. Translation mappings,
+service addresses, directory policy and routing peers belong to their components.
+They do not add platform-specific access sections or implicit grants.
+
+Existing `internet`/`between_networks` configurations remain accepted, preserving
+their routed grants and NAT defaults. Generated security guards apply to both
+models. Convert the whole access section when adopting `rules`;
+mixing the two models is rejected to avoid ambiguous ordering.
+
+## Generated security and service rules
+
+The access list describes forwarding decisions. It does not contain DHCP port
+pairs, neighbour-discovery messages, return-packet plumbing or daemon egress.
+Lanrith generates those from the selected network modes and enabled services.
+Router input, forwarding and output all default to deny.
+
+Source guards admit only the declared connected and routed sources on each
+internal attachment and reject their spoofed use on the uplink. A private or
+CGNAT uplink remains valid; there is no blanket ban on private WAN sources.
+`networks.NAME.routed_prefixes` supplies additional non-overlapping prefixes routed
+behind an attachment. It does not install routes or permit forwarding. Routing
+peers and their import/export constraints still need configured routing support.
+
+Set `networks.NAME.forwarding: false` for an isolated management or service
+attachment. The firewall blocks both forwarding directions before ordinary
+access rules and established-flow shortcuts; masquerading excludes it. Its
+explicitly selected local listeners remain available. No network name, VLAN,
+interface model or external backend implies a trust role.
+
+DHCP bootstrap is restricted to the selected interface and local/broadcast
+destinations. Uplink DHCP and RA rules follow the configured modes. IPv6 link
+control uses declared interfaces, required hop limits and message codes; link-local
+traffic cannot become routed transit. Network source-route and redirect protections
+cover global defaults and interfaces present before or after sysctl activation,
+including VLAN names containing dots. IPv6 routing headers are disabled rather
+than retaining the kernel's type-2 exception. See the
+[kernel sysctl reference](https://docs.kernel.org/networking/ip-sysctl.html) and
+[systemd interface handling](https://www.freedesktop.org/software/systemd/man/latest/sysctl.d.html).
+The implementation preserves
+essential IPv6 control/error traffic described in
+[RFC 4890](https://www.rfc-editor.org/rfc/rfc4890.html).
+
+Management access is generated with the selected interface, source prefixes and
+local addresses. DNS/NTP listeners follow service selection. Their outbound
+DNS/NTP queries use their package accounts; ordinary root or unrelated daemon
+traffic does not gain arbitrary egress. SSH, DNS, DHCP and NTP service units bind
+to successful nftables activation. Replacing a complete firewall through an
+admitted integration also requires qualification of these boundaries.
+
+The current built-in service compiler covers DNS, DHCP and NTP. Advanced
+components remain gated on admitted integrations. Their future typed compilers
+must derive exact listener, peer, namespace, translation and return rules from
+component settings, preserving operator denies through native and translated
+paths. Enabling a package must not grant trust to a cluster, directory or backend.
+Temporary broad permissions remain explicit owner rules.
+
+## Hardware and optional integrations
 
 Defaults allocate a 1 GiB ESP, two 4 GiB root slots and 64 GiB encrypted state.
 Surplus storage stays unallocated. Factory installation requires an eligible

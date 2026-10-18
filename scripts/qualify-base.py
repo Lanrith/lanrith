@@ -24,7 +24,7 @@ CHECKS = {
         'optional-services-inactive', 'one-shot-upgrade',
         'fallback-protection', 'unaccepted-reboot-fallback', 'explicit-acceptance', 'replay-rejection',
         'tamper-rejection', 'interrupted-staging', 'failed-health-fallback', 'populated-state-upgrade-and-rollback',
-        'initrd-provisioning-failure-boundary'},
+        'initrd-provisioning-failure-boundary', 'firewall-listener-failure-boundary'},
     'manual-encryption': {'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
         'ssh-pam-administration', 'automatic-boot-observation', 'persistent-state-reboot', 'optional-services-inactive'},
 }
