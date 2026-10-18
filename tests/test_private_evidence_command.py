@@ -57,7 +57,8 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
         self.context = {'repository': 'example/router-config', 'source_commit': 'a'*40,
                         'workflow_commit': 'b'*40}
 
-    def handoff(self, *, factory_configuration=None, factory_root=b'synthetic-root', profile='repository'):
+    def handoff(self, *, factory_configuration=None, update_configuration=None,
+                factory_root=b'synthetic-root', profile='repository'):
         manifests = {}
         for purpose in ('update', 'factory'):
             directory = self.root/purpose
@@ -69,8 +70,8 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
                     data = factory_root
                 (directory/name).write_bytes(data)
             manifest = release.unsigned_manifest(directory, purpose=purpose, version='1.2.3', sequence=107,
-                configuration_sha256=(factory_configuration if purpose == 'factory' and factory_configuration
-                                      else self.configuration), files=files)
+                configuration_sha256=((factory_configuration if purpose == 'factory' else update_configuration)
+                                      or self.configuration), files=files)
             (directory/'release.json').write_bytes(release.canonical(manifest))
             release.sign(directory, self.keys/'boot.key')
             manifests[purpose] = manifest
@@ -115,6 +116,13 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
 
     def test_factory_signed_for_another_configuration_is_rejected_before_evidence(self):
         self.handoff(factory_configuration='f'*64)
+        result = self.command()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Configuration digest differs.', result.stderr)
+        self.assertFalse((self.artifacts/'provenance.dsse.json').exists())
+
+    def test_matching_signed_pair_for_another_owner_configuration_is_rejected(self):
+        self.handoff(factory_configuration='f'*64, update_configuration='f'*64)
         result = self.command()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Configuration digest differs.', result.stderr)

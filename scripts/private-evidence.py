@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='lanrith-subject-check.') as temporary:
     release.require(len(members) == 6, 'Incomplete update evidence archive.')
     manifest = release.verify(root, owner/'trust/boot.crt', purpose='update',
         image_id=value.get('release', {}).get('image_id', 'lanrith'),
-        expected_version=selection['version'][1:])
+        expected_version=selection['version'][1:], expected_configuration=expected['configuration_sha256'])
     release.require(manifest == deployment['release'] and
                     manifest['deployment_sequence'] == value.get('release', {}).get('sequence_floor', 0)+int(os.environ['GITHUB_RUN_NUMBER']),
                     'Signed deployment identity differs from the qualified workflow.')
@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix='lanrith-factory-check.') as temporary:
     release.require(len(members)==8, 'Incomplete factory evidence archive.')
     factory=release.verify(root,owner/'trust/boot.crt',purpose='factory',image_id=manifest['image_id'],
                            expected_version=manifest['platform_version'],
-                           expected_configuration=manifest['configuration_sha256'])
+                           expected_configuration=expected['configuration_sha256'])
     release.require(factory==deployment['factory'] and factory['deployment_sequence']==manifest['deployment_sequence'],
                     'Factory identity differs from the signed update.')
     common={a['role']:a for a in factory['artifacts'] if a['role'] in release.ROLES['update']}
