@@ -530,6 +530,72 @@ def boot(guest, *, manual=False, first=False):
     guest.ready()
 
 
+def firewall_failure(guest):
+    """Core listeners stop with nftables and cannot start if its activation fails."""
+    # A transient unit survives the SSH listener it deliberately stops. Every
+    # write is under /run in this disposable guest; restore before reconnecting.
+    script = inspect.cleandoc('''
+        import json
+        from pathlib import Path
+        import subprocess
+        import time
+
+        listeners = ['ssh.service', 'unbound.service', 'kea-dhcp4-server.service']
+        override = Path('/run/systemd/system/nftables.service.d/90-qualification-failure.conf')
+        receipt = Path('/run/lanrith/firewall-failure-qualification.json')
+
+        def command(*arguments, check=True):
+            return subprocess.run(['systemctl', *arguments], check=check,
+                                  capture_output=True, timeout=40)
+
+        def inactive():
+            for unit in listeners:
+                if command('is-active', '--quiet', unit, check=False).returncode == 0:
+                    raise RuntimeError('A listener survived a missing firewall.')
+
+        time.sleep(3)
+        record = {'result': 'fail'}
+        try:
+            for unit in listeners:
+                if command('is-active', '--quiet', unit, check=False).returncode != 0:
+                    raise RuntimeError('A selected listener was inactive before the probe.')
+            command('stop', 'nftables.service')
+            inactive()
+            record['stopped_with_firewall'] = True
+            override.parent.mkdir(exist_ok=True)
+            override.write_text('[Service]\\nExecStart=\\nExecStart=/usr/bin/false\\n')
+            command('daemon-reload')
+            if command('start', *listeners, check=False).returncode == 0:
+                raise RuntimeError('Listener activation succeeded with a failing firewall.')
+            if command('is-failed', '--quiet', 'nftables.service', check=False).returncode != 0:
+                raise RuntimeError('The injected firewall failure did not occur.')
+            inactive()
+            record.update(result='pass', blocked_on_firewall_failure=True)
+        finally:
+            override.unlink(missing_ok=True)
+            command('daemon-reload')
+            command('reset-failed', check=False)
+            command('start', 'nftables.service')
+            command('start', *listeners)
+            receipt.write_text(json.dumps(record, sort_keys=True)+'\\n')
+        ''')
+    print('Native VM: verifying listener shutdown and firewall-failure admission.', flush=True)
+    root(guest, 'systemd-run --unit=lanrith-firewall-qualification --service-type=oneshot '+
+         '--property=TimeoutStartSec=180 /usr/bin/python3 -c '+shlex.quote(script))
+    deadline = time.monotonic()+240
+    while time.monotonic() < deadline:
+        result = guest.ssh('cat /run/lanrith/firewall-failure-qualification.json', success=False, timeout=15)
+        if result.returncode == 0:
+            record = json.loads(result.stdout)
+            release.require(record == {'result': 'pass', 'stopped_with_firewall': True,
+                                       'blocked_on_firewall_failure': True},
+                            'Core listeners did not enforce the firewall activation boundary.')
+            guest.ready()
+            return
+        time.sleep(2)
+    raise release.ReleaseError('Firewall-failure qualification did not restore healthy administration.')
+
+
 def provisioning_failure(value, base, initrd, work, secret):
     """An error after creating valid encrypted state must remain in the initrd."""
     work.mkdir(mode=0o700)
@@ -657,6 +723,7 @@ done''')
                 'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
                 'ssh-pam-administration', 'automatic-boot-observation',
                 'persistent-state-reboot', 'optional-services-inactive']}
+        firewall_failure(guest)
         second_assembly, _, second = image(value, base, initrd, work, secret, 10)
         shutil.rmtree(second_assembly)
         # This signed candidate keeps administration reachable but cannot pass
@@ -745,7 +812,7 @@ done''')
             'optional-services-inactive', 'one-shot-upgrade', 'fallback-protection', 'unaccepted-reboot-fallback',
             'explicit-acceptance', 'replay-rejection', 'tamper-rejection', 'interrupted-staging',
             'failed-health-fallback', 'populated-state-upgrade-and-rollback',
-            'initrd-provisioning-failure-boundary']}
+            'initrd-provisioning-failure-boundary', 'firewall-listener-failure-boundary']}
     finally:
         guest.close()
 

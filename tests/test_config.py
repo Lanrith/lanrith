@@ -30,14 +30,14 @@ class ConfigTests(unittest.TestCase):
                 self.assertIn(network['name'], firewall)
             if example == 'segmented.yaml':
                 self.assertNotIn('oifname "lan.20" accept', firewall)
-                self.assertIn('iifname "lan.10" tcp dport 22 accept', firewall)
-                self.assertNotIn('iifname "lan.20" tcp dport 22 accept', firewall)
+                self.assertIn('iifname "lan.10" ip saddr { 192.168.10.0/24 } ip daddr { 192.168.10.1 } tcp dport 22 accept', firewall)
+                self.assertNotIn('ip daddr { 172.20.20.1 } tcp dport 22 accept', firewall)
 
     def test_explicit_connection_is_generated_without_widening_other_ports(self):
         value = config.load(ROOT / 'examples/segmented.yaml')
-        value['access']['between_networks'] = [{'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}]
+        value['access']['rules'] += [{'action': 'allow', 'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}]
         firewall = config.render(value)['etc/nftables.conf']
-        self.assertIn('iifname "lan.10" oifname "lan.20" tcp dport { 443 } accept', firewall)
+        self.assertIn('iifname "lan.10" oifname "lan.20" meta l4proto tcp tcp dport { 443 }', firewall)
         self.assertNotIn('tcp dport { 80', firewall)
 
     def test_duplicate_yaml_unknown_fields_and_recursive_yaml_are_rejected(self):

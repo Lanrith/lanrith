@@ -13,6 +13,7 @@ hardware:
         mac: 02:00:00:00:01:02
 uplink:
   interface: wan
+  masquerade: true
   ipv4: dhcp
   ipv6: ra
 networks:
@@ -46,10 +47,11 @@ services:
   dhcp4:
     enabled: true
 access:
-  internet:
-  - home
-  - guest
-  between_networks: []
+  rules:
+  - name: Allow home and guest Internet access
+    action: allow
+    from: [home, guest]
+    to: uplink
 administration:
   networks:
   - home

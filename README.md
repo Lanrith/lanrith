@@ -26,7 +26,8 @@ python3 -m lanrith render config.yaml --output rendered
 ```
 
 The firewall denies inter-network traffic and router administration by default.
-The configuration explicitly selects management networks and internet access.
+The configuration selects management networks and generic ordered allow/deny
+rules using networks, addresses, protocols and ports.
 Optional services start only when enabled. No directory, Kubernetes cluster,
 remote DNS service or telemetry destination is assumed. Advanced integrations
 use reviewed, digest-bound file extensions; configuration cannot run build
