@@ -159,12 +159,16 @@ def assemble(owner, bundle, request, output):
         release.require((private/'boot.crt').read_bytes().strip() ==
                         release.read(owner/'trust/boot.crt', 65536).strip(),
                         'Boot certificate differs from reviewed owner trust.')
-        floor = config.load(owner/'config.yaml').get('release', {}).get('sequence_floor', 0)
-        if config.load(owner/'config.yaml')['administration']['serial']['enabled']:
+        value = config.load(owner/'config.yaml')
+        floor = value.get('release', {}).get('sequence_floor', 0)
+        serial_digest = None
+        if value['administration']['serial']['enabled']:
             data = os.environ.pop('LANRITH_SERIAL_PASSPHRASE_HASH', '')
             release.require(bool(data), 'Serial administration requires its protected provisioning hash.')
             (private/'serial.hash').write_text(data.strip()+'\n')
             (private/'serial.hash').chmod(0o600)
+            serial_digest = release.file_record(private/'serial.hash')['sha256']
+        effective_digest = config.effective_digest(value, actual['integration_digests'], serial_digest)
         sequence = floor + int(os.environ['GITHUB_RUN_NUMBER'])
         release.require(sequence <= 999999999, 'Deployment sequence exceeds its supported bound.')
         release.require(sequence > 0, 'Invalid deployment sequence.')
@@ -187,24 +191,33 @@ def assemble(owner, bundle, request, output):
         (private/'admitted.json').write_bytes(release.canonical({'platform_lock_sha256':
             release.file_record(owner/'platform.lock')['sha256'], 'workflow_commit': actual['workflow_commit'],
             'configuration_sha256': actual['configuration_sha256'], 'files': selection['files'],
+            'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
             'integration_digests': actual['integration_digests'], 'assessment_sha256': receipt['assessment_sha256']}))
         (private/'admitted.json').chmod(0o600)
         run(*command)
         run('sudo', 'chown', '--recursive', str(os.getuid())+':'+str(os.getgid()), str(assembly_root))
-        release.verify(payload, private/'boot.crt', purpose='update', image_id=
-                       config.load(owner/'config.yaml').get('release', {}).get('image_id', 'lanrith'))
+        verified = release.verify(payload, private/'boot.crt', purpose='update',
+            image_id=value.get('release', {}).get('image_id', 'lanrith'),
+            expected_version=selection['version'][1:], expected_configuration=effective_digest,
+            minimum_sequence=sequence-1)
+        release.require(verified['deployment_sequence'] == sequence, 'Signed update sequence differs.')
+        factory = assembly_root/'factory'
+        verified_factory = release.verify(factory, private/'boot.crt', purpose='factory',
+            image_id=verified['image_id'], expected_version=selection['version'][1:],
+            expected_configuration=effective_digest, minimum_sequence=sequence-1)
+        release.require(verified_factory['deployment_sequence'] == sequence and
+            {item['role']: item for item in verified_factory['artifacts'] if item['role'] in release.ROLES['update']} ==
+            {item['role']: item for item in verified['artifacts']}, 'Signed factory and update payloads differ.')
         output.mkdir(mode=0o700)
         with tarfile.open(output/'update.tar.gz', 'w:gz', format=tarfile.PAX_FORMAT) as archive:
             for path in sorted(payload.iterdir()):
                 archive.add(path, arcname=path.name)
-        factory=assembly_root/'factory'
         with tarfile.open(output/'factory.tar.gz','w:gz',format=tarfile.PAX_FORMAT) as archive:
             for path in sorted(factory.iterdir()):
                 archive.add(path,arcname=path.name)
-        manifest = json.loads((payload/'release.json').read_text())
         (output/'deployment.json').write_bytes(release.canonical({**actual,
-            'deployment_sequence': sequence, 'release': manifest,
-            'factory':json.loads((factory/'release.json').read_text())}))
+            'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
+            'deployment_sequence': sequence, 'release': verified, 'factory': verified_factory}))
 
 
 def main():

@@ -59,6 +59,21 @@ def load(path):
     return normalize(value)
 
 
+def effective_digest(value, integrations, serial_provisioning_sha256=None):
+    """Bind normalized intent, admitted integrations and selected serial material."""
+    value = normalize(value)
+    require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
+            all(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest)
+                for digest in integrations.values()), 'Effective integration digests differ from configuration.')
+    enabled = value['administration']['serial']['enabled']
+    require((serial_provisioning_sha256 is not None) == enabled and
+            (serial_provisioning_sha256 is None or isinstance(serial_provisioning_sha256, str) and
+             re.fullmatch(r'[0-9a-f]{64}', serial_provisioning_sha256)),
+            'Effective serial provisioning differs from configuration.')
+    return hashlib.sha256(canonical({'configuration': value, 'integrations': integrations,
+                                    'serial_provisioning_sha256': serial_provisioning_sha256})).hexdigest()
+
+
 def normalize(value):
     value = copy.deepcopy(value)
     fields(value, {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'access', 'services',

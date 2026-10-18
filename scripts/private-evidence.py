@@ -11,7 +11,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith import archive as handoff, config, evidence, release, trust
-from consumer import signing_profile
+from consumer import integration_pins, signing_profile
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--owner', type=Path, required=True)
@@ -23,8 +23,11 @@ release.require({p.name for p in artifacts.iterdir()} == {'update.tar.gz', 'fact
 value = config.load(owner/'config.yaml')
 selection = trust.lock(owner/'platform.lock')
 deployment = json.loads(release.read(artifacts/'deployment.json', 65536), object_pairs_hook=release.unique)
+integrations = {name: pin[1] for name, pin in integration_pins(owner, value).items()}
+effective_digest = config.effective_digest(value, integrations, deployment['serial_provisioning_sha256'])
 expected = {'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
-            'integration_digests': json.loads(release.read(owner/'extensions.lock',65536)) if value['extensions'] else {},
+            'effective_configuration_sha256': effective_digest,
+            'integration_digests': integrations,
             'platform_lock_sha256': release.file_record(owner/'platform.lock')['sha256'],
             'boot_certificate_sha256': release.file_record(owner/'trust/boot.crt')['sha256'],
             'evidence_certificate_sha256': release.file_record(owner/'trust/evidence.crt')['sha256'],
@@ -40,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix='lanrith-subject-check.') as temporary:
     release.require(len(members) == 6, 'Incomplete update evidence archive.')
     manifest = release.verify(root, owner/'trust/boot.crt', purpose='update',
         image_id=value.get('release', {}).get('image_id', 'lanrith'),
-        expected_version=selection['version'][1:], expected_configuration=expected['configuration_sha256'])
+        expected_version=selection['version'][1:], expected_configuration=effective_digest)
     release.require(manifest == deployment['release'] and
                     manifest['deployment_sequence'] == value.get('release', {}).get('sequence_floor', 0)+int(os.environ['GITHUB_RUN_NUMBER']),
                     'Signed deployment identity differs from the qualified workflow.')
@@ -52,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='lanrith-factory-check.') as temporary:
     release.require(len(members)==8, 'Incomplete factory evidence archive.')
     factory=release.verify(root,owner/'trust/boot.crt',purpose='factory',image_id=manifest['image_id'],
                            expected_version=manifest['platform_version'],
-                           expected_configuration=expected['configuration_sha256'])
+                           expected_configuration=effective_digest)
     release.require(factory==deployment['factory'] and factory['deployment_sequence']==manifest['deployment_sequence'],
                     'Factory identity differs from the signed update.')
     common={a['role']:a for a in factory['artifacts'] if a['role'] in release.ROLES['update']}
@@ -61,6 +64,8 @@ with tempfile.TemporaryDirectory(prefix='lanrith-factory-check.') as temporary:
 statement = evidence.predicate(artifacts, repository=expected['repository'], source_commit=expected['source_commit'],
     workflow_commit=expected['workflow_commit'], invocation=os.environ['GITHUB_RUN_ID'],
     inputs={'platform': selection, 'configuration_sha256': expected['configuration_sha256'],
+            'effective_configuration_sha256': effective_digest, 'integration_digests': integrations,
+            'serial_provisioning_sha256': deployment['serial_provisioning_sha256'],
             'signing_profile': expected['signing_profile'],
             'protected_signing': expected['signing_profile'] == 'protected'})
 with tempfile.TemporaryDirectory(prefix='lanrith-evidence.', dir='/dev/shm') as temporary:
