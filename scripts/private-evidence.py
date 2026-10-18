@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix='lanrith-factory-check.') as temporary:
     release.require(len(members)==8, 'Incomplete factory evidence archive.')
     factory=release.verify(root,owner/'trust/boot.crt',purpose='factory',image_id=manifest['image_id'],
                            expected_version=manifest['platform_version'],
-                           configuration_sha256=manifest['configuration_sha256'])
+                           expected_configuration=manifest['configuration_sha256'])
     release.require(factory==deployment['factory'] and factory['deployment_sequence']==manifest['deployment_sequence'],
                     'Factory identity differs from the signed update.')
     common={a['role']:a for a in factory['artifacts'] if a['role'] in release.ROLES['update']}
