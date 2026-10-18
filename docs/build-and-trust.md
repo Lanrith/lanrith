@@ -133,10 +133,21 @@ misidentify the source examined by the vulnerability gate.
 Owner builds run network and provenance checks before keys are materialized.
 Assembly runs offline in the admitted builder with keys in private tmpfs.
 Compiler inputs cannot install packages or execute owner hooks. GitHub owner
-boot signing and evidence signing use separate protected environments and
-keys. The evidence job validates the owner signature and request identities
+boot signing and evidence signing use separate keys and fresh runners. The
+default `protected` profile requires main-branch reviews/checks and separate
+environments restricted to protected branches. An explicit `repository`
+profile uses repository Actions secrets and works for private repositories
+on GitHub Free. It trusts every repository writer; a writer can change a
+workflow to request those secrets. There is no automatic fallback from the
+protected profile. Both modes permit signing only for a main-branch push or
+manual run, and bind the chosen profile into the admitted request and private
+provenance. The evidence job validates the owner signature and request identities
 without executing an image or builder. Its DSSE SLSA statement remains private;
 no public transparency log is used by default.
+The statement records whether protected signing was required. It does not
+certify the owner image's SLSA level. Public platform Build L3 evidence remains
+independently verified. See the [template signing profiles](https://github.com/Lanrith/config-template#signing-profiles)
+and GitHub's [secret scopes](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
 
 For a local build, authenticate the compiler using the release's pinned file
 provenance. Download the platform files and their verification bundles into
@@ -169,8 +180,8 @@ for recovery. The local path does not claim hosted SLSA qualification for the
 owner image. Public platform provenance remains independently verified. Use a
 separate owner evidence authority for any deployment-evidence signing.
 
-Local signing is appropriate when repository or environment protections cannot
-be enforced. Do not put keys, hashes, credentials or private configuration into
+Local signing is appropriate when hosted key storage or either profile's writer
+trust model is unsuitable. Do not put keys, hashes, credentials or private configuration into
 a public repository, command arguments or CI logs.
 
 The template checks actual private-repository and environment capabilities.

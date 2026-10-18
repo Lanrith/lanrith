@@ -11,6 +11,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith import archive as handoff, config, evidence, release, trust
+from consumer import signing_profile
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--owner', type=Path, required=True)
@@ -28,7 +29,7 @@ expected = {'configuration_sha256': hashlib.sha256(release.canonical(value)).hex
             'boot_certificate_sha256': release.file_record(owner/'trust/boot.crt')['sha256'],
             'evidence_certificate_sha256': release.file_record(owner/'trust/evidence.crt')['sha256'],
             'repository': os.environ['GITHUB_REPOSITORY'], 'source_commit': os.environ['GITHUB_SHA'],
-            'workflow_commit': os.environ['LANRITH_WORKFLOW_COMMIT']}
+            'workflow_commit': os.environ['LANRITH_WORKFLOW_COMMIT'], 'signing_profile': signing_profile()}
 release.require(all(deployment.get(key) == value for key, value in expected.items()),
                 'Build output differs from the immutable workflow inputs.')
 # Authenticity is checked against owner-reviewed certificates, never one from the artifact.
@@ -59,13 +60,15 @@ with tempfile.TemporaryDirectory(prefix='lanrith-factory-check.') as temporary:
                     'Factory and update do not contain the same verified-root triplet and UKI.')
 statement = evidence.predicate(artifacts, repository=expected['repository'], source_commit=expected['source_commit'],
     workflow_commit=expected['workflow_commit'], invocation=os.environ['GITHUB_RUN_ID'],
-    inputs={'platform': selection, 'configuration_sha256': expected['configuration_sha256']})
+    inputs={'platform': selection, 'configuration_sha256': expected['configuration_sha256'],
+            'signing_profile': expected['signing_profile'],
+            'protected_signing': expected['signing_profile'] == 'protected'})
 with tempfile.TemporaryDirectory(prefix='lanrith-evidence.', dir='/dev/shm') as temporary:
     private = Path(temporary)
     private.chmod(0o700)
     for name, variable in (('key', 'LANRITH_EVIDENCE_KEY'), ('certificate', 'LANRITH_EVIDENCE_CERTIFICATE')):
         data = os.environ.pop(variable, '')
-        release.require(data, 'Protected evidence material is missing.')
+        release.require(data, 'Private evidence material is missing.')
         (private/name).write_text(data)
         (private/name).chmod(0o600)
     release.require(release.public_key(private/'certificate') == release.public_key(owner/'trust/evidence.crt'),
