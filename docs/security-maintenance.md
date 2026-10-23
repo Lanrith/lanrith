@@ -45,6 +45,12 @@ After the implementation branches have been pushed, run the same command with
 the reviewer App so the owner can submit an independent human approval. Review
 the bootstrap changes in all three repositories.
 
+Bootstrap creation also uses the updater key to append a metadata-only commit
+with the identical source tree. This makes the final push come from the updater
+App, preserving GitHub's last-push approval rule when the owner reviews. The
+non-forced reference update rejects concurrent branch changes. Both App keys are
+required for this step; protection is kept in place.
+
 Review the shared controls first, then merge and qualify the component compiler
 fixes. Pin their newly attested immutable releases in the platform bootstrap PR
 and rerun full platform qualification before merging it. A platform that still

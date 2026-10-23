@@ -56,6 +56,44 @@ def app_request(endpoint, key, app_id, *, value=None):
         return json.load(response)
 
 
+def token_request(endpoint, token, *, value=None, method=None):
+    request = urllib.request.Request('https://api.github.com/'+endpoint,
+        data=json.dumps(value).encode() if value is not None else None, method=method,
+        headers={'Authorization': 'Bearer '+token, 'Accept': 'application/vnd.github+json',
+                 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=40) as response:
+        return json.load(response)
+
+
+def bind_bootstrap_push(repo, branch, updater_key):
+    """Keep both PR authorship and the last push independent from the owner reviewer."""
+    if not updater_key:
+        raise ValueError('Bootstrap PR creation needs the updater key: last-push protection requires an App push before the owner can approve.')
+    app = app_request('app', updater_key, 5355607)
+    expected = {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}
+    if app['id'] != 5355607 or app['permissions'] != expected:
+        raise ValueError('Bootstrap writer differs from the restricted updater App.')
+    install = app_request('repos/'+repo+'/installation', updater_key, 5355607)
+    if install['account']['login'] != 'Lanrith' or install['repository_selection'] != 'selected':
+        raise ValueError('Bootstrap writer needs the selected-repository Lanrith installation.')
+    token = app_request('app/installations/'+str(install['id'])+'/access_tokens', updater_key, 5355607,
+        value={'repositories': [repo.split('/')[1]], 'permissions': {'contents': 'write'}})['token']
+    prefix = 'repos/'+repo+'/git/'
+    head = token_request(prefix+'ref/heads/'+branch, token)['object']['sha']
+    original = token_request(prefix+'commits/'+head, token)
+    created = token_request(prefix+'commits', token, value={
+        'message': 'Record bootstrap push under the updater App for independent owner review',
+        'tree': original['tree']['sha'], 'parents': [head]})
+    if created['tree']['sha'] != original['tree']['sha'] or [p['sha'] for p in created['parents']] != [head]:
+        raise ValueError('Bootstrap metadata commit unexpectedly changed its source tree or parent.')
+    # Non-fast-forward protection rejects a race with another branch update.
+    updated = token_request(prefix+'refs/heads/'+branch, token, method='PATCH',
+                            value={'sha': created['sha'], 'force': False})
+    if updated['object']['sha'] != created['sha']:
+        raise ValueError('GitHub did not bind the exact bootstrap commit.')
+    return created['sha']
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reviewer-id', required=True, type=int)
@@ -168,8 +206,16 @@ def main():
             if existing:
                 if len(existing) != 1 or existing[0]['user']['login'] != app['slug']+'[bot]':
                     raise ValueError('Bootstrap branch already has a PR from another author; preserve independent human approval.')
-                print(existing[0]['html_url'])
+                current = existing[0]
+                marker = 'Bootstrap App push: `'+current['head']['sha']+'`.'
+                if marker not in (current.get('body') or ''):
+                    pushed = bind_bootstrap_push(repo, args.branch, args.updater_key)
+                    token_request('repos/'+repo+'/pulls/'+str(current['number']), token, method='PATCH',
+                        value={'body': (current.get('body') or '')+'\n\nBootstrap App push: `'+pushed+'`.'})
+                print(current['html_url'])
                 continue
+            pushed = bind_bootstrap_push(repo, args.branch, args.updater_key)
+            body['body'] += '\n\nBootstrap App push: `'+pushed+'`.'
             request = urllib.request.Request('https://api.github.com/repos/'+repo+'/pulls', data=json.dumps(body).encode(),
                 headers={'Authorization': 'Bearer '+token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'})
             with urllib.request.urlopen(request, timeout=40) as response:
