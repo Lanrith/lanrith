@@ -23,6 +23,29 @@ from lanrith import advisories, embedded
 from lanrith.release import ReleaseError
 
 
+def dependency_scan(queries, name, destination, failures, scanner_errors):
+    try:
+        value = advisories.report(queries)
+        (destination/(name+'-advisories.json')).write_bytes(canonical(value))
+        if value['findings']:
+            print(json.dumps(value['findings'], sort_keys=True), flush=True)
+            failures.append(name)
+    except (ReleaseError, ValueError, OSError, KeyError):
+        failures.append(name)
+        scanner_errors.append(name)
+
+
+def support_decisions(completed):
+    # Unknown scanner coverage cannot be retired as a known vulnerable release.
+    # The newest stable release always remains supported and blocking if unsafe.
+    if completed and completed[0][1]['result'] == 'pass' and not completed[0][1]['scanner_errors']:
+        for destination, report in completed[1:]:
+            if report['result'] != 'pass' and not report['scanner_errors']:
+                report.update(supported=False, retirement_reason='superseded-vulnerable',
+                              superseded_by=completed[0][1]['platform_version'])
+                (destination/'security-assessment.json').write_bytes(canonical(report))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -97,7 +120,7 @@ def main():
                 if scan.returncode:
                     failures.append('go-binary-'+binary.name)
                     print(binary.name+': '+(scan.stdout+scan.stderr).decode(errors='replace')[-24000:], flush=True)
-                    if not re.search(rb'GO-[0-9]{4}-[0-9]+', scan.stdout):
+                    if scan.returncode != 3:
                         scanner_errors.append('go-binary-'+binary.name)
             for repository, patched in (('FDio/vpp', {'GHSA-rc9p-89wj-mx7h'}), ('apalrd/tayga', set())):
                 feed = json.loads(run('gh', 'api', 'repos/'+repository+'/security-advisories',
@@ -108,24 +131,12 @@ def main():
             require(embedded.verify(binaries/'alloy', binaries/'alloy-beyla',
                     old['custom']['components']['alloy']['beyla']['binary_sha256']) == old['embedded_beyla'],
                     'Retained Beyla scan subject differs from the deployed embedded payload.')
-            queries = old['custom']['components']['pam-rssh']['queries']
-            try:
-                advisories.assess(queries)
-            except (ReleaseError, ValueError, OSError):
-                failures.append('pam-dependencies')
-            try:
-                advisories.assess(old['custom']['components']['alloy']['java_agent']['queries'])
-            except (ReleaseError, ValueError, OSError, KeyError):
-                failures.append('alloy-embedded-java')
-            try:
-                npm = advisories.report(advisories.npm_queries(old['custom']['components']['alloy']['npm_modules']))
-                (destination/'npm-advisories.json').write_bytes(canonical(npm))
-                if npm['findings']:
-                    print(json.dumps(npm['findings'], sort_keys=True), flush=True)
-                    failures.append('alloy-ui-dependencies')
-            except (ReleaseError, ValueError, OSError, KeyError):
-                failures.append('alloy-ui-dependencies')
-                scanner_errors.append('alloy-ui-dependencies')
+            dependency_scan(old['custom']['components']['pam-rssh']['queries'],
+                            'pam-dependencies', destination, failures, scanner_errors)
+            dependency_scan(old['custom']['components']['alloy']['java_agent']['queries'],
+                            'alloy-embedded-java', destination, failures, scanner_errors)
+            dependency_scan(advisories.npm_queries(old['custom']['components']['alloy']['npm_modules']),
+                            'alloy-ui-dependencies', destination, failures, scanner_errors)
             alloy = old['custom']['components']['alloy']
             for repository in ('grafana/alloy', 'grafana/beyla', 'grafana/opentelemetry-ebpf-instrumentation',
                                'open-telemetry/opentelemetry-ebpf-instrumentation'):
@@ -149,14 +160,7 @@ def main():
             (destination/'security-assessment.json').write_bytes(canonical(report))
             completed.append((destination, report))
             print('Retained inventory '+inventory[:12]+' assessment: '+report['result']+'.')
-    # Older vulnerable binaries remain failed. Only a passing newer release can
-    # supersede them; the latest release itself is never retired to clear an alert.
-    if completed and completed[0][1]['result'] == 'pass':
-        for destination, report in completed[1:]:
-            if report['result'] != 'pass' and not report['scanner_errors']:
-                report.update(supported=False, retirement_reason='superseded-vulnerable',
-                              superseded_by=completed[0][1]['platform_version'])
-                (destination/'security-assessment.json').write_bytes(canonical(report))
+    support_decisions(completed)
 
 
 if __name__ == '__main__':
