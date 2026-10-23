@@ -142,3 +142,7 @@ Retained assessment always includes the latest stable release. A passing newer
 release can explicitly supersede vulnerable older ones; their signed assessments
 keep `result=fail`, their retirement reason and replacement version. An unsafe
 latest release cannot retire itself. Incomplete scanner coverage remains blocking.
+
+Qualification artifacts contain the flat public JSON and text reports in the output
+directory. Workflow checks enforce that boundary, keeping collection independent
+of the private VM and storage work directories and their access permissions.
