@@ -34,12 +34,12 @@
     "builders/alloy/patches/github.com_burningalchemist_sql_exporter.patch": "b97a4ee85a12055205cd232b2b6b4ec8b83079a4d2a891a96a20d3cbfe235cec",
     "builders/alloy/patches/github.com_grafana_snowflake-prometheus-exporter.patch": "94fd8d639043bbbcae3880190c02d39542c92074cae0afab735455bde17eb8ba",
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
-    "builders/alloy/source.json": "28fe1c280a3f6aaaaa84a197208e232779a18f19750148ce860b4431d1cc1d00",
+    "builders/alloy/source.json": "f71ae5001213788b3876f5932ab51d64e7f1fc53edcc5a8b1828863521d9a798",
     "builders/alloy/ui-dependencies.patch": "12bd0cf639d82f128f364743a0873f2fab9357534d630449ce09e342fc698206",
-    "builders/build-inputs.lock": "d1e6d19f8f1fc55eb5ecd5e7035d54063370c8ecf5f25b983cb6b22a37f8517c",
+    "builders/build-inputs.lock": "a5443d011776a4ec9bba574bc649c9cf7809a0d6f8c009195760da5e986ee69e",
     "builders/mkosi/Containerfile": "55e4e902a27db01837d7f88a69d4ad8e53887c4f93c08b0de0982e2795a40736",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
-    "builders/node-exporter/source.json": "dafa25364dffccd9b4f575920fc26d1d09419d6a02524533ae06b1de3a800f97",
+    "builders/node-exporter/source.json": "ab58d411f964a4ed672a536a1a95c706c05e08cbee4f6747eda1ad0479922177",
     "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",
     "builders/pam/Containerfile": "5c65522d02b1062c5ea61441aee839f9d59f1f97d1b3eea795abb0d98e2e531f",
     "builders/patches/GHSA-rc9p-89wj-mx7h.patch": "331f3464663b277a29bdd924d9385672355d68e313d799889aa89ce0803414bb",
@@ -51,10 +51,10 @@
     "builders/vpp/Containerfile": "8e83ccd74bd7c747a3429e7fd76f685f3f15218bbd48ebab55fca270957b25fa"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261016T100000Z",
+  "debian_snapshot": "20261023T090000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "8f835d0dd6ca7fb6884eb209ce33bb627b847765c4da8e021f79ca4d4c2b688c",
-  "security_snapshot": "20261016T100000Z"
+  "security_release_sha256": "5cfc3293f08e6698ce9f0ae77754a25a127e90190a58d6c961a8fca7aad4107f",
+  "security_snapshot": "20261023T090000Z"
 }
