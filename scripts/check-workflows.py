@@ -45,7 +45,10 @@ for path in (root/'.github/workflows').glob('*.yml'):
     for name, job in value.get('jobs', {}).items():
         assert job.get('cache-mode') in (None, 'none', 'read', 'write-only'), path.name
         if name in ('attest', 'sign', 'publish'):
-            assert 'runs-on' in job and job['runs-on'] == 'ubuntu-24.04', path.name
+            if 'uses' in job:
+                assert job['uses'] == './.github/workflows/publish-release.yml' and path.name == 'build-base.yml', path.name
+            else:
+                assert job.get('runs-on') == 'ubuntu-24.04', path.name
         if name == 'attest':
             assert 'actions/checkout@' not in str(job) and 'setup-go@' not in str(job), path.name
         for step in job.get('steps', []):
@@ -63,4 +66,18 @@ for path in (root/'.github/workflows').glob('*.yml'):
                         step.get('if') == "steps.cache-bundle.outcome == 'success'", path.name
                 else:
                     raise AssertionError('Implicit cache restore/save is not allowed: '+path.name)
+    if path.name == 'security-review.yml':
+        assert 'pull_request_target' not in text and 'pull_request:' not in text, path.name
+        for job_name in ('inspect', 'admission', 'approve'):
+            job = value['jobs'][job_name]
+            checkouts = [s for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@')]
+            assert checkouts and all(s['with'].get('repository') == '${{ job.workflow_repository }}' and
+                s['with'].get('ref') == '${{ job.workflow_sha }}' and s['with'].get('persist-credentials') is False
+                for s in checkouts), 'Reviewer must execute only its reviewed workflow source'
+        approval = value['jobs']['approve']
+        assert approval['environment'] == 'lanrith-review' and "outputs.mode == 'enforce'" in approval['if'], path.name
+        assert "LANRITH_SECURITY_APPROVALS_ENABLED == 'true'" in approval['if'], path.name
+        assert approval['permissions'] == {'contents': 'read'}, path.name
+    if path.name in ('archive-evidence.yml', 'publish-release.yml'):
+        assert '--draft' in text and '--draft=false' in text and '--clobber' not in text.replace('# No overwrite or --clobber path is available, including on retries.', ''), path.name
 print('Workflow trust boundaries verified.')

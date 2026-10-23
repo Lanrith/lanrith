@@ -54,7 +54,7 @@
   "local_package_sources": {
     "alloy": {
       "source": "alloy",
-      "version": "1.20.1-1+lanrith2"
+      "version": "1.20.1-1+lanrith3"
     },
     "discovery-bridge": {
       "source": "discovery-bridge",
@@ -66,7 +66,7 @@
     },
     "libunbound8": {
       "source": "unbound",
-      "version": "1.26.1-0+deb13u1"
+      "version": "1.26.2-0+deb13u1"
     },
     "libvppinfra": {
       "source": "vpp",
@@ -90,11 +90,11 @@
     },
     "unbound": {
       "source": "unbound",
-      "version": "1.26.1-0+deb13u1"
+      "version": "1.26.2-0+deb13u1"
     },
     "unbound-anchor": {
       "source": "unbound",
-      "version": "1.26.1-0+deb13u1"
+      "version": "1.26.2-0+deb13u1"
     },
     "vpp": {
       "source": "vpp",
@@ -110,17 +110,17 @@
     }
   },
   "required_exact_packages": {
-    "alloy": "1.20.1-1+lanrith2",
+    "alloy": "1.20.1-1+lanrith3",
     "discovery-bridge": "0.1.0",
     "lanrith-tayga-internal": "0.9.6-1",
-    "libunbound8": "1.26.1-0+deb13u1",
+    "libunbound8": "1.26.2-0+deb13u1",
     "libvppinfra": "25.06-release",
     "prometheus-node-exporter": "1.12.1-1+lanrith1",
     "router-policy-collector": "0.1.2",
     "router-policy-helper": "0.1.2",
     "router-policy-reader": "0.1.2",
-    "unbound": "1.26.1-0+deb13u1",
-    "unbound-anchor": "1.26.1-0+deb13u1",
+    "unbound": "1.26.2-0+deb13u1",
+    "unbound-anchor": "1.26.2-0+deb13u1",
     "vpp": "25.06-release",
     "vpp-plugin-core": "25.06-release",
     "vpp-plugin-dpdk": "25.06-release"

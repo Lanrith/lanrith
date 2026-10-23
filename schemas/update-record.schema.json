@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lanrith.org/schemas/update-record.schema.json",
+  "title": "Lanrith security update decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "created_at",
+    "candidate_id",
+    "remediation_id",
+    "repository",
+    "pull_request",
+    "candidate",
+    "head_sha",
+    "base_sha",
+    "policy_sha256",
+    "reviewer_source_sha",
+    "validation",
+    "eligible",
+    "findings",
+    "approval",
+    "input_validation"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "kind": {
+      "const": "security-update-decision"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "candidate_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "remediation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repository": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pull_request": {
+      "type": "object",
+      "required": [
+        "number",
+        "url",
+        "author"
+      ]
+    },
+    "candidate": {
+      "type": "object"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "policy_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "reviewer_source_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "validation": {
+      "type": "array"
+    },
+    "eligible": {
+      "type": "boolean"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "approval": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "admission_check": {
+      "type": "object"
+    },
+    "input_validation": {
+      "type": "array"
+    }
+  }
+}

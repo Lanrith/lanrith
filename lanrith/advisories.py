@@ -53,7 +53,7 @@ def source_coverage(feed, fixes):
     return True
 
 
-def assess(queries):
+def report(queries):
     require(isinstance(queries, list) and 0 < len(queries) <= 1000, 'Invalid dependency advisory query set.')
     request = urllib.request.Request('https://api.osv.dev/v1/querybatch',
         data=json.dumps({'queries': queries}).encode(), headers={'Content-Type': 'application/json'})
@@ -66,6 +66,17 @@ def assess(queries):
             all(isinstance(item, dict) and set(item) <= {'vulns', 'next_page_token'} and
                 ('vulns' not in item or isinstance(item['vulns'], list)) and
                 ('next_page_token' not in item or isinstance(item['next_page_token'], str)) and
-                not item.get('next_page_token') and not item.get('vulns') for item in results),
-            'Dependencies have unresolved advisories or incomplete coverage.')
-    return hashlib.sha256(raw).hexdigest()
+                not item.get('next_page_token') for item in results),
+            'Dependency advisory coverage is incomplete or malformed.')
+    findings = [{'query': query, 'advisories': [v['id'] for v in result.get('vulns', [])]}
+                for query, result in zip(queries, results) if result.get('vulns')]
+    return {'schema': 1, 'feed_sha256': hashlib.sha256(raw).hexdigest(),
+            'queries': queries, 'results': results, 'findings': findings}
+
+
+def assess(queries):
+    value = report(queries)
+    detail = '; '.join(str(f['query'].get('package', f['query']))+': '+','.join(f['advisories'])
+                       for f in value['findings'])
+    require(not value['findings'], 'Dependencies have unresolved advisories: '+detail[:8000])
+    return value['feed_sha256']

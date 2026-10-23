@@ -63,16 +63,20 @@
       "result": "satisfied-by-design"
     },
     "security-practices": {
-      "evidence": "Pinned actions, source/tool/image/patch hashes, protected main review/checks, least job permissions, fresh Debian/custom advisory scans, native negative-path checks, retained rescans and a separate freshness watchdog. Trusted administrators retain the documented bootstrap bypass; no claim of third-party certification is made.",
+      "evidence": "Pinned actions, source/tool/image/patch hashes, protected main review/checks, least job permissions, fresh Debian/custom advisory scans, native negative-path checks, retained rescans and a separate freshness watchdog. Trusted administrators retain the documented bootstrap bypass; no claim of third-party certification is made. Security maintenance uses separate author/reviewer Apps, explicit report-only rollout, commit-bound decisions, immutable release publication and durable attested audit records.",
       "result": "satisfied-by-design"
     }
   },
   "result": "design-assessed",
   "reviewed_workflows": {
-    ".github/workflows/build-base.yml": "2b89f365dd4c466ad49d0c5072d7437934d180a538d9f0b73430013fb2a05c38",
+    ".github/workflows/archive-evidence.yml": "ab3d82101edc0608c6f79755a293cd7fd907446411cea3e447c784ba2ccefd8c",
+    ".github/workflows/build-base.yml": "defc0ab8feade4fbae8c82716d69309c7bdddd10067ed7bd8d2f886874dd6068",
     ".github/workflows/check.yml": "d18d0ec6571e1972c4fe92374fcf23b98fe66bb5717b1263848e08ae7c833183",
-    ".github/workflows/release.yml": "5779d5ad5b487e3a270737dbd1548797141bbb64e4b7ecddbd884ce3d95beae8",
-    ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f"
+    ".github/workflows/publish-release.yml": "ae888c4e4f2fb795cc803c5e380a5dba6781736d72fc4f7b481371128492620f",
+    ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
+    ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
+    ".github/workflows/security-proposal.yml": "ead6391898f60eedca18bf058e3f8eec01c10afc58bc207bb7902f45d9240970",
+    ".github/workflows/security-review.yml": "cc451037dc235f0018c6c1c76abb24ad74b072afd53b7085bf65f6a003925208"
   },
   "schema": 1,
   "specification": "SLSA v1.2",

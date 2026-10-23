@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "repository": "Lanrith/lanrith",
+  "mode": "report-only",
+  "proposal_branch": "automation/security-updates",
+  "proposer_login": "lanrith-dependency-updater[bot]",
+  "proposer_app_id": 5355607,
+  "proposer_user_id": 343878804,
+  "reviewer_app_id": null,
+  "required_workflows": {
+    ".github/workflows/check.yml": ["Required checks"],
+    ".github/workflows/package-check.yml": ["Unsigned package compilation", "Unsigned filesystem and native qualification"]
+  },
+  "maximum_validation_age_hours": 12,
+  "go_branches": ["1.26", "1.27"],
+  "node_branches": ["24"],
+  "npm_packages": ["vite", "vitest", "@vitest/mocker", "@vitest/runner", "@vitest/expect", "@vitest/snapshot", "@vitest/spy", "@vitest/utils", "@vitest/pretty-format"],
+  "component_repositories": ["Lanrith/discovery-bridge", "Lanrith/router-policy-agent"],
+  "maximum_changes": 30,
+  "large_artifact_retention_days": 1,
+  "paid_ai": false
+}
