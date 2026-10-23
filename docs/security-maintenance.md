@@ -10,7 +10,9 @@ requires its previously pinned fingerprint and the separate upstream signature.
 
 The initial rollout is report-only. Both `security/update-policy.json` and
 `LANRITH_SECURITY_APPROVALS_ENABLED` must enable approval before the reviewer can
-submit an approving review. The policy must contain the independent reviewer's
+submit an approving review. The merge check remains pending until the exact
+approval decision is archived immutably and independently rechecked. Proposal
+inputs are also archived before a PR can be created. The policy must contain the independent reviewer's
 numeric App ID. Neither App has branch-protection bypass permission.
 
 ## Owner setup

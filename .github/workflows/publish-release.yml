@@ -153,6 +153,7 @@ jobs:
       issues: write
     env:
       GH_TOKEN: ${{ github.token }}
+      AUDIT_TAG: ${{ needs.archive.outputs.release-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -168,4 +169,4 @@ jobs:
       - name: Mark only the verified and durably archived remediation complete
         run: |
           python3 tools/scripts/security-updates.py complete-release --source "$GITHUB_SHA" \
-            --candidate verification/publication-verification.json --output "$RUNNER_TEMP/completion.json"
+            --candidate verification/publication-verification.json --audit-tag "$AUDIT_TAG" --output "$RUNNER_TEMP/completion.json"

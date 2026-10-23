@@ -162,7 +162,7 @@ def track(repo, candidate_path, pr=None):
         api('repos/'+repo+'/issues', method='POST', payload={k: v for k, v in value.items() if k != 'state'})
 
 
-def complete(repo, source, verification):
+def complete(repo, source, verification, audit_tag=None):
     """Close only the exact remediation after its publication audit is durable."""
     import tempfile
     from .common import run
@@ -171,8 +171,10 @@ def complete(repo, source, verification):
     value = evidence.read(verification)
     require(value['repository'] == repo and value['source_commit'] == source and value['result'] == 'pass' and
             value['immutable'] is True and value['run_id'] == os.environ['GITHUB_RUN_ID'] and
-            value['run_attempt'] == os.environ['GITHUB_RUN_ATTEMPT'], 'Publication verification belongs to another subject.')
-    audit_tag = 'audit-publication-'+value['run_id']+'-'+value['run_attempt']
+            str(value['run_attempt']).isdigit() and 1 <= int(value['run_attempt']) <= int(os.environ['GITHUB_RUN_ATTEMPT']), 'Publication verification belongs to another subject.')
+    audit_tag = audit_tag or 'audit-publication-'+value['run_id']+'-'+value['run_attempt']
+    require(re.fullmatch('audit-publication-'+re.escape(value['run_id'])+r'-[1-9][0-9]*', audit_tag),
+            'Publication archive belongs to another run.')
     audit = api('repos/'+repo+'/releases/tags/'+audit_tag)
     require(audit.get('immutable') is True and not audit['draft'] and any(
         a['name'] == 'publication-verification.json' and a['digest'] == 'sha256:'+digest(verification.read_bytes())

@@ -69,14 +69,14 @@
   },
   "result": "design-assessed",
   "reviewed_workflows": {
-    ".github/workflows/archive-evidence.yml": "e5256da1a25fadd8c229848d0b8df37972cd985399a315afc8b6f3ff2cbf4a12",
+    ".github/workflows/archive-evidence.yml": "8bdc430a9d279599fe952b69f09af0059e9fa6b48208cc755bd52b3bca867338",
     ".github/workflows/build-base.yml": "defc0ab8feade4fbae8c82716d69309c7bdddd10067ed7bd8d2f886874dd6068",
     ".github/workflows/check.yml": "d18d0ec6571e1972c4fe92374fcf23b98fe66bb5717b1263848e08ae7c833183",
-    ".github/workflows/publish-release.yml": "d445206b806df8f8ecb90b28ba1aab022df3d842bb3a7d02480367d73a57dcd4",
+    ".github/workflows/publish-release.yml": "bf2f4ad644fa0d9c61473096f46187c335e0899fb07228e24578e1d523816a5f",
     ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
     ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
-    ".github/workflows/security-proposal.yml": "ead6391898f60eedca18bf058e3f8eec01c10afc58bc207bb7902f45d9240970",
-    ".github/workflows/security-review.yml": "cc451037dc235f0018c6c1c76abb24ad74b072afd53b7085bf65f6a003925208"
+    ".github/workflows/security-proposal.yml": "3881f94562e100c115191792c9a374a6d72ac1030b629e104e7a886075530ab5",
+    ".github/workflows/security-review.yml": "53c3301ffa7d58604bd263d35ae896d4f88bb41053dbb8611c0fc0a83316e377"
   },
   "schema": 1,
   "specification": "SLSA v1.2",

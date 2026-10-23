@@ -17,7 +17,7 @@ from automation.common import MaintenanceError, document, metadata_bundle, now, 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('propose', 'review', 'approve', 'collect-release',
-                                           'proposal-state', 'blocked-issue', 'cleanup', 'stage', 'apply-proposal', 'bundle', 'review-event', 'track', 'admission', 'complete-release'))
+                                           'proposal-state', 'blocked-issue', 'cleanup', 'stage', 'apply-proposal', 'bundle', 'review-event', 'track', 'admission', 'complete-release', 'finalize'))
     parser.add_argument('--owner', type=Path, default=Path('.'))
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'))
     parser.add_argument('--source', default=os.environ.get('LANRITH_TOOLS_SHA', os.environ.get('GITHUB_SHA')))
@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--candidate', type=Path)
     parser.add_argument('--body', type=Path)
     parser.add_argument('--version')
+    parser.add_argument('--audit-tag')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     repo = repository(args.repository)
@@ -66,6 +67,9 @@ def main():
             raise
     elif args.command == 'admission':
         review.admission(repo, args.pr, args.output, args.source, int(os.environ['LANRITH_REVIEW_APP_ID']))
+    elif args.command == 'finalize':
+        review.finalize(repo, args.pr, args.output, args.source,
+                        os.environ.get('LANRITH_SECURITY_APPROVALS_ENABLED', 'false'), args.audit_tag)
     elif args.command == 'collect-release':
         releases.collect(repo, args.source, args.output, args.version)
     elif args.command == 'proposal-state':
@@ -93,7 +97,7 @@ def main():
     elif args.command == 'track':
         releases.track(repo, args.candidate, args.pr)
     elif args.command == 'complete-release':
-        evidence.write(args.output, releases.complete(repo, args.source, args.candidate))
+        evidence.write(args.output, releases.complete(repo, args.source, args.candidate, args.audit_tag))
 
 
 if __name__ == '__main__':

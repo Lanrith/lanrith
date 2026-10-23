@@ -81,7 +81,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   publish:
-    needs: resolve
+    needs: [resolve, archive]
     if: needs.resolve.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -171,8 +171,8 @@ jobs:
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$PR_HEAD" =~ ^[0-9a-f]{40}$ ]]
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash --match-head-commit "$PR_HEAD"
   archive:
-    needs: [resolve, publish]
-    if: always() && needs.resolve.outputs.audit-id != '' && (needs.resolve.outputs.changed == 'true' || needs.resolve.result == 'failure' || needs.publish.result == 'failure')
+    needs: resolve
+    if: always() && needs.resolve.outputs.audit-id != '' && (needs.resolve.outputs.changed == 'true' || needs.resolve.result == 'failure')
     permissions:
       contents: write
       id-token: write
@@ -182,8 +182,8 @@ jobs:
       artifact-id: ${{ needs.resolve.outputs.audit-id }}
       topic: proposal
   alert:
-    needs: [resolve, publish]
-    if: always() && (needs.resolve.result == 'failure' || needs.publish.result == 'failure') && needs.resolve.outputs.result-id != ''
+    needs: [resolve, publish, archive]
+    if: always() && (needs.resolve.result == 'failure' || needs.publish.result == 'failure' || needs.archive.result == 'failure') && needs.resolve.outputs.result-id != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: read

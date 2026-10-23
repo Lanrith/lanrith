@@ -68,16 +68,20 @@ for path in (root/'.github/workflows').glob('*.yml'):
                     raise AssertionError('Implicit cache restore/save is not allowed: '+path.name)
     if path.name == 'security-review.yml':
         assert 'pull_request_target' not in text and 'pull_request:' not in text, path.name
-        for job_name in ('inspect', 'admission', 'approve'):
+        for job_name in ('inspect', 'admission', 'approve', 'finalize'):
             job = value['jobs'][job_name]
             checkouts = [s for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@')]
             assert checkouts and all(s['with'].get('repository') == '${{ job.workflow_repository }}' and
                 s['with'].get('ref') == '${{ job.workflow_sha }}' and s['with'].get('persist-credentials') is False
                 for s in checkouts), 'Reviewer must execute only its reviewed workflow source'
+        assert {'approve', 'archive'} <= set(value['jobs']['finalize']['needs']), 'Merge gate must wait for durable approval evidence'
         approval = value['jobs']['approve']
         assert approval['environment'] == 'lanrith-review' and "outputs.mode == 'enforce'" in approval['if'], path.name
         assert "LANRITH_SECURITY_APPROVALS_ENABLED == 'true'" in approval['if'], path.name
         assert approval['permissions'] == {'contents': 'read'}, path.name
+    if path.name == 'security-proposal.yml':
+        assert set(value['jobs']['publish']['needs']) == {'resolve', 'archive'}, 'PR publication must wait for immutable proposal evidence'
+        assert value['jobs']['archive']['needs'] == 'resolve', 'Proposal archive must precede the publishing credential'
     if path.name in ('archive-evidence.yml', 'publish-release.yml'):
         assert '--draft' in text and '--draft=false' in text and '--clobber' not in text.replace('# No overwrite or --clobber path is available, including on retries.', ''), path.name
 print('Workflow trust boundaries verified.')

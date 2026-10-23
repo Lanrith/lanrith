@@ -227,12 +227,13 @@ class ApprovalBoundaryTests(unittest.TestCase):
             with patch.object(review, 'inspect', return_value=(self.fresh, self.policy)), patch.object(review, 'api', side_effect=self.api):
                 return review.approve('Lanrith/lanrith', 12, target, PRODUCER, enabled)
 
-    def test_success_records_the_real_commit_bound_review_and_then_completes_check(self):
+    def test_success_records_the_review_but_waits_for_durable_evidence_before_merge(self):
         result = self.approve()
         self.assertEqual(result['approval']['review_id'], 21)
         self.assertTrue(self.writes[0][0].endswith('/reviews'))
         self.assertEqual(self.writes[0][1]['payload']['commit_id'], HEAD)
-        self.assertEqual(self.writes[1][1]['payload']['conclusion'], 'success')
+        self.assertEqual(len(self.writes), 1)
+        self.assertIsNone(result['admission_check']['conclusion'])
 
     def test_changed_head_validation_or_app_cannot_submit_an_approval(self):
         for attack in ('head', 'validation', 'app', 'pr-race'):
@@ -311,6 +312,8 @@ class PublicationCompletionTests(unittest.TestCase):
                         'body': 'Candidate: '+self.candidate['candidate_id']},
                        {'number': 11, 'title': 'Unrelated issue', 'body': self.candidate['candidate_id']}]
         self.archived = True
+        self.attempt = '1'
+        self.audit_tag = None
         self.mutations = []
 
     def api(self, endpoint, **kwargs):
@@ -332,17 +335,22 @@ class PublicationCompletionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)/'verification.json'
             evidence.write(path, self.verification)
-            with patch.dict(os.environ, {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}), \
+            with patch.dict(os.environ, {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': self.attempt}), \
                     patch.object(releases, 'api', side_effect=self.api), \
                     patch.object(releases, 'pages', return_value=self.issues), \
                     patch('automation.common.run', side_effect=self.download):
-                return releases.complete('Lanrith/lanrith', HEAD, path)
+                return releases.complete('Lanrith/lanrith', HEAD, path, self.audit_tag)
 
     def test_only_the_exact_published_remediation_is_closed(self):
         self.assertEqual(self.complete()['closed_issues'], [10])
         self.assertEqual(len(self.mutations), 1)
         self.assertTrue(self.mutations[0][0].endswith('/issues/10'))
         self.assertIn('verified immutable release', self.mutations[0][1]['payload']['body'])
+
+    def test_retry_uses_the_actual_archive_tag_and_original_publication_attempt(self):
+        self.attempt = '2'
+        self.audit_tag = 'audit-publication-123-2'
+        self.assertEqual(self.complete()['closed_issues'], [10])
 
     def test_no_issue_closes_before_the_publication_record_is_immutable(self):
         self.archived = False
@@ -442,3 +450,54 @@ class CleanupExecutionTests(unittest.TestCase):
         self.assertEqual(self.writes, [1])
         self.assertEqual(self.progress[-1]['deleted'], [1])
         self.assertEqual(self.progress[-1]['result'], 'blocked')
+
+
+class DurableApprovalTests(unittest.TestCase):
+    def setUp(self):
+        self.factory=ApprovalBoundaryTests()
+        self.factory.setUp()
+        self.previous=self.factory.approve()
+        self.fresh=copy.deepcopy(self.previous)
+        self.check=self.factory.check
+        self.pr=self.factory.pr
+        self.archived=True
+        self.bad_digest=False
+        self.dismissed=False
+        self.writes=[]
+
+    def api(self, endpoint, **kwargs):
+        if kwargs.get('method'):
+            self.writes.append((endpoint,kwargs))
+            return {}
+        if '/releases/tags/' in endpoint:
+            return {'immutable':self.archived,'draft':False,'html_url':'https://example.test/audit',
+                    'assets':[{'name':'update-record.json','digest':'sha256:'+('f'*64 if self.bad_digest else digest(canonical(self.previous)))}]}
+        if '/check-runs/' in endpoint:return self.check
+        return self.pr
+
+    def finalize(self):
+        import os
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'update-record.json'
+            evidence.write(path,self.previous)
+            rows=[{'id':21,'state':'DISMISSED' if self.dismissed else 'APPROVED','commit_id':HEAD,
+                   'user':{'login':'security-reviewer[bot]'}}]
+            with patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}),patch.object(review,'api',side_effect=self.api),patch.object(review,'pages',return_value=rows),patch.object(review,'inspect',return_value=(self.fresh,self.factory.policy)):
+                return review.finalize('Lanrith/lanrith',12,path,PRODUCER,'true','audit-decision-123-1')
+
+    def test_only_a_durable_exact_approval_releases_the_check(self):
+        self.finalize()
+        self.assertEqual(len(self.writes),1)
+        self.assertTrue(self.writes[0][0].endswith('/check-runs/99'))
+        self.assertEqual(self.writes[0][1]['payload']['conclusion'],'success')
+
+    def test_archive_failure_dismissal_or_changed_validation_cannot_allow_merge(self):
+        for attack in ('mutable','digest','dismissed','head','validation'):
+            self.setUp()
+            if attack=='mutable':self.archived=False
+            elif attack=='digest':self.bad_digest=True
+            elif attack=='dismissed':self.dismissed=True
+            elif attack=='head':self.fresh['head_sha']='f'*40
+            else:self.fresh['validation'][0]['run_attempt']=2
+            with self.subTest(attack=attack),self.assertRaises(MaintenanceError):self.finalize()
+            self.assertEqual(self.writes,[])

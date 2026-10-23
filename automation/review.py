@@ -188,14 +188,55 @@ def approve(repo, number, decision_path, reviewer_source, enabled):
                 'Policy: `'+fresh['policy_sha256']+'`. Reviewer implementation: `'+reviewer_source+'`.\n\n'
                 'The durable decision record contains the advisory reasons, changed input digests and exact validation runs.'})
     require(review['state'] == 'APPROVED' and review['commit_id'] == fresh['head_sha'], 'GitHub did not accept the commit-bound approval.')
-    api('repos/'+repo+'/check-runs/'+str(check['id']), method='PATCH', payload={
-        'status': 'completed', 'conclusion': 'success', 'completed_at': now()})
     fresh['approval'] = {'review_id': review['id'], 'reviewer_login': review['user']['login'],
         'reviewer_app_id': check['app']['id'], 'check_run_id': check['id'], 'submitted_at': review['submitted_at'],
         'commit_id': review['commit_id'], 'state': review['state'], 'url': review['html_url']}
-    fresh['admission_check'] = {**claimed, 'conclusion': 'success', 'manual_review_required': False}
+    # The separately archived approval must exist before this check can permit merge.
+    fresh['admission_check'] = {**claimed, 'conclusion': None, 'manual_review_required': False}
     evidence.write(decision_path, fresh)
     return fresh
+
+
+def finalize(repo, number, decision_path, reviewer_source, enabled, audit_tag):
+    """Release the merge gate only after immutable approval evidence is verified."""
+    import os
+    import re
+    previous = evidence.read(decision_path)
+    require(isinstance(audit_tag, str) and re.fullmatch(
+        'audit-decision-'+re.escape(os.environ['GITHUB_RUN_ID'])+r'-[1-9][0-9]*', audit_tag),
+        'Approval archive does not belong to this trusted run.')
+    archived = api('repos/'+repo+'/releases/tags/'+audit_tag)
+    require(archived.get('immutable') is True and not archived['draft'] and any(
+        a['name'] == 'update-record.json' and a['digest'] == 'sha256:'+digest(decision_path.read_bytes())
+        for a in archived['assets']), 'Exact approval evidence has not been archived immutably.')
+    fresh, policy = inspect(repo, number, reviewer_source, decision_path.with_name('final-recheck.json'))
+    require(enabled == 'true' and policy['mode'] == 'enforce' and fresh['eligible'] and previous['eligible'] and
+            all(fresh[k] == previous[k] for k in ('candidate_id', 'head_sha', 'base_sha', 'policy_sha256', 'validation')),
+            'Approval subject or validation changed before the durable merge gate.')
+    approval = previous.get('approval') or {}
+    claimed = previous.get('admission_check') or {}
+    require(type(claimed.get('id')) is int and type(approval.get('review_id')) is int and
+            approval.get('reviewer_app_id') == policy['reviewer_app_id'] and
+            claimed.get('app_id') == policy['reviewer_app_id'], 'Approval or check identity is missing.')
+    check = api('repos/'+repo+'/check-runs/'+str(claimed['id']))
+    require(check['name'] == 'Security update admission' and check['head_sha'] == fresh['head_sha'] and
+            check['app']['id'] == policy['reviewer_app_id'] != policy['proposer_app_id'],
+            'Final merge gate is not owned by the independent reviewer.')
+    reviews = pages('repos/'+repo+'/pulls/'+str(number)+'/reviews?per_page=100')
+    actor = check['app']['slug']+'[bot]'
+    latest = [r for r in reviews if r['user']['login'] == actor and r['state'] in ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED')]
+    require(latest, 'Independent approval is missing.')
+    observed = max(latest, key=lambda r: r['id'])
+    require(observed['id'] == approval['review_id'] and observed['state'] == approval.get('state') == 'APPROVED' and
+            observed['commit_id'] == approval.get('commit_id') == fresh['head_sha'] and approval.get('reviewer_login') == actor, 'Independent approval was superseded or dismissed.')
+    current = api('repos/'+repo+'/pulls/'+str(number))
+    require(current['head']['sha'] == fresh['head_sha'] and current['base']['sha'] == fresh['base_sha'],
+            'PR changed before the final merge gate.')
+    api('repos/'+repo+'/check-runs/'+str(check['id']), method='PATCH', payload={
+        'status': 'completed', 'conclusion': 'success', 'completed_at': now(),
+        'output': {'title': 'Qualified, independently approved and durably archived',
+                   'summary': 'Exact decision and approval evidence: '+archived['html_url']}})
+    return previous
 
 
 def event_target(repo, event):

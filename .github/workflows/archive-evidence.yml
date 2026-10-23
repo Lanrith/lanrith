@@ -8,6 +8,10 @@ on:
       topic:
         required: true
         type: string
+    outputs:
+      release-tag:
+        description: Exact verified immutable archive tag, including its producing attempt
+        value: ${{ jobs.publish.outputs.tag }}
 permissions:
   contents: read
 cache-mode: none
@@ -55,6 +59,8 @@ jobs:
           retention-days: 1
   publish:
     needs: attest
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -68,7 +74,8 @@ jobs:
           artifact-ids: ${{ needs.attest.outputs.artifact-id }}
           path: evidence
           merge-multiple: true
-      - name: Publish an append-only audit release
+      - id: publish
+        name: Publish an append-only audit release
         run: |
           [[ "$TOPIC" =~ ^(proposal|decision|cleanup|cleanup-result|publication)$ ]]
           tag="audit-$TOPIC-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -76,3 +83,17 @@ jobs:
             --draft --prerelease --latest=false --title "Maintenance $TOPIC evidence" \
             --notes "Attested maintenance evidence for Actions run $GITHUB_RUN_ID, attempt $GITHUB_RUN_ATTEMPT." evidence/*
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          python3 - <<'PYVERIFY'
+          import hashlib,json,os,pathlib,subprocess
+          repo=os.environ['GITHUB_REPOSITORY']
+          assert repo in ('Lanrith/lanrith','Lanrith/discovery-bridge','Lanrith/router-policy-agent')
+          tag='audit-'+os.environ['TOPIC']+'-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']
+          published=json.loads(subprocess.run(['gh','api','repos/'+repo+'/releases/tags/'+tag],check=True,capture_output=True,text=True).stdout)
+          expected={}
+          for path in pathlib.Path('evidence').iterdir():
+              assert path.is_file() and not path.is_symlink()
+              with path.open('rb') as stream: expected[path.name]='sha256:'+hashlib.file_digest(stream,'sha256').hexdigest()
+          assert published.get('immutable') is True and not published['draft'] and published['prerelease']
+          assert {asset['name']:asset['digest'] for asset in published['assets']}==expected
+          PYVERIFY
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"

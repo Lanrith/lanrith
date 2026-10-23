@@ -216,3 +216,57 @@ jobs:
     with:
       artifact-id: ${{ needs.approve.outputs.decision-id || needs.admission.outputs.decision-id || needs.inspect.outputs.decision-id }}
       topic: decision
+  finalize:
+    needs: [inspect, admission, approve, archive]
+    if: needs.inspect.outputs.eligible == 'true' && needs.inspect.outputs.mode == 'enforce' && vars.LANRITH_SECURITY_APPROVALS_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: lanrith-review
+    permissions:
+      contents: read
+    env:
+      PR_NUMBER: ${{ needs.inspect.outputs.pr }}
+      AUDIT_TAG: ${{ needs.archive.outputs.release-tag }}
+      LANRITH_SECURITY_APPROVALS_ENABLED: ${{ vars.LANRITH_SECURITY_APPROVALS_ENABLED }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.approve.outputs.decision-id }}
+          path: decision
+          merge-multiple: true
+      - name: Install source verifiers before accessing the check credential
+        run: sudo apt-get update -qq && sudo apt-get install --yes gnupg
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_REVIEW_APP_ID }}
+          private-key: ${{ secrets.LANRITH_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-actions: read
+          permission-checks: write
+          permission-pull-requests: read
+      - name: Recheck the exact archived approval before allowing protected merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          python3 tools/scripts/security-updates.py finalize --pr "$PR_NUMBER" \
+            --audit-tag "$AUDIT_TAG" --output decision/update-record.json
