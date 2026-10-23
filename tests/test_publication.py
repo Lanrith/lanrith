@@ -34,6 +34,8 @@ class PublicationTests(unittest.TestCase):
         self.review = {'id': 7, 'state': 'APPROVED', 'commit_id': HEAD, 'author_association': 'OWNER',
                        'user': {'id': 1, 'login': 'owner', 'type': 'User'}}
         self.reviews = [self.review]
+        self.reviewer_permission = 'admin'
+        self.permission_user = {'id': 1, 'login': 'owner'}
         self.policy = {'proposal_branch': 'automation/security-updates', 'mode': 'report-only', 'reviewer_app_id': None,
                        'required_workflows': {'.github/workflows/check.yml': ['Required checks']}}
         self.pull = {'number': 12, 'head_sha': HEAD, 'approvals': [{'id': 7, 'actor_id': 1}], 'candidate': None,
@@ -73,6 +75,8 @@ class PublicationTests(unittest.TestCase):
                          'head': {'sha': HEAD, 'ref': self.pr_ref, 'repo': {'full_name': REPO}}}
             elif '/reviews?' in endpoint:
                 value = [self.reviews] if '--paginate' in args else self.reviews
+            elif '/collaborators/' in endpoint and endpoint.endswith('/permission'):
+                value = {'permission': self.reviewer_permission, 'user': self.permission_user}
             elif '/actions/workflows/' in endpoint:
                 value = {'workflow_runs': [{'id': 33}]}
             elif '/actions/runs/' in endpoint:
@@ -149,6 +153,24 @@ class PublicationTests(unittest.TestCase):
         self.review['user'].update(login='another-app[bot]', type='Bot')
         with self.assertRaises(AssertionError):
             self.run_program()
+        self.assertFalse(self.state['created'])
+
+    def test_private_organisation_member_with_write_access_can_approve(self):
+        self.review['author_association'] = 'CONTRIBUTOR'
+        self.reviewer_permission = 'write'
+        self.assertEqual(self.run_program()['result'], 'pass')
+
+    def test_association_does_not_authorize_a_read_only_or_unknown_reviewer(self):
+        for permission in ('read', 'none'):
+            with self.subTest(permission=permission):
+                self.setUp()
+                self.reviewer_permission = permission
+                with self.assertRaises(AssertionError): self.run_program()
+                self.assertFalse(self.state['created'])
+
+    def test_permission_response_must_match_the_approving_account(self):
+        self.permission_user = {'id': 99, 'login': 'owner'}
+        with self.assertRaises(AssertionError): self.run_program()
         self.assertFalse(self.state['created'])
 
     def test_tampered_draft_assets_do_not_publish(self):

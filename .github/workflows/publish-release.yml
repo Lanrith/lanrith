@@ -37,6 +37,14 @@ jobs:
           python3 - <<'PY'
           import base64,datetime,hashlib,json,os,pathlib,re,subprocess
           def run(*args): return subprocess.run(args,check=True,capture_output=True,text=True).stdout
+          def authorized_human(review,head,author):
+              user=review['user']
+              if review['state']!='APPROVED' or review['commit_id']!=head or user['type']!='User' or user['login']==author:
+                  return False
+              assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,38}',user['login'])
+              permission=json.loads(run('gh','api',f"repos/{repo}/collaborators/{user['login']}/permission"))
+              assert permission['user']['id']==user['id'] and permission['user']['login']==user['login']
+              return permission['permission'] in ('admin','write')
           repo=os.environ['GITHUB_REPOSITORY']
           source=os.environ['GITHUB_SHA']
           version=os.environ['RELEASE_VERSION'].removeprefix('v')
@@ -78,7 +86,9 @@ jobs:
                   reviewer=admitted[-1]['app']['slug']+'[bot]'
                   assert any(r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['login']==reviewer for r in latest.values())
               else:
-                  assert any(r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['type']=='User' and r['user']['login']!=current['user']['login'] and r['author_association'] in ('OWNER','MEMBER','COLLABORATOR') for r in latest.values())
+                  # Private organisation membership can appear as CONTRIBUTOR to
+                  # installation tokens. Verify effective write access directly.
+                  assert any(authorized_human(r,pr['head_sha'],current['user']['login']) for r in latest.values())
           if repo=='Lanrith/lanrith':
               security=json.loads((root/'security.json').read_text())
               assert security.get('production_qualified') is True and security.get('slsa_spec')=='1.2' and security.get('slsa_build_level')==3 and security.get('qualification',{}).get('result')=='pass'
