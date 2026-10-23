@@ -79,6 +79,10 @@ for path in (root/'.github/workflows').glob('*.yml'):
         assert approval['environment'] == 'lanrith-review' and "outputs.mode == 'enforce'" in approval['if'], path.name
         assert "LANRITH_SECURITY_APPROVALS_ENABLED == 'true'" in approval['if'], path.name
         assert approval['permissions'] == {'contents': 'read'}, path.name
+    if path.name == 'cleanup-artifacts.yml':
+        assert value['jobs']['archive']['if'] == "needs.plan.outputs.has-artifacts == 'true'", 'Empty cleanup must not generate audit releases'
+        upload = next(s for s in value['jobs']['plan']['steps'] if s.get('id') == 'upload')
+        assert upload['if'] == "steps.plan.outputs.has-artifacts == 'true'", 'Empty cleanup must not upload its own artifacts'
     if path.name == 'security-proposal.yml':
         assert set(value['jobs']['publish']['needs']) == {'resolve', 'archive'}, 'PR publication must wait for immutable proposal evidence'
         assert value['jobs']['archive']['needs'] == 'resolve', 'Proposal archive must precede the publishing credential'

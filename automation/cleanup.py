@@ -13,7 +13,7 @@ TEMPORARY = re.compile(r'^(?:unsigned-package-(?:qualification|stage)|qualified-
                        r'publication-verification|attested-publication|security-proposal-audit|security-proposal-result|'
                        r'security-approved-decision|security-admission-decision|package-security-diagnostics|cleanup-plan|cleanup-result|attested-maintenance-(?:proposal|decision|cleanup|cleanup-result|publication))(?:-[0-9]+)?$')
 WORKFLOWS = {'Package qualification', 'Release', 'Retained release security', 'Check', 'CI',
-             'Propose dependency updates', 'Security update review', 'Clean completed Actions handoffs'}
+             'Propose dependency updates', 'Security update review'}
 
 
 def plan(repo, *, get=api, clock=None):

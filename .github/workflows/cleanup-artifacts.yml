@@ -20,6 +20,7 @@ jobs:
       actions: read
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      has-artifacts: ${{ steps.plan.outputs.has-artifacts }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -29,8 +30,10 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: tools
           persist-credentials: false
-      - run: python3 tools/scripts/security-updates.py cleanup --output "$RUNNER_TEMP/cleanup-record.json"
+      - id: plan
+        run: python3 tools/scripts/security-updates.py cleanup --output "$RUNNER_TEMP/cleanup-record.json"
       - id: upload
+        if: steps.plan.outputs.has-artifacts == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cleanup-plan
@@ -39,6 +42,7 @@ jobs:
           retention-days: 1
   archive:
     needs: plan
+    if: needs.plan.outputs.has-artifacts == 'true'
     permissions:
       contents: write
       id-token: write

@@ -31,8 +31,8 @@ def unique(pairs):
     return result
 
 
-def document(raw):
-    require(isinstance(raw, (bytes, str)) and len(raw) <= 8*1024*1024,
+def document(raw, *, maximum=8*1024*1024):
+    require(isinstance(raw, (bytes, str)) and len(raw) <= maximum,
             'JSON input exceeds the maintenance data limit.')
     def invalid_constant(value):
         raise MaintenanceError('Non-finite JSON number: '+value)
@@ -100,7 +100,7 @@ def api(endpoint, *, method='GET', payload=None, paginate=False, missing_ok=Fals
     require(result.returncode == 0, 'GitHub API operation failed: '+method+' '+endpoint+
             ' '+result.stderr.decode(errors='replace')[-1000:])
     require(len(result.stdout) <= 32*1024*1024, 'GitHub API response exceeds its bound.')
-    return document(result.stdout) if result.stdout.strip() else None
+    return document(result.stdout, maximum=32*1024*1024) if result.stdout.strip() else None
 
 
 def pages(endpoint):
