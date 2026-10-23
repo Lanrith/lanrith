@@ -114,7 +114,5 @@ jobs:
           path: |
             ${{ runner.temp }}/lanrith-output/*.json
             ${{ runner.temp }}/lanrith-output/*.txt
-            ${{ runner.temp }}/lanrith-work/**/*.scan
-            ${{ runner.temp }}/lanrith-work/**/npm-audit.json
           if-no-files-found: warn
           retention-days: 1

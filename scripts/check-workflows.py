@@ -21,6 +21,16 @@ for path in (root/'.github/workflows').glob('*.yml'):
         handoff = next(step for step in jobs['attest']['steps'] if step.get('id') == 'cache-download')
         assert handoff['with']['artifact-ids'] == '${{ needs.packages.outputs.cache-artifact-id }}', path.name
         assert "needs.build.outputs.production-qualified == 'true'" in handoff['if'], path.name
+    if path.name == 'package-check.yml':
+        report = next(s for s in value['jobs']['build']['steps']
+                      if s.get('name') == 'Retain small qualification reports, including on failure')
+        # The privileged VM/storage work tree contains private authorities and
+        # root-owned directories. Upload only the flat public report directory.
+        assert report['if'] == 'always()', path.name
+        assert set(report['with']['path'].splitlines()) == {
+            '${{ runner.temp }}/lanrith-output/*.json',
+            '${{ runner.temp }}/lanrith-output/*.txt'}, 'Qualification reports must not traverse the privileged work tree'
+        assert report['with']['retention-days'] == 1, path.name
     if path.name == 'consumer.yml':
         call = value[True]['workflow_call']
         assert call['inputs']['signing-profile'] == {'type': 'string', 'default': 'protected'}, path.name
