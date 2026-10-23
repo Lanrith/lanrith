@@ -118,6 +118,8 @@ plan, then rechecks artifact identities and completed-run state before deletion.
 It archives execution receipts too, distinguishing deleted artifacts from ones
 GitHub expired in the meantime. A changed run or artifact blocks further deletion.
 It excludes active runs, unknown artifact classes and durable release assets.
+Cleanup skips empty inventories. Its own small audit handoffs expire after one day, so removing them does not generate another set of audit records.
+
 Set `LANRITH_ARTIFACT_CLEANUP_ENABLED=true` after reviewing its first archived plan.
 
 Scanner failures, unavailable advisory services, unsupported source migrations
