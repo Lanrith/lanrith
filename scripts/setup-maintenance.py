@@ -128,8 +128,42 @@ def main():
             token = app_request('app/installations/'+str(install['id'])+'/access_tokens', args.reviewer_key,
                                 args.reviewer_id, value={'repositories': [repo.split('/')[1]],
                                     'permissions': {'contents': 'read', 'pull_requests': 'write'}})['token']
-            body = {'title': 'Secure verified update automation and immutable releases', 'head': args.branch,
-                    'base': 'main', 'body': 'Implements the reviewed security-maintenance plan. Human review is required for this bootstrap: workflows, approval policy and signing controls change. Automated approvals remain disabled. Validation results and operating instructions are included in the branch.'}
+            reasons = {
+                'Lanrith/lanrith': (
+                    'Security checks were failing without an updater for embedded UI dependencies or native source locks. '
+                    'Large PR filesystem uploads and duplicate release handoffs also exhausted Actions storage.\n\n'
+                    'Patch Go to 1.27.3/1.26.10 (GO-2026-6809), Node to 24.22.1, Vite to 7.3.7 and Vitest to 4.1.12. '
+                    'Refresh authenticated Debian snapshots for BIND 9.20.30 and verify both signatures for Unbound 1.26.2. '
+                    'Add advisory-bound PR generation, an independent restricted review App, exact validation/approval records, '
+                    'immutable publication verification and guarded artifact cleanup.\n\n'
+                    'Validation: 208 local Python tests pass (eight environment-dependent skips), workflow/source checks pass, '
+                    'the UI graph has no current npm findings, and signed Unbound inputs were independently resolved and matched. '
+                    'Full platform package and boot qualification must pass after pinning the newly released components. '
+                    'Merge and qualify the component compiler fixes first, then update their platform pins and requalify this PR.'),
+                'Lanrith/discovery-bridge': (
+                    'Published binaries used Go 1.27.2, affected by GO-2026-6809. Pin Go 1.27.3 and the reviewed vulnerability scanner. '
+                    'Adopt the exact shared maintenance workflow commit for advisory-bound updates, independent review, '
+                    'immutable release verification and durable change history. Permit public security policy/candidate metadata '
+                    'through the existing source boundary.\n\n'
+                    'Validation: local race/shuffled Go tests, vet, lint, source checks and reachable-vulnerability scans pass. '
+                    'Hosted qualification: https://github.com/Lanrith/discovery-bridge/actions/runs/39973757086 . '
+                    'The hosted result must be successful before merge.'),
+                'Lanrith/router-policy-agent': (
+                    'Build and compatibility toolchains included Go 1.27.2 and 1.26.9, affected by GO-2026-6809. '
+                    'Pin Go 1.27.3 for releases and 1.26.10 for compatibility. Move toolchain/image selections into validated data '
+                    'and adopt the exact reviewed maintenance workflow commit for updates, independent review, immutable '
+                    'release verification and durable change history.\n\n'
+                    'Validation: local race/shuffled Go tests, vet, lint and reachable-vulnerability scans pass. '
+                    'Hosted current/previous compiler, UID boundary, nftables, fuzz and security gates pass: '
+                    'https://github.com/Lanrith/router-policy-agent/actions/runs/39973762243 . '
+                    'The module inventory includes the unmaintained OpenPGP advisory GO-2026-5932; that package is neither '
+                    'imported nor called, and no fixed version exists. Actual source and binary vulnerability scans remain required.')}
+            description = (reasons[repo]+'\n\n'
+                'This bootstrap changes workflows and approval/security controls and requires an independent human GitHub review. '
+                'Automatic approval remains disabled during the report-only pilot. Neither App has a protection bypass; paid AI services are unused. '
+                'See `docs/security-maintenance.md` for the owner setup, evidence verification and activation procedure.')
+            body = {'title': 'Patch verified security inputs and automate audited immutable releases', 'head': args.branch,
+                    'base': 'main', 'body': description}
             existing = gh('repos/'+repo+'/pulls?state=open&head=Lanrith:'+args.branch)
             if existing:
                 if len(existing) != 1 or existing[0]['user']['login'] != app['slug']+'[bot]':
