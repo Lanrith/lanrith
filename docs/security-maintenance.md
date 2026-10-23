@@ -98,6 +98,11 @@ release. The remediation issue closes only after publication verification has
 been archived immutably. Audit release notes and PR text are indexes;
 the signed asset bytes are the evidence.
 
+Before publication, a human approval must match the exact PR head and come from
+an independent account with current write or admin access to the repository.
+The publisher checks effective repository permissions directly because private
+organisation membership can be hidden from an installation token.
+
 For an audit bundle, download its files and `evidence.intoto.jsonl`, then verify:
 
 ```sh
