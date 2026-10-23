@@ -107,6 +107,8 @@ finding; release source and binary scans remain mandatory.
 Large Actions artifacts are temporary job handoffs with one-day expiry. PRs keep
 small scanner and qualification reports. Cleanup first publishes its attested
 plan, then rechecks artifact identities and completed-run state before deletion.
+It archives execution receipts too, distinguishing deleted artifacts from ones
+GitHub expired in the meantime. A changed run or artifact blocks further deletion.
 It excludes active runs, unknown artifact classes and durable release assets.
 Set `LANRITH_ARTIFACT_CLEANUP_ENABLED=true` after reviewing its first archived plan.
 

@@ -49,6 +49,8 @@ jobs:
       topic: cleanup
   apply:
     needs: [plan, archive]
+    outputs:
+      result-id: ${{ steps.result.outputs.artifact-id }}
     if: vars.LANRITH_ARTIFACT_CLEANUP_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -74,5 +76,25 @@ jobs:
           PYTHONPATH=tools python3 - <<'PY'
           from pathlib import Path
           from automation import cleanup,evidence
-          cleanup.execute(evidence.read(Path('plan/cleanup-record.json')))
+          cleanup.execute(evidence.read(Path('plan/cleanup-record.json')),
+              progress=lambda value: evidence.write(Path('result/cleanup-record.json'), value))
           PY
+      - id: result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cleanup-result
+          path: result/cleanup-record.json
+          if-no-files-found: ignore
+          retention-days: 1
+  archive-result:
+    needs: apply
+    if: always() && needs.apply.outputs.result-id != ''
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.apply.outputs.result-id }}
+      topic: cleanup-result

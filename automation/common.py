@@ -83,7 +83,7 @@ def run(*arguments, **kwargs):
                           timeout=kwargs.pop('timeout', 120), **kwargs)
 
 
-def api(endpoint, *, method='GET', payload=None, paginate=False):
+def api(endpoint, *, method='GET', payload=None, paginate=False, missing_ok=False):
     require(endpoint.startswith(('repos/', 'orgs/', 'users/', 'app/')) and
             not any(c in endpoint for c in ('\n', '\r', '#')), 'Invalid GitHub API endpoint.')
     command = ['gh', 'api', '--method', method, '-H', 'Accept: application/vnd.github+json', endpoint]
@@ -93,6 +93,10 @@ def api(endpoint, *, method='GET', payload=None, paginate=False):
         command += ['--input', '-']
     result = subprocess.run(command, input=canonical(payload) if payload is not None else None,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180, check=False)
+    if result.returncode and missing_ok and method == 'GET' and re.fullmatch(
+            r'repos/Lanrith/(?:lanrith|discovery-bridge|router-policy-agent)/actions/artifacts/[0-9]+', endpoint) and \
+            b'HTTP 404' in result.stderr:
+        return None
     require(result.returncode == 0, 'GitHub API operation failed: '+method+' '+endpoint+
             ' '+result.stderr.decode(errors='replace')[-1000:])
     require(len(result.stdout) <= 32*1024*1024, 'GitHub API response exceeds its bound.')

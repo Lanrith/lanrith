@@ -70,7 +70,7 @@ jobs:
           merge-multiple: true
       - name: Publish an append-only audit release
         run: |
-          [[ "$TOPIC" =~ ^(proposal|decision|cleanup|publication)$ ]]
+          [[ "$TOPIC" =~ ^(proposal|decision|cleanup|cleanup-result|publication)$ ]]
           tag="audit-$TOPIC-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --draft --prerelease --latest=false --title "Maintenance $TOPIC evidence" \

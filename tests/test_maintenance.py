@@ -399,3 +399,46 @@ class ResolverFreshnessTests(unittest.TestCase):
         malicious = (b'--- a/internal/web/ui/package.json\n+++ b/internal/web/ui/package.json\n'
                      b'diff --git a/executable b/executable\nGIT binary patch\n')
         with self.assertRaises(MaintenanceError): inputs.ui_manifests({}, malicious)
+
+
+class CleanupExecutionTests(unittest.TestCase):
+    def setUp(self):
+        self.record = {'schema': 1, 'kind': 'temporary-artifact-cleanup', 'repository': 'Lanrith/lanrith',
+            'artifacts': [{'id': n, 'name': 'qualified-base-1', 'run_id': n, 'size_in_bytes': 10,
+                           'completed_at': '2026-10-23T10:00:00Z'} for n in (1, 2)]}
+        self.writes = []
+        self.progress = []
+        self.expired_first = True
+        self.changed_second = False
+
+    def api(self, endpoint, **kwargs):
+        number = int(endpoint.rsplit('/', 1)[-1])
+        if kwargs.get('method') == 'DELETE':
+            self.writes.append(number)
+            return None
+        if '/runs/' in endpoint:
+            return {'status': 'completed', 'name': 'Release', 'updated_at':
+                    '2026-10-23T12:00:00Z' if number == 2 and self.changed_second else '2026-10-23T10:00:00Z'}
+        if number == 1 and self.expired_first:
+            self.assertTrue(kwargs['missing_ok'])
+            return None
+        return {'name': 'qualified-base-1', 'workflow_run': {'id': number}, 'size_in_bytes': 10}
+
+    def execute(self):
+        with patch.object(cleanup, 'api', side_effect=self.api):
+            return cleanup.execute(self.record, progress=lambda value: self.progress.append(copy.deepcopy(value)))
+
+    def test_expiry_is_an_absence_observation_and_does_not_abort_other_cleanup(self):
+        result = self.execute()
+        self.assertEqual(result['result'], 'pass')
+        self.assertEqual(result['already_absent'], [1])
+        self.assertEqual(result['deleted'], [2])
+        self.assertEqual(self.writes, [2])
+        self.assertEqual(self.progress[-1], result)
+
+    def test_partial_execution_is_preserved_when_a_later_run_changes(self):
+        self.expired_first, self.changed_second = False, True
+        with self.assertRaises(MaintenanceError): self.execute()
+        self.assertEqual(self.writes, [1])
+        self.assertEqual(self.progress[-1]['deleted'], [1])
+        self.assertEqual(self.progress[-1]['result'], 'blocked')
