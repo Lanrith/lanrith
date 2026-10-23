@@ -59,6 +59,7 @@ class PublicationTests(unittest.TestCase):
             return json.loads(Path('verification/publication-verification.json').read_text())
 
     def command(self, args, **kwargs):
+        args = tuple(args)
         if args[:3] == ('gh', 'api', 'unused'):
             raise AssertionError('Unexpected command')
         if args[:2] == ('gh', 'api'):
@@ -81,7 +82,7 @@ class PublicationTests(unittest.TestCase):
                     'conclusion': 'success', 'app': {'id': 999 if self.state['wrong_check'] else 123, 'slug': 'security-reviewer'}}]}
             elif '/git/ref/tags/' in endpoint:
                 value = {'object': {'type': 'commit', 'sha': 'f'*40 if self.state['wrong_tag'] else SOURCE}}
-            elif '/releases/tags/' in endpoint:
+            elif endpoint.endswith('/releases/9'):
                 if not self.state['created']:
                     raise subprocess.CalledProcessError(1,args,stderr='gh: Not Found (HTTP 404)')
                 assets = copy.deepcopy(self.assets)
@@ -93,7 +94,12 @@ class PublicationTests(unittest.TestCase):
             else:
                 raise AssertionError('Unexpected API request: '+endpoint)
             return subprocess.CompletedProcess(args, 0, json.dumps(value), '')
+        if args[:3] == ('gh', 'release', 'view'):
+            if not self.state['created']:
+                return subprocess.CompletedProcess(args,1,'','release not found')
+            return subprocess.CompletedProcess(args,0,json.dumps({'apiUrl':'https://api.github.com/repos/'+REPO+'/releases/9'}),'')
         if args[:3] == ('gh', 'release', 'create'):
+            self.assertFalse(self.state['created'],'An existing draft or sealed release must not be recreated')
             self.assertIn('--draft', args)
             self.assertIn('--prerelease', args)
             self.assertIn('--latest=false', args)
@@ -208,3 +214,8 @@ class PublicationTests(unittest.TestCase):
         self.pr_ref='automation/security-updates'
         self.pull['candidate']={'candidate_id':'d'*64,'requires_human':False}
         self.assertEqual(self.run_program()['result'],'pass')
+
+    def test_an_unpublished_draft_is_resolved_by_numeric_id_before_sealing(self):
+        self.state.update(created=True,draft=True)
+        self.assertEqual(self.run_program()['result'],'pass')
+        self.assertFalse(self.state['draft'])

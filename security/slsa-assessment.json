@@ -72,7 +72,7 @@
     ".github/workflows/archive-evidence.yml": "ab3d82101edc0608c6f79755a293cd7fd907446411cea3e447c784ba2ccefd8c",
     ".github/workflows/build-base.yml": "defc0ab8feade4fbae8c82716d69309c7bdddd10067ed7bd8d2f886874dd6068",
     ".github/workflows/check.yml": "d18d0ec6571e1972c4fe92374fcf23b98fe66bb5717b1263848e08ae7c833183",
-    ".github/workflows/publish-release.yml": "ae888c4e4f2fb795cc803c5e380a5dba6781736d72fc4f7b481371128492620f",
+    ".github/workflows/publish-release.yml": "d445206b806df8f8ecb90b28ba1aab022df3d842bb3a7d02480367d73a57dcd4",
     ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
     ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
     ".github/workflows/security-proposal.yml": "ead6391898f60eedca18bf058e3f8eec01c10afc58bc207bb7902f45d9240970",

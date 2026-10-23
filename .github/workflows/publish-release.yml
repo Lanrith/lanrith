@@ -87,17 +87,26 @@ jobs:
               with p.open('rb') as stream: expected[p.name]='sha256:'+hashlib.file_digest(stream,'sha256').hexdigest()
           tag='v'+version
           # No overwrite or --clobber path is available, including on retries.
-          try:
-              draft=json.loads(run('gh','api',f'repos/{repo}/releases/tags/{tag}'))
-          except subprocess.CalledProcessError as error:
-              assert 'HTTP 404' in (error.stderr or '')
+          def release():
+              # A draft has no published Git tag. The tag REST endpoint returns
+              # 404 for it; the CLI resolves drafts and exposes their stable API ID.
+              lookup=subprocess.run(['gh','release','view',tag,'--repo',repo,'--json','apiUrl'],capture_output=True,text=True)
+              if lookup.returncode:
+                  assert 'release not found' in lookup.stderr.lower() or 'HTTP 404' in lookup.stderr
+                  return None
+              url=json.loads(lookup.stdout)['apiUrl']
+              assert re.fullmatch(r'https://api[.]github[.]com/repos/'+re.escape(repo)+r'/releases/[0-9]+',url)
+              return json.loads(run('gh','api',url.removeprefix('https://api.github.com/')))
+          draft=release()
+          if draft is None:
               run('gh','release','create',tag,'--repo',repo,'--target',source,'--draft','--prerelease','--latest=false','--title','Lanrith '+version,'--generate-notes',*(str(p) for p in files))
-              draft=json.loads(run('gh','api',f'repos/{repo}/releases/tags/{tag}'))
+              draft=release()
+          assert draft is not None
           assert {a['name']:a['digest'] for a in draft['assets']}==expected
           if draft['draft']:
               assert draft['prerelease']
               run('gh','release','edit',tag,'--repo',repo,'--draft=false')
-          published=json.loads(run('gh','api',f'repos/{repo}/releases/tags/{tag}'))
+          published=release()
           assert published.get('immutable') is True and not published['draft']
           assert len(published['assets'])==len(expected)
           for asset in published['assets']:
@@ -111,7 +120,7 @@ jobs:
           # Stable/latest is promoted only after immutable bytes and tag have passed verification.
           if published['prerelease']:
               run('gh','release','edit',tag,'--repo',repo,'--prerelease=false','--latest')
-          promoted=json.loads(run('gh','api',f'repos/{repo}/releases/tags/{tag}'))
+          promoted=release()
           assert promoted['id']==published['id'] and promoted['immutable'] and not promoted['prerelease']
           record={'schema':1,'kind':'publication-verification','result':'pass','repository':repo,'source_commit':source,'tag':tag,'release_id':published['id'],'release_url':published['html_url'],'immutable':True,'verified_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'assets':expected,'update_record_sha256':expected['update-record.json'][7:],'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT']}
           pathlib.Path('verification').mkdir()
