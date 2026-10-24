@@ -9,12 +9,12 @@ import tempfile
 import tarfile
 import uuid
 
-from . import config, extensions, release
+from . import bindings, config, extensions, hardware_config as hardware, release, runtime_plan
 from .release import require
 
 
 def assembly(value, base, destination, *, version, sequence, certificate=None, private_key=None,
-             integrations=None, serial_hash=None, initrd_base=None):
+             integrations=None, serial_hash=None, initrd_base=None, target_facts=None, retained_allocations=None):
     require(not destination.exists() and not destination.is_symlink(), 'Build workspace already exists.')
     require(base.is_file() and not base.is_symlink() and base.resolve() == base.absolute(),
             'Base filesystem must be an admitted canonical archive.')
@@ -22,6 +22,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     require(release.VERSION.fullmatch(version) and type(sequence) is int and 1 <= sequence <= 999999999,
             'Invalid image release identity.')
     value = config.normalize(value)
+    # Fail before creating a workspace if hardware evidence or runtime support
+    # is missing. Configuration and facts are independently bound in the digest.
+    config.render(value, target_facts=target_facts, retained_allocations=retained_allocations)
     machine_id = value['hardware'].get('machine_id')
     require(machine_id is not None, 'Set hardware.machine_id once in owner configuration before building.')
     initrd_base = initrd_base or base
@@ -35,9 +38,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                 'Invalid serial provisioning hash.')
     destination.mkdir(mode=0o700, parents=True)
     overlay = destination / 'mkosi.extra'
-    digest = config.write(value, overlay)
+    digest = config.write(value, overlay, target_facts=target_facts, retained_allocations=retained_allocations)
     base_files, accounts = set(), {}
-    if integrations:
+    if integrations or value.get('runtime', {}).get('service_identities'):
         with tarfile.open(base) as archive:
             for member in archive:
                 name = member.name.removeprefix('./').rstrip('/')
@@ -49,9 +52,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                     accounts[Path(name).name] = archive.extractfile(member).read()
     integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files)
     extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
+    bindings.verify_accounts(value, accounts, overlay)
     # The effective intent includes every admitted integration, even when it adds no network fields.
     digest = config.effective_digest(value, integration['digests'],
-                                     release.file_record(serial_hash)['sha256'] if serial_hash else None)
+                                     release.file_record(serial_hash)['sha256'] if serial_hash else None,
+                                     target_facts=target_facts, retained_allocations=retained_allocations)
     (overlay / 'usr/share/lanrith/configuration.sha256').write_text(digest + '\n')
     image_id = value.get('release', {}).get('image_id', 'lanrith')
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,
@@ -79,7 +84,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                         f'{value["administration"]["username"]} -\n')
     library = overlay / 'usr/lib/lanrith/lanrith'
     library.mkdir(parents=True)
-    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py'):
+    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
+                   'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
+                   'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
+                   'metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py',
+                   'fancontrol_runtime.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)
@@ -88,18 +97,49 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                        'from lanrith.runtime import main\nsys.exit(main())\n')
     wrapper.chmod(0o755)
+    fan_wrapper = overlay / 'usr/lib/lanrith/fancontrol-runtime'
+    fan_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                           'from lanrith.fancontrol_runtime import main\nsys.exit(main())\n')
+    fan_wrapper.chmod(0o755)
+    if value.get('identity', {}).get('policy', {}).get('enabled'):
+        policy_wrapper = overlay / 'usr/lib/lanrith/policy-runtime'
+        policy_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                  'from lanrith.policy_runtime import main\nsys.exit(main())\n')
+        policy_wrapper.chmod(0o755)
+    if value.get('identity', {}).get('radius', {}).get('enabled'):
+        radius_wrapper = overlay / 'usr/lib/lanrith/radius-runtime'
+        radius_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                  'from lanrith.radius_runtime import main\nsys.exit(main())\n')
+        radius_wrapper.chmod(0o755)
+    if value.get('observability', {}).get('logs', {}).get('enabled'):
+        logs_wrapper = overlay / 'usr/lib/lanrith/logs-runtime'
+        logs_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                'from lanrith.logs_runtime import main\nsys.exit(main())\n')
+        logs_wrapper.chmod(0o755)
     if serial_hash is not None:
         shutil.copyfile(serial_hash, overlay/'etc/security/admin.serial-passphrase.hash')
         (overlay/'etc/security/admin.serial-passphrase.hash').chmod(0o600)
     units = overlay / 'usr/lib/systemd/system'
     units.mkdir(parents=True, exist_ok=True)
-    required = ['nftables.service', 'ssh.service', 'systemd-networkd.service'] + integration['health_units']
-    for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
-        if value['services'].get(feature, {}).get('enabled'):
-            required.append(unit)
-    if value['administration']['serial']['enabled']:
-        required.append('lanrith-serial-idle-watchdog.service')
-    required = sorted(set(required))
+    required = runtime_plan.required_units(value, target_facts=target_facts,
+                                           integrations=integration['health_units'])
+    (metadata/'health.json').write_bytes(release.canonical(
+        runtime_plan.health(value, target_facts=target_facts, integrations=integration['health_units'])))
+    # These helpers may come from an older admitted base. Replace every consumer
+    # together with its generated administration contract.
+    for name in ('ensure-ssh-host-key', 'verify-serial-passphrase', 'serial-idle-watchdog'):
+        helper = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/lanrith'/name
+        shutil.copyfile(helper, overlay/'usr/lib/lanrith'/name)
+        (overlay/'usr/lib/lanrith'/name).chmod(0o755)
+    if value.get('observability', {}).get('snmp', {}).get('enabled'):
+        # Replace the complete helper policy consumer, including its shared
+        # activation dependencies, when assembling on an older admitted base.
+        for name in ('snmp-runtime', 'snmp_service.py', 'snmp_credentials.py',
+                     'credential_runtime.py', 'systemd_service.py'):
+            source = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/lanrith'/name
+            target = overlay/'usr/lib/lanrith'/name
+            shutil.copyfile(source, target)
+            target.chmod(0o755 if name == 'snmp-runtime' else 0o644)
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
         f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'
@@ -114,6 +154,19 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
     wants.mkdir(parents=True, exist_ok=True)
+    state_mount = wants/'var.mount.d/10-lanrith-state.conf'
+    state_mount.parent.mkdir(parents=True, exist_ok=True)
+    state_mount.write_text('[Mount]\nOptions=nodev,nosuid,noexec\n')
+    # systemd-gpt-auto-generator creates the ESP mount dynamically. Keep it
+    # read-only and non-executable outside the admitted update/blessing helper.
+    # Supply both conventional mount names; only the generated unit is used.
+    for mount in ('efi', 'boot'):
+        dropin = wants/f'{mount}.mount.d/10-lanrith-read-only.conf'
+        dropin.parent.mkdir(parents=True, exist_ok=True)
+        dropin.write_text('[Mount]\nOptions=umask=0077,ro,nodev,nosuid,noexec\n')
+    blessing = wants/'systemd-bless-boot.service.d/10-lanrith-esp.conf'
+    blessing.parent.mkdir(parents=True, exist_ok=True)
+    blessing.write_text('[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime bless\n')
     # Factory provisioning owns repartitioning and always supplies the observed
     # disk. Do not let an automatic service select a disk from global labels.
     (wants/'systemd-repart.service').symlink_to('/dev/null')
@@ -158,7 +211,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         path = units / directory / unit
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/' + unit)
-    for unit in sorted(set(required) | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
+    auxiliaries = ({'lanrith-policy-helper-requests.socket', 'lanrith-policy-helper-status.socket'}
+                   if value.get('identity', {}).get('policy', {}).get('enabled') else set())
+    for unit in sorted(set(required) | auxiliaries | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
                                        'lanrith-health.service', 'lanrith-observation.service',
                                        'lanrith-ssh-host-key.service'}):
         # Replace the base's inactive mask only for explicitly selected health requirements.
@@ -261,7 +316,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     if certificate:
         shutil.copyfile(certificate, trust_path/'owner.crt')
     acceleration = value['hardware'].get('acceleration')
-    kernel = ''
+    kernel = hardware.ownership_kernel(value, target_facts)
     if acceleration:
         require(acceleration['hugepages_mib'] % 2 == 0, 'Hugepage allocation must be divisible by 2 MiB.')
         kernel = f' iommu=pt intel_iommu=on amd_iommu=on hugepagesz=2M hugepages={acceleration["hugepages_mib"]//2}'
@@ -283,7 +338,13 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     (destination / 'mkosi.conf').write_text(text)
     finalize = Path(__file__).parents[1]/'scripts/finalize-image.py'
     require(finalize.is_file(), 'Native final-tree verification is missing.')
-    shutil.copyfile(finalize, destination/'mkosi.finalize')
+    boundary = finalize.with_name('runtime-boundary.py').read_text().split('\ndef main():', 1)[0]
+    root_access = finalize.with_name('root-access.py')
+    require(root_access.is_file(), 'Root-access finalization policy is missing.')
+    hardening = root_access.read_text().split('\ndef main():', 1)[0]
+    selected = json.dumps(value['administration']['root_access'])
+    (destination/'mkosi.finalize').write_text(
+        boundary+'\n'+hardening+'\nROOT_ACCESS = '+selected+'\n'+finalize.read_text())
     (destination/'mkosi.finalize').chmod(0o755)
     return {'configuration_sha256': digest, 'platform_version': version,
             'deployment_sequence': sequence, 'image_id': image_id}

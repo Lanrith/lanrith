@@ -1,6 +1,7 @@
 """Build and verify a router image from declared network intent."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -46,17 +47,44 @@ def main(arguments=None):
     image.add_argument('--key', type=Path)
     image.add_argument('--serial-passphrase-hash', type=Path)
     image.add_argument('--qualification', action='store_true')
+    for command in (validate, render, image):
+        command.add_argument('--hardware-facts', type=Path,
+                             help='Private JSON snapshot of verified target hardware')
+        command.add_argument('--hardware-facts-sha256', help='Reviewed SHA-256 of the hardware snapshot')
+        command.add_argument('--translation-allocations', type=Path,
+                             help='Private strict JSON map of retained IPv6 to IPv4 source identities')
+        command.add_argument('--translation-allocations-sha256',
+                             help='Reviewed SHA-256 of the retained source identity map')
     image.add_argument('--integration-lock', type=Path,
                        help='Reviewed private mapping of extension IDs to canonical directories and manifest digests')
     args = parser.parse_args(arguments)
     try:
+        target_facts = None
+        retained_allocations = None
+        if args.command in ('validate', 'render', 'build'):
+            release.require((args.hardware_facts is None) == (args.hardware_facts_sha256 is None),
+                            'Hardware facts require an explicit reviewed digest.')
+            if args.hardware_facts is not None:
+                raw = release.read(args.hardware_facts, 1024*1024)
+                release.require(hashlib.sha256(raw).hexdigest() == args.hardware_facts_sha256,
+                                'Hardware facts differ from the reviewed snapshot.')
+                target_facts = json.loads(raw, object_pairs_hook=release.unique)
+            release.require((args.translation_allocations is None) == (args.translation_allocations_sha256 is None),
+                            'Translation allocations require an explicit reviewed digest.')
+            if args.translation_allocations is not None:
+                raw = release.read(args.translation_allocations, 1024*1024)
+                release.require(hashlib.sha256(raw).hexdigest() == args.translation_allocations_sha256,
+                                'Translation allocations differ from the reviewed snapshot.')
+                retained_allocations = json.loads(raw, object_pairs_hook=release.unique)
+                release.require(isinstance(retained_allocations, dict), 'Translation allocations must be an object.')
         if args.command == 'validate':
             value = config.load(args.configuration)
-            config.render(value)
+            config.render(value, target_facts=target_facts, retained_allocations=retained_allocations)
             print(json.dumps({'valid': True, 'networks': len(value['networks']),
                               'extensions': len(value.get('extensions', []))}))
         elif args.command == 'render':
-            digest = config.write(config.load(args.configuration), args.output)
+            digest = config.write(config.load(args.configuration), args.output, target_facts=target_facts,
+                                  retained_allocations=retained_allocations)
             print(json.dumps({'configuration_sha256': digest}))
         elif args.command == 'verify':
             value = release.verify(args.directory.resolve(), args.certificate, purpose=args.purpose,
@@ -107,7 +135,8 @@ def main(arguments=None):
                 identity = build.assembly(config.load(args.configuration), args.base.resolve(), args.workspace.resolve(),
                                           version=args.version, sequence=args.sequence,
                                           certificate=args.certificate, private_key=args.key, integrations=integrations,
-                                          serial_hash=args.serial_passphrase_hash, initrd_base=args.initrd_base.resolve())
+                                          serial_hash=args.serial_passphrase_hash, initrd_base=args.initrd_base.resolve(),
+                                          target_facts=target_facts, retained_allocations=retained_allocations)
                 build.run(args.workspace.resolve())
                 build.update_payload(args.workspace.resolve(), identity, args.output.resolve())
                 if args.key is not None:

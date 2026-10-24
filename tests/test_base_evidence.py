@@ -62,7 +62,8 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
             names = ['usr/lib/systemd/systemd', 'usr/bin/python3'] + sorted(evidence.UPDATE_TOOLS)
             names += ['usr/bin/'+name for name in ('alloy', 'prometheus-node-exporter', 'discovery-bridge',
                 'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
-                'router-policy-check', 'router-policy-status', 'router-policy-recover')]
+                'router-policy-check', 'router-policy-status', 'router-policy-recover',
+                'router-policy-profile')]
             for name in names:
                 data = alloy if name == 'usr/bin/alloy' else b'synthetic fixture'
                 if altered_binary and name == 'usr/bin/discovery-bridge':
@@ -86,7 +87,8 @@ class BaseArchiveEvidenceTests(unittest.TestCase):
         for name, binaries in {'node-exporter': ['prometheus-node-exporter'],
             'discovery-bridge': ['discovery-bridge'], 'router-policy-reader': ['router-policy-reader'],
             'router-policy-collector': ['router-policy-collector'],
-            'router-policy-helper': ['router-policy-check','router-policy-helper','router-policy-status','router-policy-recover']}.items():
+            'router-policy-helper': ['router-policy-check','router-policy-helper','router-policy-status',
+                                     'router-policy-recover','router-policy-profile']}.items():
             components[name] = {'binary_sha256': {binary: digest for binary in binaries}}
         (directory/'custom-security.json').write_text(json.dumps({'result': 'pass', 'components': components,
             'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}))

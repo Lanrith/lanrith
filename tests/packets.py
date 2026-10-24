@@ -156,6 +156,11 @@ def server(namespace, path):
 
 def exercise(example):
     value = config.load(Path(__file__).resolve().parents[1]/'examples'/example)
+    # Core services have a separate native namespace/daemon fixture.
+    # This topology isolates routed access, NAT44 and source validation.
+    value['services']['dns'] = {'enabled': False}
+    value['services']['ntp'] = {'enabled': False}
+    value = config.normalize(value)
     next(iter(value['networks'].values()))['routed_prefixes'] = ['10.30.0.0/16']
     with tempfile.TemporaryDirectory(prefix='lanrith-packets.') as temporary:
         work = Path(temporary)
@@ -293,8 +298,20 @@ def exercise(example):
             # Host output uses generated service permissions, not the access list.
             for _, remote, family in uplink:
                 probe('router', remote, 8888, False)
-                probe('router', remote, 53, True, protocol='udp', user='unbound')
+                probe('router', remote, 53, False, protocol='udp', user='unbound')
                 probe('router', remote, 53, False, protocol='udp', user='nobody')
+            # An undeclared attachment must not inherit even wildcard owner
+            # permission or impersonate sources from a declared LAN.
+            namespaces.append('unconfigured')
+            connection('unexpected0', 'unconfigured', ['172.31.99.1/24', 'fd42:ffff::1/64'], 100)
+            value['access'] = {'rules': [{'action': 'allow', 'from': 'any', 'to': 'any',
+                                        'authorization': 'owner'}]}
+            rules.write_text(config.render(value)['etc/nftables.conf'])
+            ns('router', 'nft', '--file', str(rules))
+            for _, address, family in first_client[2]:
+                remote = next(peer for _, peer, version in uplink if version == family)
+                reject_forgery('unconfigured', address, remote, 'unexpected0',
+                               'undeclared-interface-'+str(family), 'upstream', work)
         finally:
             for process in processes:
                 process.terminate()
@@ -305,7 +322,7 @@ def exercise(example):
                     process.communicate(timeout=5)
             for namespace in reversed(namespaces):
                 subprocess.run(['ip', 'netns', 'delete', namespace], capture_output=True)
-    print(example+': management, ordered host/port policy, isolation, NAT44, IPv4/IPv6 spoof guards and account-scoped host egress passed.')
+    print(example+': management, ordered host/port policy, isolation, NAT44, IPv4/IPv6 spoof guards and denied host egress passed.')
 
 
 def main():

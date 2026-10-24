@@ -28,7 +28,7 @@ def patch(root, filename, strip=1):
 def module_copy(work, module, version, destination, expected=None):
     resolve = work/'resolve'
     resolve.mkdir(exist_ok=True)
-    (resolve/'go.mod').write_text('module github.com/lanrith/build-resolution\n\ngo 1.27.2\n')
+    (resolve/'go.mod').write_text('module github.com/lanrith/build-resolution\n\ngo 1.27.3\n')
     value = json.loads(run('go', 'mod', 'download', '-json', module+'@'+version,
                           cwd=resolve, capture_output=True, text=True).stdout)
     require(value['Path'] == module and value['Version'] == version and

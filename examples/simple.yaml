@@ -1,0 +1,28 @@
+# Synthetic two-port IPv4 router. Replace the MACs and administrator public key.
+# This YAML is a build-time compiler input. It is never installed in the image.
+schema: 1
+hostname: example-router
+hardware:
+  # Generate and retain your own machine ID before assembling an image.
+  machine_id: 0123456789abcdef0123456789abcdef
+  interfaces:
+    wan: {match: {mac: '02:00:00:00:01:01'}}
+    lan: {match: {mac: '02:00:00:00:01:02'}}
+uplink: {interface: wan, ipv4: dhcp, ipv6: disabled}
+networks:
+  home:
+    interface: lan
+    # .1 is the gateway. This pool enables persistent DHCPv4.
+    ipv4: 192.168.10.0/24
+    dhcp4: {pools: [192.168.10.100-192.168.10.200]}
+    # DNS and NTP are enabled automatically; either can be disabled here.
+access:
+  default: deny
+  rules:
+    # Connectivity and NAT do not grant Internet access without this rule.
+    - {name: Home Internet, action: allow, from: home, to: uplink}
+administration:
+  networks: [home]
+  # Documentation-only public key: it is not an operator credential.
+  authorized_keys:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFhpcHJoRXhhbXBsZU9ubHlOb3RBVXNlcklkZW50aXR5

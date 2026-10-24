@@ -22,6 +22,44 @@ for unit in lanrith-policy-helper-shadow.service; do
   [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
   require_inactive_service "$unit"
 done
+# No appliance feature uses cron or the mutable hostname D-Bus API. Only the
+# drop-in-constrained SSH service may accept connections.
+for unit in cron.service systemd-hostnamed.service ssh.socket sshd@.service; do
+  [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
+  require_inactive_service "$unit"
+done
+
+require_service_hardening() {
+  unit=$1
+  [ "$(systemctl show -P NoNewPrivileges "$unit")" = yes ]
+  [ "$(systemctl show -P ProtectSystem "$unit")" = strict ]
+  [ "$(systemctl show -P PrivateTmp "$unit")" = yes ]
+  [ "$(systemctl show -P MemoryDenyWriteExecute "$unit")" = yes ]
+  [ -n "$(systemctl show -P SystemCallFilter "$unit")" ]
+}
+
+require_service_resources() {
+  unit=$1 memory=$2 tasks=$3 descriptors=$4
+  [ "$(systemctl show -P MemoryMax "$unit")" = "$memory" ]
+  [ "$(systemctl show -P MemorySwapMax "$unit")" = 0 ]
+  [ "$(systemctl show -P TasksMax "$unit")" = "$tasks" ]
+  [ "$(systemctl show -P LimitNOFILE "$unit")" = "$descriptors" ]
+}
+
+if systemctl is-active --quiet unbound.service; then
+  require_service_hardening unbound.service
+  require_service_resources unbound.service 536870912 64 4096
+  for capability in $(systemctl show -P CapabilityBoundingSet unbound.service); do
+    case "$capability" in
+      cap_chown|cap_dac_override|cap_setgid|cap_setuid|cap_net_bind_service) ;;
+      *) printf 'Unexpected Unbound capability: %s\n' "$capability" >&2; exit 1 ;;
+    esac
+  done
+fi
+if systemctl is-active --quiet chrony.service; then
+  require_service_hardening chrony.service
+  require_service_resources chrony.service 134217728 32 1024
+fi
 if [ "${lanrith_policy_enforcement_enabled:-0}" = 1 ]; then
   for unit in lanrith-policy-bootstrap.service lanrith-policy-helper.service lanrith-policy-reader.service lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket lanrith-policy-bindings.timer; do
     systemctl is-active --quiet "$unit"
@@ -100,6 +138,10 @@ fi
 if [ "$lanrith_dhcpv4_enabled" = 1 ]; then
   [ "$(systemctl is-enabled kea-dhcp4-server.service 2>/dev/null || true)" = enabled ]
   systemctl is-active --quiet kea-dhcp4-server.service
+  require_service_hardening kea-dhcp4-server.service
+  require_service_resources kea-dhcp4-server.service 268435456 64 4096
+  [ "$(systemctl show -P CapabilityBoundingSet kea-dhcp4-server.service)" = \
+    'cap_net_bind_service cap_net_raw' ]
   /usr/lib/lanrith/verify-kea-sockets
 else
   [ "$(systemctl is-enabled kea-dhcp4-server.service 2>/dev/null || true)" = masked ]

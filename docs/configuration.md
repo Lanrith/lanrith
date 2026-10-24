@@ -13,11 +13,12 @@ selectors and undeclared management networks fail validation. See the
 | `hardware.machine_id` | Permanent device identity, generated once before installation; retain it across updates and recovery |
 | `hardware.boot` | Secure Boot, TPM requirement and boot/recovery consoles |
 | `hardware.watchdog` | `auto` (default), `required` or `disabled`; device and timeout in seconds |
+| `hardware.fancontrol` | Optional hwmon temperature sources and explicitly selected PWM fan outputs; [details](fancontrol.md) |
 | `hardware.acceleration` | Explicit PCI ownership and hugepage allocation |
 | `uplink` | DHCP/static IPv4, RA/static IPv6, gateways, optional IPv4 masquerading and CAKE upload rate |
 | `networks` | Tagged or untagged attachments, gateways, RA, DNS, DHCP pools, optional routed source prefixes and forwarding isolation |
 | `access` | An ordered list of generic routed allow/deny rules; unmatched new connections are denied |
-| `administration` | Management networks, administrator public keys, account, port and optional serial login |
+| `administration` | Management networks, administrator public keys, account, port, root-access mode and optional serial login |
 | `services` | Independent optional feature selection |
 | `extensions` | IDs of separately reviewed integration manifests |
 | `release` | Owner image identity and monotonic `sequence_floor` |
@@ -135,12 +136,21 @@ traffic does not gain arbitrary egress. SSH, DNS, DHCP and NTP service units bin
 to successful nftables activation. Replacing a complete firewall through an
 admitted integration also requires qualification of these boundaries.
 
-The current built-in service compiler covers DNS, DHCP and NTP. Advanced
-components remain gated on admitted integrations. Their future typed compilers
-must derive exact listener, peer, namespace, translation and return rules from
-component settings, preserving operator denies through native and translated
-paths. Enabling a package must not grant trust to a cluster, directory or backend.
-Temporary broad permissions remain explicit owner rules.
+The built-in compiler covers DNS, DHCP, NTP, controlled discovery, bounded BGP,
+RADIUS MAC admission, directory policy, NAT64, NAT46, IDS, metrics, log delivery,
+SNMP and VPP ownership. It derives listener, peer, namespace, translation and
+return rules from typed component settings while preserving ordered owner denies
+through native and translated paths. Enabling a package or component grants no
+trust to a cluster, directory or backend. Temporary broad permissions remain
+explicit owner rules.
+
+When authenticated log delivery is enabled, Lanrith also emits a one-minute
+heartbeat containing the accepted boot ID, selected entry, release sequence and
+effective configuration digest. The timer is part of boot health and the event
+uses the same redacted, TLS-authenticated, bounded Alloy queue as the journal.
+The remote collector must alert on a missing or stale heartbeat and retain the
+event outside the router. This is a liveness signal, not remote attestation: an
+attacker with unrestricted root can forge local events.
 
 ## Hardware and optional integrations
 
@@ -153,6 +163,16 @@ offline before boot acceptance. Serial login is disabled unless enabled with a
 private provisioning hash and a selected console. Kernel and journal output
 must not disclose secrets on that console.
 
+`administration.root_access` defaults to `enabled` for schema-1 compatibility.
+Set it to `disabled` to build an image with no human UID-0 login or elevation
+path. The administrator can still use key-authenticated SSH for unprivileged
+inspection, but cannot use `sudo`, `sudoedit`, `su`, agent-forwarded PAM
+authentication, set-user-ID programs or file-capability executables. Serial
+recovery is incompatible with this mode. Re-enabling root access requires a new
+signed image or verified signed recovery media; no deployed setting can change
+the mode. The owner YAML is consumed during compilation and is never installed
+or read by the deployed image.
+
 Hardware watchdog defaults are `mode: auto`, `device: /dev/watchdog0` and
 `timeout_seconds: 60`. Root and initrd use the same systemd watchdog policy.
 `auto` works without a watchdog; when the selected device exists, boot acceptance
@@ -164,10 +184,9 @@ opening a watchdog, including during reboot. It does not disarm a watchdog
 already started by firmware or another owner. Qualify watchdog handover and
 recovery on the selected hardware before deployment.
 
-DNS, DHCP and NTP have built-in configuration. Discovery, RADIUS/directory
-policy, FRR, translation, IDS, metrics, logs, SNMP and VPP use integration
-extensions until their typed configuration interfaces are qualified. Merely
-installing their packages does not enable them.
+The shared components above have built-in typed configuration. Private products,
+including a separately admitted console, continue to use integration extensions.
+Merely installing a package or admitting an extension does not enable it.
 
 An extension has `extension.json` and a `root/` directory. Its manifest contains
 `schema`, `id`, `features`, `health_units`, and an exact `files` map of SHA-256,
@@ -184,21 +203,15 @@ Place custom runtime helpers under `/usr/lib/lanrith/integrations/` or an
 owner-specific directory, and integration data under `/etc/` or
 `/usr/share/lanrith/integrations/`.
 
-Optional namespace, translation, OOB and acceleration helpers read the
-owner's `/etc/lanrith/integrations/network-profile.sh`; its settings use the
-`lanrith_` prefix. SNMP reads
-`/etc/lanrith/integrations/snmp-runtime-policy.json`. These files are absent
-from the neutral base and can be supplied by an admitted integration without
-overwriting protected runtime code. PCI binding uses `lanrith_vpp_bdf`,
-`lanrith_vpp_iommu_group`, `lanrith_vpp_linux_interface`,
-`lanrith_vpp_mac_address` and `lanrith_vpp_linux_driver`. There is no default
-NIC model, PCI address or Linux driver. Binding checks the exact function,
+Namespace, translation, OOB and acceleration helpers read compiler-generated
+strict JSON manifests, not owner YAML or shell settings. SNMP reads its generated
+runtime policy and a separately bound protected credential. There is no default
+NIC model, PCI address or Linux driver. PCI binding checks the exact function,
 interface, MAC, expected driver and exclusive IOMMU group before changing
 anything. Shared groups are rejected. `lanrith-vpp-device.service` and
-`verify-vpp-device` retain this ownership boundary; the owner explicitly admits
-the VPP dependency drop-in and its configuration. VPP/DPDK support for a chosen
-NIC still needs qualification. Acceleration devices are separate from declared
-Linux-owned interfaces.
+`verify-vpp-device` retain this ownership boundary. VPP/DPDK support for a chosen
+NIC still needs qualification on that hardware. Acceleration devices are
+separate from Linux-owned interfaces.
 
 Declare both `lanrith-vpp-device.service` and `vpp.service` as selected health
 requirements to unmask that integration. The optional hardware readiness unit
@@ -223,6 +236,16 @@ The default is `/var/lib/lanrith/ssh-host-keys`; an owner migrating existing sta
 can select its existing root-owned directory. Every parent must be root-owned
 and protected from writes by other users. An update keeps an existing key.
 
+`administration.host_key_rotation` defaults to `retain`. After a root-compromise
+recovery, set it to a freshly generated 128-bit lowercase hexadecimal value in
+the signed build input. On the first boot of that generation, Lanrith atomically
+replaces the persistent Ed25519 host key before SSH starts and records the
+generation only after the new key and public key are durable. Reusing a value is
+not a new rotation. The generation is not a secret, but it must be unpredictable
+to persistent state prepared before the recovery image is isolated and built.
+Clients must receive and verify the new fingerprint through an independent
+channel.
+
 Extensions cannot overwrite base package binaries. Existing service configuration
 files need an explicit admitted `replaces` entry. Selected health requirements
 activate the corresponding units; unselected optional daemons remain masked,
@@ -234,6 +257,29 @@ An extension can declare `identities.users` (`name`, numeric `uid`, numeric
 preserves core accounts, rejects duplicate names/IDs and checks the final native
 registry. Account and sysusers files cannot be supplied as an ordinary overlay.
 Review any ownership conversion of existing state separately.
+
+Private migration inputs may supply an optional `runtime` object. Its
+`credentials` map binds declared credential names to canonical files beneath
+`/var/lib` or `/var/cache`. BIND and FRR use those paths with `LoadCredential`;
+assembly does not read or copy their contents. Other components remain subject
+to their runtime support gates. Without a binding, a credential uses
+`/var/lib/lanrith/credentials/<name>`.
+
+`runtime.service_identities` maps account names to required numeric `uid` and
+`gid`, with optional `home` and `shell`. Assembly checks the admitted base and
+admitted extension account registry, and rejects missing accounts, aliases or
+changed values. These assertions do not create accounts, remap IDs or change
+persistent ownership. `runtime.trust` maps declared `trust/<name>.pem` directory
+CA references to public PEM certificate chains. Only certificates are accepted;
+private keys and arbitrary files are rejected. Trust material and assertions
+are included in the configuration digest. Keep private bindings out of public
+examples and source releases.
+
+Persistent `/var` is mounted `nodev,nosuid,noexec`, and boot health rejects a
+weaker effective mount. State is data, never an executable overlay. Component
+readers still validate ownership, permissions, size and format; the mount flags
+do not make attacker-controlled leases, journals, grants or credentials safe to
+restore.
 
 `health_units` contains shared requirements. An optional
 `health_units_by_feature` map declares requirements for each selected feature.

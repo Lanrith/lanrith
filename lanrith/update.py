@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,9 @@ def command(arguments, timeout=30):
     try:
         result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
                                 text=True, timeout=timeout, env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+    except subprocess.TimeoutExpired as error:
+        from .release import ReleaseError
+        raise ReleaseError('Update command timed out: '+Path(arguments[0]).name) from error
     except OSError as error:
         from .release import ReleaseError
         raise ReleaseError('Update command could not start: '+Path(arguments[0]).name) from error
@@ -221,11 +225,14 @@ def boot_esp(installed, *, disk=None):
     # util-linux 2.41 can report both the autofs trigger and its mounted
     # filesystem for --target. --uniq selects the visible filesystem.
     mount = json.loads(command(['findmnt', '--uniq', '--json', '--target', str(esp/'EFI'),
-                                '--output', 'SOURCE,FSTYPE,TARGET']))
+                                '--output', 'SOURCE,FSTYPE,TARGET,OPTIONS']))
     rows = mount.get('filesystems', [])
     require(len(rows) == 1 and rows[0].get('target') == str(esp) and rows[0].get('fstype') == 'vfat' and
             isinstance(rows[0].get('source'), str) and rows[0]['source'].startswith('/dev/'),
             'EFI filesystem is not a mounted FAT block partition.')
+    options = set((rows[0].get('options') or '').split(','))
+    require({'ro', 'nodev', 'nosuid', 'noexec'} <= options,
+            'EFI filesystem is not protected read-only at rest.')
     device = str(Path(rows[0]['source']).resolve())
     partition = json.loads(command(['lsblk', '--json', '--nodeps', '--paths', '--output',
                                    'NAME,TYPE,PKNAME,PARTTYPE', device])).get('blockdevices', [])
@@ -236,6 +243,25 @@ def boot_esp(installed, *, disk=None):
             (partition[0].get('parttype') or '').lower() == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b',
             'EFI partition differs from the verified root disk.')
     return esp
+
+
+@contextmanager
+def writable_esp(installed, *, esp=None):
+    """Open the verified ESP for one bounded mutation and restore it read-only."""
+    esp = boot_esp(installed) if esp is None else esp
+    require(esp.is_absolute() and esp.is_mount(), 'EFI filesystem must be mounted.')
+    command(['mount', '--options', 'remount,rw,nodev,nosuid,noexec', '--', str(esp)])
+    try:
+        yield esp
+        descriptor = os.open(esp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        # A failed close is an update failure: never report success while the
+        # normal read-only-at-rest boundary has not been restored.
+        command(['mount', '--options', 'remount,ro,nodev,nosuid,noexec', '--', str(esp)])
 
 
 def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
@@ -312,16 +338,17 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         value = plan(manifest, installed, geometry(disk), disk=disk,
                      active_partitions=active_partitions,
                      esp_available=shutil.disk_usage(esp).free)
-        with tempfile.TemporaryDirectory(prefix='lanrith-update.', dir='/run') as temporary:
-            definitions = Path(temporary)
-            for name, contents in transfers(value, directory, esp).items():
-                (definitions / name).write_text(contents)
-            # Relabel only the already-selected inactive slots. Active data is never a target.
-            for target in value['partitions'].values():
-                command(['sfdisk', '--part-label', disk, str(target['number']), '_empty'])
-            sysupdate = shutil.which('systemd-sysupdate') or '/usr/lib/systemd/systemd-sysupdate'
-            command([sysupdate, '--definitions=' + str(definitions), '--verify=no',
-                     'update', str(value['sequence'])], timeout=900)
+        with writable_esp(installed, esp=esp):
+            with tempfile.TemporaryDirectory(prefix='lanrith-update.', dir='/run') as temporary:
+                definitions = Path(temporary)
+                for name, contents in transfers(value, directory, esp).items():
+                    (definitions / name).write_text(contents)
+                # Relabel only the already-selected inactive slots. Active data is never a target.
+                for target in value['partitions'].values():
+                    command(['sfdisk', '--part-label', disk, str(target['number']), '_empty'])
+                sysupdate = shutil.which('systemd-sysupdate') or '/usr/lib/systemd/systemd-sysupdate'
+                command([sysupdate, '--definitions=' + str(definitions), '--verify=no',
+                         'update', str(value['sequence'])], timeout=900)
         deadline = time.monotonic() + 15
         while True:
             observed = geometry(disk)
@@ -341,6 +368,8 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         require(observed_uki['sha256'] == expected['sha256'] and observed_uki['size'] == expected['size'],
                 'Staged UKI differs from the admitted bytes.')
         require_default(accepted)
+        # Boot selection changes only the root-only EFI variable. The ESP has
+        # already returned to read-only before its bytes are authenticated.
         select_boot_once(candidates[0])
         return value
     finally:

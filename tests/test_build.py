@@ -49,6 +49,40 @@ class AssemblyTests(unittest.TestCase):
             self.assertIn(unit, (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
             self.assertIn('After=lanrith-recovery-key.service', (overlay/'usr/lib/systemd/system'/unit).read_text())
 
+    def test_root_access_policy_is_embedded_in_finalizer_not_read_from_owner_yaml(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        value['administration']['root_access'] = 'disabled'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            build.assembly(value, base, root/'rootless', version='0.1.0', sequence=11)
+            workspace = root/'rootless'
+            finalizer = (workspace/'mkosi.finalize').read_text()
+            self.assertIn('ROOT_ACCESS = "disabled"', finalizer)
+            self.assertIn('apply_root_access(root, username, ROOT_ACCESS)', finalizer)
+            self.assertFalse(any(path.suffix in ('.yaml', '.yml')
+                                 for path in (workspace/'mkosi.extra').rglob('*')))
+            self.assertFalse((workspace/'mkosi.extra/etc/sudoers.d/60-lanrith').exists())
+
+    def test_esp_is_read_only_and_non_executable_outside_admitted_mutations(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            workspace = root/'work'
+            build.assembly(value, base, workspace, version='0.1.0', sequence=12)
+            state = workspace/'mkosi.extra/etc/systemd/system/var.mount.d/10-lanrith-state.conf'
+            self.assertEqual(state.read_text(), '[Mount]\nOptions=nodev,nosuid,noexec\n')
+            for mount in ('efi', 'boot'):
+                policy = workspace/f'mkosi.extra/etc/systemd/system/{mount}.mount.d/10-lanrith-read-only.conf'
+                self.assertEqual(policy.read_text(),
+                                 '[Mount]\nOptions=umask=0077,ro,nodev,nosuid,noexec\n')
+            blessing = workspace/'mkosi.extra/etc/systemd/system/systemd-bless-boot.service.d/10-lanrith-esp.conf'
+            self.assertEqual(blessing.read_text(),
+                             '[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime bless\n')
+
     @unittest.skipUnless(shutil.which('mkosi'), 'Run in the matching mkosi builder for native configuration checks.')
     def test_pinned_mkosi_accepts_root_and_initrd_configuration(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')

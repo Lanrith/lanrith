@@ -86,7 +86,7 @@ class AccessTests(unittest.TestCase):
             with self.subTest(name=name):
                 value['access'] = {'rules': [{'name': name, **rule}]}
                 compiled = config.render(value)
-                resolved = json.loads(compiled['usr/share/lanrith/resolved.json'])
+                resolved = config.normalize(value)
                 self.assertEqual(resolved['access']['rules'][0]['name'], name)
                 self.assertEqual(compiled['etc/nftables.conf'], unnamed)
 
@@ -110,7 +110,8 @@ class AccessTests(unittest.TestCase):
         self.assertIn('ip saddr 192.168.10.0/24 oifname "wan" masquerade', text)
         self.assertNotIn('iifname "lan.10" oifname "wan"', text)
         value['uplink']['masquerade'] = False
-        self.assertNotIn('masquerade', config.render(value)['etc/nftables.conf'])
+        self.assertNotIn('ip saddr 192.168.10.0/24 oifname "wan" masquerade', config.render(value)['etc/nftables.conf'])
+        self.assertIn('iifname "lr-services"', config.render(value)['etc/nftables.conf'])
 
     def test_existing_internet_and_connection_files_still_render(self):
         value = copy.deepcopy(self.value)

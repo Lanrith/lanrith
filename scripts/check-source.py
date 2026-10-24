@@ -7,8 +7,10 @@ import subprocess
 
 root = Path(__file__).resolve().parents[1]
 try:
+    top = subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=root, capture_output=True, text=True)
     result = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-                            cwd=root, capture_output=True)
+                            cwd=root, capture_output=True) if top.returncode == 0 and \
+        Path(top.stdout.strip()).resolve() == root else subprocess.CompletedProcess([], 128, b'')
 except FileNotFoundError:
     result = subprocess.CompletedProcess([], 128, b'')
 paths = [root/name for name in result.stdout.decode().split('\0') if name and

@@ -40,6 +40,7 @@ class OptionalActivationTests(unittest.TestCase):
         names = ('discovery-bridge-collector.service', 'discovery-bridge-publisher.service',
                  'discovery-bridge-dns.service', 'dpdk.service', 'lanrith-policy-reader.service',
                  'chronyd-restricted.service', 'chrony-wait.service',
+                 'cron.service', 'systemd-hostnamed.service', 'ssh.socket', 'sshd@.service',
                  'systemd-sysupdate.service', 'systemd-sysupdate.timer',
                  'systemd-sysupdate-reboot.service', 'systemd-sysupdate-reboot.timer')
         with tempfile.TemporaryDirectory() as temporary:

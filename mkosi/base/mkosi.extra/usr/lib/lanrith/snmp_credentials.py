@@ -34,18 +34,24 @@ def validate(value):
     return value
 
 
-def configuration(value):
+def validate_header(header):
+    if not isinstance(header, str) or re.fullmatch(r'#[ -~]{1,125}\n', header) is None:
+        raise SNMPError('SNMP credential header must be one bounded ASCII comment line.')
+    return header
+
+
+def configuration(value, header=HEADER):
     value = validate(value)
-    return (HEADER + f'createUser {value["username"]} {value["auth_protocol"]} '
+    return (validate_header(header) + f'createUser {value["username"]} {value["auth_protocol"]} '
             f'"{value["auth_password"]}" {value["priv_protocol"]} "{value["priv_password"]}"\n').encode('ascii')
 
 
-def parse(raw):
+def parse(raw, header=HEADER):
     try:
         text = raw.decode('ascii')
     except (AttributeError, UnicodeError) as error:
         raise SNMPError('SNMP credential file is not supported ASCII configuration.') from error
-    pattern = (re.escape(HEADER) + r'createUser ([A-Za-z][A-Za-z0-9_.-]{2,31}) ([A-Z0-9-]+) '
+    pattern = (re.escape(validate_header(header)) + r'createUser ([A-Za-z][A-Za-z0-9_.-]{2,31}) ([A-Z0-9-]+) '
                r'"([^"\n]+)" ([A-Z0-9-]+) "([^"\n]+)"\n')
     match = re.fullmatch(pattern, text)
     if match is None:

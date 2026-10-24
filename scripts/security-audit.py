@@ -23,9 +23,21 @@ from lanrith import advisories, embedded
 from lanrith.release import ReleaseError
 
 
+def retained_binary_names(components):
+    names = {'alloy', 'alloy-beyla', 'prometheus-node-exporter', 'discovery-bridge',
+             'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
+             'router-policy-check', 'router-policy-status', 'router-policy-recover'}
+    # Published inventories predate the Phase B profile compiler. Require it
+    # precisely when the authenticated component evidence includes that binary.
+    if any('router-policy-profile' in component.get('binary_sha256', {})
+           for component in components.values()):
+        names.add('router-policy-profile')
+    return names
+
+
 def dependency_scan(queries, name, destination, failures, scanner_errors):
     try:
-        value = advisories.report(queries)
+        value = advisories.report(queries, diagnostic=destination/(name+'-diagnostic.json'))
         (destination/(name+'-advisories.json')).write_bytes(canonical(value))
         if value['findings']:
             print(json.dumps(value['findings'], sort_keys=True), flush=True)
@@ -83,6 +95,7 @@ def main():
             for name in names:
                 run('gh', 'release', 'download', item['tag_name'], '--repo', 'Lanrith/lanrith', '--dir', str(work), '--pattern', name)
                 require(file_record(work/name)['sha256'] == selection['files'][name], 'Retained security input differs.')
+            old = json.loads((work/'security.json').read_text())
             inventory = selection['files']['inventory.json']
             destination = args.output/inventory[:12]
             destination.mkdir()
@@ -108,11 +121,10 @@ def main():
             # A positive scan does not execute binaries. The archive is already digest-bound.
             binaries = work/'binaries'
             binaries.mkdir()
-            members = handoff.extract(work/'go-binaries.tar.gz', binaries, entries=10,
+            expected_binaries = retained_binary_names(old['custom']['components'])
+            members = handoff.extract(work/'go-binaries.tar.gz', binaries, entries=len(expected_binaries),
                                      maximum_file=1024*1024*1024, maximum_size=2*1024*1024*1024)
-            require(members == {'alloy', 'alloy-beyla', 'prometheus-node-exporter', 'discovery-bridge',
-                'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
-                'router-policy-check', 'router-policy-status', 'router-policy-recover'},
+            require(members == expected_binaries,
                 'Retained binary scan coverage is incomplete.')
             for binary in binaries.iterdir():
                 scan = run('govulncheck', '-mode=binary', str(binary), capture_output=True, check=False)
@@ -127,7 +139,6 @@ def main():
                                       capture_output=True, text=True).stdout)
                 if not all(record.get('ghsa_id') in patched for record in feed):
                     failures.append('native-upstream-advisory')
-            old = json.loads((work/'security.json').read_text())
             require(embedded.verify(binaries/'alloy', binaries/'alloy-beyla',
                     old['custom']['components']['alloy']['beyla']['binary_sha256']) == old['embedded_beyla'],
                     'Retained Beyla scan subject differs from the deployed embedded payload.')
