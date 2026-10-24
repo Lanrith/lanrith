@@ -87,7 +87,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
-                   'metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py'):
+                   'metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py',
+                   'fancontrol_runtime.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)
@@ -96,6 +97,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                        'from lanrith.runtime import main\nsys.exit(main())\n')
     wrapper.chmod(0o755)
+    fan_wrapper = overlay / 'usr/lib/lanrith/fancontrol-runtime'
+    fan_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                           'from lanrith.fancontrol_runtime import main\nsys.exit(main())\n')
+    fan_wrapper.chmod(0o755)
     if value.get('identity', {}).get('policy', {}).get('enabled'):
         policy_wrapper = overlay / 'usr/lib/lanrith/policy-runtime'
         policy_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'

@@ -13,6 +13,7 @@ selectors and undeclared management networks fail validation. See the
 | `hardware.machine_id` | Permanent device identity, generated once before installation; retain it across updates and recovery |
 | `hardware.boot` | Secure Boot, TPM requirement and boot/recovery consoles |
 | `hardware.watchdog` | `auto` (default), `required` or `disabled`; device and timeout in seconds |
+| `hardware.fancontrol` | Optional hwmon temperature sources and explicitly selected PWM fan outputs; [details](fancontrol.md) |
 | `hardware.acceleration` | Explicit PCI ownership and hugepage allocation |
 | `uplink` | DHCP/static IPv4, RA/static IPv6, gateways, optional IPv4 masquerading and CAKE upload rate |
 | `networks` | Tagged or untagged attachments, gateways, RA, DNS, DHCP pools, optional routed source prefixes and forwarding isolation |

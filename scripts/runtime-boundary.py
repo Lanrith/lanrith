@@ -10,7 +10,7 @@ import sys
 COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config', 'bindings',
             'integrations', 'access', 'firewall', 'service_plane', 'authoritative', 'routing',
             'translation', 'nat46', 'nat64', 'ids', 'metrics', 'policy_agent', 'discovery',
-            'logs', 'radius'}
+            'logs', 'radius', 'fancontrol_config'}
 
 
 def check(root):

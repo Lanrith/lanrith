@@ -2,12 +2,14 @@
 
 import ipaddress
 
-from . import hardware_config, intent
+from . import fancontrol_config, hardware_config, intent
 from .release import canonical
 
 
 def required_units(value, *, target_facts=None, integrations=()):
     units = ['nftables.service', 'ssh.service', 'systemd-networkd.service', *integrations]
+    if fancontrol_config.active(value):
+        units.append('lanrith-fancontrol.service')
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
         if value['services'].get(feature, {}).get('enabled'):
             units.append(unit)

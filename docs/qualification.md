@@ -13,6 +13,7 @@ package inventory, artifacts and profile.
 | Boot | Owner Secure Boot trust, valid dm-verity, encrypted persistent state, acknowledged offline recovery, read-only-at-rest ESP and bounded updater/blessing write windows |
 | Privilege boundary | Direct root login denied; administrator elevation reauthenticated; root-only controls denied to administrator-before-elevation and every service identity |
 | Service confinement | Live Unbound, Kea, Chrony and networkd identities match their capability, no-new-privileges and seccomp contracts; unused cron, hostname and alternate SSH units remain masked |
+| Fan control (when enabled) | CPU/NIC sensor ownership, calibrated PWM/RPM, full-speed fault/crash fallback, unprivileged loop, sandbox and failed-acceptance checks from [fancontrol.md](fancontrol.md) |
 | Factory | Wrong trust, mismatched payload, ambiguous/mounted target and interrupted installation rejection; read-back |
 | Network | Two unrelated synthetic topologies; explicit administration, default deny, DHCP/RA/DNS, optional services off |
 | Advanced integration | Routing, translation, policy enforcement, discovery, directory, telemetry and acceleration tests for enabled profiles |

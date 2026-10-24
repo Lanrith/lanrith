@@ -13,6 +13,7 @@ import yaml
 
 from .release import canonical, require, ReleaseError
 from . import access as access_rules
+from . import fancontrol_config
 from . import firewall, hardware_config as hardware_policy, intent, integrations, service_plane, routing, authoritative, nat46, nat64, translation, ids, metrics, bindings, runtime_plan, radius, logs, discovery
 
 
@@ -90,7 +91,8 @@ def normalize(value):
     require(isinstance(hostname, str) and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', hostname),
             'Hostname must be a simple DNS label.')
     hardware = value['hardware']
-    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id', 'watchdog'}, {'interfaces'})
+    fields(hardware, {'architecture', 'interfaces', 'boot', 'storage', 'acceleration', 'machine_id', 'watchdog',
+                      'fancontrol'}, {'interfaces'})
     if 'machine_id' in hardware:
         require(isinstance(hardware['machine_id'], str) and
                 re.fullmatch(r'[0-9a-f]{32}', hardware['machine_id']) and hardware['machine_id'] != '0'*32,
@@ -160,6 +162,7 @@ def normalize(value):
         selectors.add((kind, selector))
         require(type(interface.get('mtu', 1500)) is int and 1280 <= interface.get('mtu', 1500) <= 9216,
                 'Unsupported interface MTU.')
+    fancontrol_config.normalize(hardware)
     uplink = value['uplink']
     fields(uplink, {'interface', 'ipv4', 'ipv6', 'addresses', 'gateways', 'upload_shaping', 'masquerade',
                     'downstream_prefix', 'delivery', 'private_services'}, {'interface'})
@@ -483,6 +486,7 @@ def render(value, *, target_facts=None, retained_allocations=None):
     files.update(snmp.render(value))
     files.update(bindings.render(value))
     files.update(hardware_policy.ownership_files(value, target_facts))
+    files.update(fancontrol_config.render(value))
     if value.get('identity', {}).get('policy', {}).get('enabled', False):
         from . import policy_agent
         # This strict JSON is an intermediate compiler input. The finalizer
