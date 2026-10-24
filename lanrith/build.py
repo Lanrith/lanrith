@@ -321,7 +321,12 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     finalize = Path(__file__).parents[1]/'scripts/finalize-image.py'
     require(finalize.is_file(), 'Native final-tree verification is missing.')
     boundary = finalize.with_name('runtime-boundary.py').read_text().split('\ndef main():', 1)[0]
-    (destination/'mkosi.finalize').write_text(boundary+'\n'+finalize.read_text())
+    root_access = finalize.with_name('root-access.py')
+    require(root_access.is_file(), 'Root-access finalization policy is missing.')
+    hardening = root_access.read_text().split('\ndef main():', 1)[0]
+    selected = json.dumps(value['administration']['root_access'])
+    (destination/'mkosi.finalize').write_text(
+        boundary+'\n'+hardening+'\nROOT_ACCESS = '+selected+'\n'+finalize.read_text())
     (destination/'mkosi.finalize').chmod(0o755)
     return {'configuration_sha256': digest, 'platform_version': version,
             'deployment_sequence': sequence, 'image_id': image_id}

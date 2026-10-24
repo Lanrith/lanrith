@@ -127,6 +127,7 @@ if username != 'admin':
                 line = ' '.join(fields)
             lines.append(line)
         path.write_text('\n'.join(lines)+'\n')
+apply_root_access(root, username, ROOT_ACCESS)
 users = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
          for line in (root/'etc/passwd').read_text().splitlines() if line and (row := line.split(':'))}
 expected = json.loads((root/'usr/share/lanrith/service-identities.json').read_text())

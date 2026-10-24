@@ -87,6 +87,38 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ReleaseError):
                 config.write(self.example, output)
 
+    def test_root_access_is_a_build_time_mode_with_a_rootless_variant(self):
+        self.assertEqual(self.example['administration']['root_access'], 'enabled')
+        enabled = config.render(self.example)
+        self.assertIn('etc/sudoers.d/60-lanrith', enabled)
+        self.assertIn('etc/security/authorized_keys', enabled)
+        self.assertNotIn('AllowAgentForwarding no', enabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+
+        value = copy.deepcopy(self.example)
+        value['administration']['root_access'] = 'disabled'
+        disabled = config.render(value)
+        self.assertNotEqual(enabled['usr/share/lanrith/configuration.sha256'],
+                            disabled['usr/share/lanrith/configuration.sha256'])
+        self.assertNotIn('etc/sudoers.d/60-lanrith', disabled)
+        self.assertNotIn('etc/security/authorized_keys', disabled)
+        self.assertIn('PermitRootLogin no', disabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        self.assertIn('AllowAgentForwarding no', disabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        manifest = json.loads(disabled['usr/share/lanrith/administration.json'])
+        self.assertEqual(manifest['root_access'], 'disabled')
+        self.assertFalse(any(path.endswith(('.yaml', '.yml')) for path in disabled))
+
+    def test_rootless_mode_rejects_serial_recovery_and_unknown_values(self):
+        for root_access in (False, 'sometimes'):
+            value = copy.deepcopy(self.example)
+            value['administration']['root_access'] = root_access
+            with self.subTest(root_access=root_access), self.assertRaises(ReleaseError):
+                config.normalize(value)
+        value = copy.deepcopy(self.example)
+        value['administration']['root_access'] = 'disabled'
+        value['administration']['serial'] = {'enabled': True}
+        with self.assertRaisesRegex(ReleaseError, 'Serial recovery requires root access'):
+            config.normalize(value)
+
 
 if __name__ == '__main__':
     unittest.main()

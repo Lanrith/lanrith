@@ -17,7 +17,7 @@ selectors and undeclared management networks fail validation. See the
 | `uplink` | DHCP/static IPv4, RA/static IPv6, gateways, optional IPv4 masquerading and CAKE upload rate |
 | `networks` | Tagged or untagged attachments, gateways, RA, DNS, DHCP pools, optional routed source prefixes and forwarding isolation |
 | `access` | An ordered list of generic routed allow/deny rules; unmatched new connections are denied |
-| `administration` | Management networks, administrator public keys, account, port and optional serial login |
+| `administration` | Management networks, administrator public keys, account, port, root-access mode and optional serial login |
 | `services` | Independent optional feature selection |
 | `extensions` | IDs of separately reviewed integration manifests |
 | `release` | Owner image identity and monotonic `sequence_floor` |
@@ -153,6 +153,16 @@ passphrase; it is never embedded in an image. Record the separate recovery key
 offline before boot acceptance. Serial login is disabled unless enabled with a
 private provisioning hash and a selected console. Kernel and journal output
 must not disclose secrets on that console.
+
+`administration.root_access` defaults to `enabled` for schema-1 compatibility.
+Set it to `disabled` to build an image with no human UID-0 login or elevation
+path. The administrator can still use key-authenticated SSH for unprivileged
+inspection, but cannot use `sudo`, `sudoedit`, `su`, agent-forwarded PAM
+authentication, set-user-ID programs or file-capability executables. Serial
+recovery is incompatible with this mode. Re-enabling root access requires a new
+signed image or verified signed recovery media; no deployed setting can change
+the mode. The owner YAML is consumed during compilation and is never installed
+or read by the deployed image.
 
 Hardware watchdog defaults are `mode: auto`, `device: /dev/watchdog0` and
 `timeout_seconds: 60`. Root and initrd use the same systemd watchdog policy.

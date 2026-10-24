@@ -34,6 +34,14 @@ administrator key on the management path or with the explicitly enabled serial
 recovery passphrase on its selected terminal. It has no `NOPASSWD` fallback or
 shared root password.
 
+An owner can instead set `administration.root_access: disabled`. That choice is
+compiled into the image: root has a locked password and non-login shell, the
+administrator has no sudo membership, SSH agent forwarding is disabled, and
+sudo, su, set-user-ID and file-capability elevation paths are absent. UID 0 and
+narrow capabilities still exist inside the operating-system trusted computing
+base for services that cannot perform their function without them. Recovery or
+re-enabling operator root access requires independently verified signed media.
+
 Network daemons should parse untrusted traffic as non-root identities wherever
 their protocol permits it. A daemon that must retain a capability is part of a
 smaller privileged service boundary for that capability; its effective and

@@ -265,7 +265,8 @@ def normalize(value):
                     1 <= len(rule['ports']) <= 64 and
                     all(type(port) is int and 1 <= port <= 65535 for port in rule['ports']), 'Invalid connection ports.')
     administration = value['administration']
-    fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial', 'host_key_state'},
+    fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial', 'host_key_state',
+                            'root_access'},
            {'networks', 'authorized_keys'})
     host_key_state = administration.setdefault('host_key_state', '/var/lib/lanrith/ssh-host-keys')
     require(isinstance(host_key_state, str) and re.fullmatch(r'/var/lib/[A-Za-z0-9_/-]+', host_key_state) and
@@ -280,6 +281,11 @@ def normalize(value):
             re.fullmatch(r'(ttyS[0-9]+|ttyUSB[0-9]+|ttyAMA[0-9]+|hvc[0-9]+)', serial.get('tty', 'ttyS0')) and
             type(serial.get('timeout_seconds', 300)) is int and 30 <= serial.get('timeout_seconds', 300) <= 3600,
             'Invalid serial administration policy.')
+    root_access = administration.setdefault('root_access', 'enabled')
+    require(root_access in ('enabled', 'disabled'),
+            'Root access must be enabled or disabled.')
+    require(root_access == 'enabled' or not serial['enabled'],
+            'Serial recovery requires root access to be enabled.')
     require(isinstance(administration['networks'], list) and administration['networks'] and
             all(key in networks for key in administration['networks']), 'Declare management networks explicitly.')
     require(isinstance(administration['authorized_keys'], list) and administration['authorized_keys'],
@@ -350,18 +356,22 @@ def render(value, *, target_facts=None, retained_allocations=None):
     value = normalize(value)
     integrations.require_runtime(value, target_facts)
     user = value['administration']['username']
+    root_access = value['administration']['root_access']
+    ssh_policy = ('PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n' +
+                  ('AllowAgentForwarding no\n' if root_access == 'disabled' else '') +
+                  f'AllowUsers {user}\nHostKey {value["administration"]["host_key_state"]}/ssh_host_ed25519_key\n' +
+                  f'Port {value["administration"].get("ssh_port", 22)}\n')
     files = {'etc/hostname': value['hostname'] + '\n',
              'etc/hosts': '127.0.0.1 localhost\n127.0.1.1 '+value['hostname']+'\n'
                  '::1 localhost ip6-localhost ip6-loopback\n',
              'etc/sysctl.d/90-lanrith-routing.conf': firewall.sysctls(),
-             'etc/ssh/sshd_config.d/00-lanrith.conf':
-                 'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n'
-                 f'AllowUsers {user}\nHostKey {value["administration"]["host_key_state"]}/ssh_host_ed25519_key\n'
-                 f'Port {value["administration"].get("ssh_port", 22)}\n',
-             f'home/{user}/.ssh/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n',
-             'etc/security/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n',
-             'etc/sudoers.d/60-lanrith': f'{user} ALL=(ALL:ALL) ALL\nDefaults:{user} env_keep += "SSH_AUTH_SOCK"\n'
-                 f'Defaults:{user} timestamp_type=tty\nDefaults:{user} timestamp_timeout=5\n'}
+             'etc/ssh/sshd_config.d/00-lanrith.conf': ssh_policy,
+             f'home/{user}/.ssh/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n'}
+    if root_access == 'enabled':
+        files['etc/security/authorized_keys'] = '\n'.join(value['administration']['authorized_keys']) + '\n'
+        files['etc/sudoers.d/60-lanrith'] = (
+            f'{user} ALL=(ALL:ALL) ALL\nDefaults:{user} env_keep += "SSH_AUTH_SOCK"\n'
+            f'Defaults:{user} timestamp_type=tty\nDefaults:{user} timestamp_timeout=5\n')
     interfaces, networks = value['hardware']['interfaces'], value['networks']
     for key, interface in interfaces.items():
         kind, selector = next(iter(interface['match'].items()))

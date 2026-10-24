@@ -318,16 +318,20 @@ class Guest:
                             result.stderr[-2048:].decode(errors='replace'))
         return result
 
-    def ready(self, *, healthy=True):
+    def ready(self, *, healthy=True, root_access=True):
         deadline = time.monotonic()+600
         while time.monotonic() < deadline:
             release.require(self.process.poll() is None, 'Guest exited before SSH became ready (status '+
                             str(self.process.returncode)+'): '+self.diagnostic())
             release.require(not re.search(rb'(?:You are in|Entering) emergency mode', self.buffer, re.IGNORECASE),
                             'Installed boot entered emergency mode: '+self.diagnostic())
-            command = ('sudo sh -c '+shlex.quote(
-                'test -s /run/lanrith/boot.json && lanrith-runtime health >/dev/null')
-                if healthy else 'sudo id -u')
+            if healthy and root_access:
+                command = 'sudo sh -c '+shlex.quote(
+                    'test -s /run/lanrith/boot.json && lanrith-runtime health >/dev/null')
+            elif healthy:
+                command = 'test -s /run/lanrith/boot.json && lanrith-runtime status >/dev/null'
+            else:
+                command = 'sudo id -u' if root_access else 'id -u'
             try:
                 if self.ssh(command, success=False, timeout=min(120, max(1, deadline-time.monotonic()))).returncode == 0:
                     return
@@ -354,7 +358,9 @@ class Guest:
 def image(value, base, initrd, work, secret, sequence):
     assembly = work/('image-'+str(sequence))
     identity = build.assembly(value, base, assembly, version='0.1.0', sequence=sequence,
-        certificate=secret/'test.crt', private_key=secret/'test.key', serial_hash=secret/'serial.hash', initrd_base=initrd)
+        certificate=secret/'test.crt', private_key=secret/'test.key',
+        serial_hash=secret/'serial.hash' if value['administration']['serial']['enabled'] else None,
+        initrd_base=initrd)
     build.run(assembly)
     update = work/('update-'+str(sequence))
     build.update_payload(assembly, identity, update)
@@ -603,7 +609,7 @@ def check_state(guest, expected, message):
     release.require(observed == expected, message+' Changed categories: '+', '.join(changed))
 
 
-def boot(guest, *, manual=False, first=False):
+def boot(guest, *, manual=False, first=False, root_access=True):
     guest.start()
     def expect(pattern, answer):
         event = guest.expect_any([pattern, rb'(?:You are in|Entering) emergency mode'])
@@ -632,7 +638,7 @@ def boot(guest, *, manual=False, first=False):
                 raise release.ReleaseError('Manual state boot repeated too many unlock prompts.')
         else:
             expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
-    guest.ready()
+    guest.ready(root_access=root_access)
 
 
 def network_hardening():
@@ -943,6 +949,69 @@ done''')
         guest.close()
 
 
+def qualify_rootless(value, base, initrd, work, secret):
+    """Boot the actual no-root image and prove every general elevation route is absent."""
+    value = json.loads(json.dumps(value))
+    value['hardware']['boot']['tpm'] = 'required'
+    value['administration']['root_access'] = 'disabled'
+    value['administration']['serial'] = {'enabled': False}
+    assembly, _, _ = image(value, base, initrd, work, secret, 20)
+    disk = work/'installed.raw'
+    shutil.copyfile(assembly/'output/lanrith_20.raw', disk)
+    with disk.open('r+b') as stream:
+        stream.truncate(40*1024**3)
+    guest = Guest(work/'guest', secret, disk, tpm=True)
+    try:
+        print('Native VM: booting the rootless-administration profile.', flush=True)
+        boot(guest, first=True, root_access=False)
+        release.require(guest.ssh('id -u', user='root', agent=False, success=False).returncode != 0,
+                        'Rootless image accepted direct root SSH login.')
+        probe = r'''set -eu
+test "$(id -u)" -ne 0
+! id -nG | tr ' ' '\n' | grep -qx sudo
+test "$(awk -F: '$1 == "root" {print $7}' /etc/passwd)" = /usr/sbin/nologin
+for path in /usr/bin/sudo /usr/bin/sudoedit /usr/bin/su /bin/su /etc/sudoers /etc/sudoers.d \
+  /etc/pam.d/sudo /etc/pam.d/sudo-i /etc/pam.d/su /etc/pam.d/su-l \
+  /etc/security/authorized_keys /etc/security/admin.serial-passphrase.hash /root/.ssh; do
+    test ! -e "$path" && test ! -L "$path"
+done
+test ! -S "${SSH_AUTH_SOCK:-/nonexistent}"
+grep -qx 'AllowAgentForwarding no' /etc/ssh/sshd_config.d/00-lanrith.conf
+! find /usr /bin /sbin -xdev -type f -perm /6000 -print -quit | grep -q .
+python3 - <<'PY'
+import os
+from pathlib import Path
+for root in ('/usr', '/bin', '/sbin'):
+    for path in Path(root).rglob('*'):
+        if path.is_file() and not path.is_symlink() and \
+                'security.capability' in os.listxattr(path, follow_symlinks=False):
+            raise SystemExit('file capability remains: '+str(path))
+PY
+for command in 'sudo -n id' 'sudoedit /etc/hostname' 'su -c id' \
+  'systemd-run --quiet --wait /usr/bin/id' 'systemctl restart ssh.service' \
+  'lanrith-runtime accept 20'; do
+    if sh -c "$command" >/dev/null 2>&1; then exit 77; fi
+done
+test ! -e /etc/lanrith/config.yaml
+! find /usr/share/lanrith /usr/lib/lanrith -type f \( -name '*.yaml' -o -name '*.yml' \) -print -quit | grep -q .
+lanrith-runtime status >/dev/null
+mkdir -m 0700 /var/tmp/lanrith-update/rootless-upload-probe
+rmdir /var/tmp/lanrith-update/rootless-upload-probe
+'''
+        result = guest.ssh('sh -c '+shlex.quote(probe), success=False)
+        release.require(result.returncode == 0,
+                        'Rootless administration retained a login or elevation path: '+
+                        result.stderr[-2048:].decode(errors='replace'))
+        print('Native VM: no-root login, sudo, su, privileged-file or source-YAML path remains.', flush=True)
+        return {'profile': 'rootless-administration', 'result': 'pass', 'checks': [
+            'secure-boot', 'dm-verity', 'tpm2-state-encryption', 'recovery-enrollment',
+            'automatic-boot-observation', 'unprivileged-ssh-administration', 'root-login-absent',
+            'elevation-tools-absent', 'privileged-file-paths-absent', 'source-configuration-absent',
+            'unprivileged-upload-staging']}
+    finally:
+        guest.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', type=Path, required=True)
@@ -990,6 +1059,12 @@ def main():
                 report['profiles'].append(qualify(value, base, initrd, profile, secret, manual=manual))
                 print('Native VM profile '+name+' passed.', flush=True)
                 shutil.rmtree(profile)
+            profile = work/'rootless'
+            profile.mkdir(mode=0o700)
+            (secret/'known-hosts').unlink(missing_ok=True)
+            report['profiles'].append(qualify_rootless(value, base, initrd, profile, secret))
+            print('Native VM profile rootless passed.', flush=True)
+            shutil.rmtree(profile)
         report['result'] = 'pass'
     finally:
         report['assessed_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()

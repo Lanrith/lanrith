@@ -40,6 +40,8 @@ access:
     from: home
     to: uplink
 administration:
+  # Set to disabled for an image with no human root login, sudo or su path.
+  root_access: enabled
   networks:
   - home
   authorized_keys:

@@ -56,3 +56,10 @@ Native qualification's `unprivileged-control-boundary` check exercises the
 administrator without a forwarded credential and all installed non-root
 accounts. Root policy mutation is a positive control on a disposable clone,
 not a promise that the running kernel can constrain unrestricted root.
+
+The separate `rootless-administration` native profile compiles
+`administration.root_access: disabled`, boots the signed result, and confirms
+that direct root login, sudo, su, agent forwarding, set-user-ID/set-group-ID
+files, file capabilities and source YAML are absent. Its unprivileged SSH
+session can inspect status and stage upload bytes in its bounded temporary
+directory, but cannot invoke a privileged runtime or service-control operation.

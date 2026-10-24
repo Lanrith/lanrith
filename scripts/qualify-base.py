@@ -29,6 +29,10 @@ CHECKS = {
     'manual-encryption': {'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
         'ssh-pam-administration', 'automatic-boot-observation', 'persistent-state-reboot',
         'optional-services-inactive', 'unprivileged-control-boundary'},
+    'rootless-administration': {'secure-boot', 'dm-verity', 'tpm2-state-encryption', 'recovery-enrollment',
+        'automatic-boot-observation', 'unprivileged-ssh-administration', 'root-login-absent',
+        'elevation-tools-absent', 'privileged-file-paths-absent', 'source-configuration-absent',
+        'unprivileged-upload-staging'},
 }
 
 
@@ -106,7 +110,8 @@ def qualify(directory, project, environment, *, now=None):
     require(re.fullmatch(r'[0-9a-f]{40}', commit) and re.fullmatch(r'[1-9][0-9]*', run_id) and
             re.fullmatch(r'[1-9][0-9]*', attempt), 'Hosted build identity is incomplete.')
     record = {'schema': 1, 'result': 'pass', 'specification': 'SLSA v1.2', 'build_level': 3,
-        'scope': ['x86-64-qemu-uefi-core-tpm2', 'x86-64-qemu-uefi-core-manual-encryption'],
+        'scope': ['x86-64-qemu-uefi-core-tpm2', 'x86-64-qemu-uefi-core-manual-encryption',
+                  'x86-64-qemu-uefi-core-rootless-administration'],
         'source_commit': commit, 'workflow': 'Lanrith/lanrith/.github/workflows/build-base.yml',
         'run_id': run_id, 'run_attempt': attempt, 'runner_environment': 'github-hosted',
         'assessed_at': now.isoformat(), 'assessment': assessment,
