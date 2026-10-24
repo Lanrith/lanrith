@@ -93,6 +93,14 @@ the running system. Operators must isolate the router, preserve remote evidence,
 boot or reinstall from independently verified media, and rotate reusable
 credentials exposed to the device.
 
+Persistent state is mounted `nodev,nosuid,noexec`, and its consumers validate
+their bounded formats and ownership. These controls prevent ordinary persistent
+data from becoming a direct executable or set-ID overlay. They cannot make a
+credential secret again after root read it, or make arbitrary restored state
+trustworthy. Compromise recovery therefore rotates external credentials and the
+SSH host identity, expires dynamic authorization state and migrates only
+explicitly inventoried data.
+
 Secure Boot, signed UKIs, dm-verity and signed update admission still matter:
 they reject untrusted base-image content and provide a known recovery point.
 They do not stop root changing live policy. ESP and firmware boot-selection

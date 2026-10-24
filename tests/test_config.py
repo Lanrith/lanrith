@@ -111,7 +111,21 @@ class ConfigTests(unittest.TestCase):
                          enabled)
         manifest = json.loads(disabled['usr/share/lanrith/administration.json'])
         self.assertEqual(manifest['root_access'], 'disabled')
+        self.assertEqual(manifest['host_key_rotation'], 'retain')
         self.assertFalse(any(path.endswith(('.yaml', '.yml')) for path in disabled))
+
+    def test_host_key_recovery_rotation_is_a_build_time_generation(self):
+        value = copy.deepcopy(self.example)
+        value['administration']['host_key_rotation'] = '0123456789abcdef0123456789abcdef'
+        files = config.render(value)
+        manifest = json.loads(files['usr/share/lanrith/administration.json'])
+        self.assertEqual(manifest['host_key_rotation'], value['administration']['host_key_rotation'])
+        self.assertNotIn('host_key_rotation', files['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        for invalid in ('rotate', '0'*31, 'G'*32, True):
+            changed = copy.deepcopy(value)
+            changed['administration']['host_key_rotation'] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ReleaseError):
+                config.normalize(changed)
 
     def test_rootless_mode_rejects_serial_recovery_and_unknown_values(self):
         for root_access in (False, 'sometimes'):

@@ -67,5 +67,6 @@ def render(value, *, target_facts=None):
     admin = value['administration']
     return {'usr/share/lanrith/health.json': canonical(health(value, target_facts=target_facts)).decode(),
             'usr/share/lanrith/administration.json': canonical(
-                {'schema': 1, **{k: admin[k] for k in ('username', 'host_key_state', 'serial', 'root_access')}}).decode(),
+                {'schema': 1, **{k: admin[k] for k in ('username', 'host_key_state', 'host_key_rotation',
+                                                       'serial', 'root_access')}}).decode(),
             'usr/share/lanrith/hardware.json': canonical(hardware_config.manifest(value)).decode()}

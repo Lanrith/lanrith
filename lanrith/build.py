@@ -149,6 +149,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
     wants.mkdir(parents=True, exist_ok=True)
+    state_mount = wants/'var.mount.d/10-lanrith-state.conf'
+    state_mount.parent.mkdir(parents=True, exist_ok=True)
+    state_mount.write_text('[Mount]\nOptions=nodev,nosuid,noexec\n')
     # systemd-gpt-auto-generator creates the ESP mount dynamically. Keep it
     # read-only and non-executable outside the admitted update/blessing helper.
     # Supply both conventional mount names; only the generated unit is used.

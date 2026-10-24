@@ -72,6 +72,28 @@ candidate must return automatically to the previously accepted entry. Keep the
 matching factory image, public trust, recovery key and previous configuration
 offline. Exercise recovery with populated state before a production cutover.
 
+After any suspected root compromise, do not treat a successful reboot as
+credential recovery. Isolate the router, preserve external evidence, build from
+independently verified inputs, set a fresh `administration.host_key_rotation`,
+and rotate every reusable authority that was readable on the device: directory
+bind, BGP authentication, DNS update/transfer, RADIUS client/proxy, log ingest,
+SNMPv3 and private extension/console credentials. Revoke old values at their
+remote systems before reconnecting the router, distribute the new SSH host
+fingerprint independently, invalidate directory grants/enrollment and RADIUS
+fallback data, and reauthorize devices. Treat forwarded SSH-agent use during
+the compromise window as exposed session authority; remove affected keys from
+the administrator allowlist if its security-key confirmation history is not
+conclusive. Encryption at rest does not undo disclosure after `/var` was
+unlocked.
+
+Restore only explicitly inventoried data. Leases and DNS journals need native
+parser validation; policy history and grants must retain freshness/epoch checks;
+translation allocations must retain unique source mappings; credentials and
+SSH identity must come from the new recovery generation. Never restore update
+inboxes, executable content, service-manager overrides, old enrollment markers
+or a complete `/var` snapshot from the compromised system. Private extension
+state needs an owner-specific migration and withdrawal test.
+
 Initial factory installation verifies media against the certificate embedded
 in the booted verified root, checks matching root identities, excludes the boot
 disk and mounted/in-use devices, and requires the full stable target identity

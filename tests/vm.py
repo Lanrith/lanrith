@@ -481,6 +481,9 @@ test "$(cat /etc/machine-id)" = 0123456789abcdef0123456789abcdef
 test "$(findmnt -n -o FSTYPE /)" = erofs
 findmnt -n -o OPTIONS / | tr , '\\n' | grep -qx ro
 cryptsetup status "$(findmnt -n -o SOURCE /var)" | grep -q 'type:.*LUKS2'
+for option in nodev nosuid noexec; do
+  findmnt -n -o OPTIONS /var | tr , '\n' | grep -qx "$option"
+done
 sha256sum /var/lib/lanrith/ssh-host-keys/ssh_host_ed25519_key.pub \
   /var/lib/lanrith/qualification-state/credentials /var/lib/lanrith/qualification-state/enrollment
 ''' + "python3 - <<'PY'\n" + inspect.getsource(lease_snapshot) + '''

@@ -103,6 +103,9 @@ def health():
             'Offline recovery-key storage is not acknowledged.')
     require('ro' in command(['findmnt', '--noheadings', '--output', 'OPTIONS', '/']).strip().split(','),
             'Root filesystem is not read-only.')
+    state_options = set(command(['findmnt', '--noheadings', '--output', 'OPTIONS', '/var']).strip().split(','))
+    require({'nodev', 'nosuid', 'noexec'} <= state_options,
+            'Persistent state filesystem permits device, set-ID or executable content.')
     # Boot acceptance requires the generated mount policy to be effective, not
     # merely present in the signed root.
     boot_esp(value)

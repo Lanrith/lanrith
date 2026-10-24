@@ -235,6 +235,16 @@ The default is `/var/lib/lanrith/ssh-host-keys`; an owner migrating existing sta
 can select its existing root-owned directory. Every parent must be root-owned
 and protected from writes by other users. An update keeps an existing key.
 
+`administration.host_key_rotation` defaults to `retain`. After a root-compromise
+recovery, set it to a freshly generated 128-bit lowercase hexadecimal value in
+the signed build input. On the first boot of that generation, Lanrith atomically
+replaces the persistent Ed25519 host key before SSH starts and records the
+generation only after the new key and public key are durable. Reusing a value is
+not a new rotation. The generation is not a secret, but it must be unpredictable
+to persistent state prepared before the recovery image is isolated and built.
+Clients must receive and verify the new fingerprint through an independent
+channel.
+
 Extensions cannot overwrite base package binaries. Existing service configuration
 files need an explicit admitted `replaces` entry. Selected health requirements
 activate the corresponding units; unselected optional daemons remain masked,
@@ -263,6 +273,12 @@ CA references to public PEM certificate chains. Only certificates are accepted;
 private keys and arbitrary files are rejected. Trust material and assertions
 are included in the configuration digest. Keep private bindings out of public
 examples and source releases.
+
+Persistent `/var` is mounted `nodev,nosuid,noexec`, and boot health rejects a
+weaker effective mount. State is data, never an executable overlay. Component
+readers still validate ownership, permissions, size and format; the mount flags
+do not make attacker-controlled leases, journals, grants or credentials safe to
+restore.
 
 `health_units` contains shared requirements. An optional
 `health_units_by_feature` map declares requirements for each selected feature.

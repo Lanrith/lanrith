@@ -266,12 +266,15 @@ def normalize(value):
                     all(type(port) is int and 1 <= port <= 65535 for port in rule['ports']), 'Invalid connection ports.')
     administration = value['administration']
     fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial', 'host_key_state',
-                            'root_access'},
+                            'host_key_rotation', 'root_access'},
            {'networks', 'authorized_keys'})
     host_key_state = administration.setdefault('host_key_state', '/var/lib/lanrith/ssh-host-keys')
     require(isinstance(host_key_state, str) and re.fullmatch(r'/var/lib/[A-Za-z0-9_/-]+', host_key_state) and
             all(part not in ('.', '..') for part in Path(host_key_state).parts) and
             not host_key_state.endswith('/'), 'Host keys require a protected persistent state directory.')
+    rotation = administration.setdefault('host_key_rotation', 'retain')
+    require(rotation == 'retain' or isinstance(rotation, str) and re.fullmatch(r'[0-9a-f]{32}', rotation),
+            'Host-key rotation must be retain or a random 128-bit lowercase hexadecimal generation.')
     username = administration.setdefault('username', 'admin')
     require(isinstance(username, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,30}', username) and
             username not in ('root', 'nobody', 'daemon'), 'Invalid administrator account.')

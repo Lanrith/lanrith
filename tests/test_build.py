@@ -73,6 +73,8 @@ class AssemblyTests(unittest.TestCase):
             base.write_bytes(b'synthetic-test-input')
             workspace = root/'work'
             build.assembly(value, base, workspace, version='0.1.0', sequence=12)
+            state = workspace/'mkosi.extra/etc/systemd/system/var.mount.d/10-lanrith-state.conf'
+            self.assertEqual(state.read_text(), '[Mount]\nOptions=nodev,nosuid,noexec\n')
             for mount in ('efi', 'boot'):
                 policy = workspace/f'mkosi.extra/etc/systemd/system/{mount}.mount.d/10-lanrith-read-only.conf'
                 self.assertEqual(policy.read_text(),

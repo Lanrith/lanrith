@@ -90,3 +90,15 @@ changed listeners and enforcement behavior; a plausible heartbeat supplied by
 compromised root is not evidence that live policy remains intact. Qualification
 records queue saturation/eviction behavior, collector outage recovery and
 redaction fixtures without retaining credentials.
+
+Compromise-recovery qualification starts with populated state and credentials,
+then assumes their bytes were stolen. It injects forged, stale, oversized and
+malformed leases, DNS journals, directory grants/history, RADIUS fallback,
+translation allocations, update inboxes, SSH identity and enabled extension
+state. The signed recovery boots with `/var` `nodev,nosuid,noexec`, rotates the
+SSH key using a fresh unpredictable generation, and admits only explicitly
+migrated data. Tests from a separate host confirm that every old directory,
+TSIG, BGP, RADIUS, log, SNMP and extension/console credential is rejected after
+external rotation. Expired grants and unused automation identities remain
+denied. Populated-state upgrade and rollback still pass for the non-compromise
+path; recovery deliberately does not promise to retain exposed authority.
