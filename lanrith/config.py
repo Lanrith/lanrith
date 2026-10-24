@@ -8,13 +8,12 @@ import ipaddress
 import json
 from pathlib import Path
 import re
-import copy
 
 import yaml
 
 from .release import canonical, require, ReleaseError
 from . import access as access_rules
-from . import firewall
+from . import firewall, hardware_config as hardware_policy, intent, integrations, service_plane, routing, authoritative, nat46, nat64, translation, ids, metrics, bindings, runtime_plan, radius, logs, discovery
 
 
 FEATURES = {'dns', 'dhcp4', 'ntp', 'discovery', 'radius', 'policy', 'bgp', 'nat64',
@@ -59,7 +58,8 @@ def load(path):
     return normalize(value)
 
 
-def effective_digest(value, integrations, serial_provisioning_sha256=None):
+def effective_digest(value, integrations, serial_provisioning_sha256=None, *, target_facts=None,
+                     retained_allocations=None):
     """Bind normalized intent, admitted integrations and selected serial material."""
     value = normalize(value)
     require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
@@ -70,14 +70,20 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None):
             (serial_provisioning_sha256 is None or isinstance(serial_provisioning_sha256, str) and
              re.fullmatch(r'[0-9a-f]{64}', serial_provisioning_sha256)),
             'Effective serial provisioning differs from configuration.')
-    return hashlib.sha256(canonical({'configuration': value, 'integrations': integrations,
-                                    'serial_provisioning_sha256': serial_provisioning_sha256})).hexdigest()
+    inputs = {'configuration': value, 'integrations': integrations,
+              'serial_provisioning_sha256': serial_provisioning_sha256}
+    if target_facts is not None:
+        inputs['hardware_ownership'] = hardware_policy.ownership_manifest(value, target_facts)
+    if retained_allocations is not None:
+        inputs['translation_allocations'] = translation.allocate(value, retained_allocations)
+    return hashlib.sha256(canonical(inputs)).hexdigest()
 
 
 def normalize(value):
-    value = copy.deepcopy(value)
+    value = intent.prepare(value)
     fields(value, {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'access', 'services',
-                   'administration', 'release', 'extensions'},
+                   'administration', 'release', 'extensions', 'addressing', 'groups', 'routing',
+                   'translation', 'identity', 'observability', 'runtime'},
            {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'administration'})
     require(type(value['schema']) is int and value['schema'] == 1, 'Unsupported configuration schema.')
     hostname = value['hostname']
@@ -138,7 +144,7 @@ def normalize(value):
     selectors, interface_names = set(), set()
     for key, interface in interfaces.items():
         require(IDENTIFIER.fullmatch(key), 'Invalid interface key.')
-        fields(interface, {'match', 'name', 'mtu'}, {'match'})
+        fields(interface, {'match', 'name', 'mtu', 'owner', 'state'}, {'match'})
         name = interface.setdefault('name', key)
         require(isinstance(name, str) and IFNAME.fullmatch(name) and name not in interface_names,
                 'Invalid or duplicate Linux interface name.')
@@ -155,7 +161,8 @@ def normalize(value):
         require(type(interface.get('mtu', 1500)) is int and 1280 <= interface.get('mtu', 1500) <= 9216,
                 'Unsupported interface MTU.')
     uplink = value['uplink']
-    fields(uplink, {'interface', 'ipv4', 'ipv6', 'addresses', 'gateways', 'upload_shaping', 'masquerade'}, {'interface'})
+    fields(uplink, {'interface', 'ipv4', 'ipv6', 'addresses', 'gateways', 'upload_shaping', 'masquerade',
+                    'downstream_prefix', 'delivery', 'private_services'}, {'interface'})
     require(type(uplink.get('masquerade', False)) is bool, 'Uplink masquerading must be a boolean.')
     require(uplink['interface'] in interfaces, 'Uplink interface is not declared.')
     require(uplink.get('ipv4', 'dhcp') in ('dhcp', 'static', 'disabled') and
@@ -189,7 +196,7 @@ def normalize(value):
     for key, network in networks.items():
         require(IDENTIFIER.fullmatch(key), 'Invalid network key.')
         fields(network, {'interface', 'vlan', 'addresses', 'dhcp4', 'ra', 'dns', 'name', 'namespace',
-                         'forwarding', 'routed_prefixes'},
+                         'forwarding', 'routed_prefixes', 'role', 'ntp', 'additional_subnets'},
                {'interface', 'addresses'})
         require(network['interface'] in interfaces and network['interface'] != uplink['interface'],
                 'Internal networks cannot use the uplink.')
@@ -215,21 +222,13 @@ def normalize(value):
             require(all(address.version != other.version or not address.network.overlaps(other)
                         for other in subnets), 'Internal networks overlap.')
             subnets.append(address.network)
-            require(all(address.version != wan.version or not address.network.overlaps(wan.network)
-                        for wan in wan_addresses), 'Internal and uplink networks overlap.')
+            # On-link downstream delegations are checked with all allocations below.
         for option, default in (('ra', False), ('dns', False), ('forwarding', True)):
             require(type(network.get(option, default)) is bool, 'Network feature flags must be booleans.')
         require(not network.get('ra') or any(address.version == 6 and address.network.prefixlen == 64
                                            for address in parsed), 'SLAAC requires an IPv6 /64.')
         if 'dhcp4' in network:
-            fields(network['dhcp4'], {'pool'}, {'pool'})
-            pool = network['dhcp4']['pool']
-            require(isinstance(pool, list) and len(pool) == 2, 'DHCP pool needs first and last address.')
-            first, last = [ipaddress.IPv4Address(address) for address in pool]
-            ranges = [address for address in parsed if address.version == 4]
-            require(len(ranges) == 1 and first <= last and first in ranges[0].network and last in ranges[0].network and
-                    not first <= ranges[0].ip <= last and first != ranges[0].network.network_address and
-                    last != ranges[0].network.broadcast_address, 'DHCP pool conflicts with its gateway or subnet.')
+            intent.validate_dhcp(network['dhcp4'], network['addresses'])
     routed = []
     for network in networks.values():
         entries = network.get('routed_prefixes', [])
@@ -249,7 +248,8 @@ def normalize(value):
     access = value.setdefault('access', {})
     require(isinstance(access, dict), 'Access configuration must be a mapping.')
     if 'rules' in access or 'default' in access:
-        access_rules.render(access, networks, interfaces, uplink)
+        access_rules.render(intent.access(value), networks, interfaces, uplink,
+                            translated=lambda rule: nat46.supports(value, rule) or nat64.supports(value, rule))
     else:
         # Admit existing owner files without mixing their implicit ordering
         # with the new explicit, first-match policy.
@@ -285,7 +285,7 @@ def normalize(value):
     require(isinstance(administration['authorized_keys'], list) and administration['authorized_keys'],
             'At least one administrator public key is required.')
     for key in administration['authorized_keys']:
-        require(isinstance(key, str) and re.fullmatch(r'(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)) '
+        require(isinstance(key, str) and re.fullmatch(r'(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)|sk-ssh-ed25519@openssh.com) '
                                                      r'[A-Za-z0-9+/=]+(?: [^\r\n]+)?', key), 'Invalid public-key line.')
         parts = key.split(' ')
         try:
@@ -293,6 +293,13 @@ def normalize(value):
             length = int.from_bytes(encoded[:4], 'big')
             require(len(encoded) >= 4 + length and encoded[4:4+length].decode('ascii') == parts[0],
                     'Public-key encoding differs from its type.')
+            if parts[0] == 'sk-ssh-ed25519@openssh.com':
+                remainder = encoded[4+length:]
+                require(len(remainder) >= 41 and remainder[:4] == (32).to_bytes(4, 'big'),
+                        'Invalid security-key public-key encoding.')
+                application_length = int.from_bytes(remainder[36:40], 'big')
+                require(1 <= application_length <= 255 and len(remainder) == 40+application_length and
+                        remainder[40:].startswith(b'ssh:'), 'Invalid security-key application.')
             if parts[0] == 'ssh-ed25519':
                 require(encoded[4+length:8+length] == b'\x00\x00\x00\x20' and len(encoded) == 8+length+32,
                         'Invalid Ed25519 public-key encoding.')
@@ -303,10 +310,13 @@ def normalize(value):
     services = value.setdefault('services', {})
     fields(services, FEATURES)
     for feature, settings in services.items():
-        fields(settings, {'enabled', 'configuration'}, {'enabled'})
+        fields(settings, {'enabled', 'configuration'} | ({'domain', 'upstreams', 'blocked_domains', 'authoritative'}
+               if feature == 'dns' else {'upstreams'} if feature == 'ntp' else
+               {'domain', 'alias_prefix', 'networks', 'additional_sources', 'browse', 'external_publishers',
+                'exclude', 'views', 'default_view'} if feature == 'discovery' else set()), {'enabled'})
         require(type(settings['enabled']) is bool, 'Service enable flags must be booleans.')
         # Native integration modules must be explicitly admitted until their typed compiler is qualified.
-        if settings['enabled'] and feature not in {'dns', 'dhcp4', 'ntp'}:
+        if settings['enabled'] and feature not in {'dns', 'dhcp4', 'ntp', 'discovery'}:
             require(isinstance(settings.get('configuration'), str) and
                     re.fullmatch(r'[a-z][a-z0-9-]{0,47}', settings['configuration']),
                     'Advanced service requires a declared, admitted configuration extension.')
@@ -315,7 +325,7 @@ def normalize(value):
             all(isinstance(item, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,47}', item) for item in extensions) and
             len(extensions) == len(set(extensions)), 'Invalid or duplicate extension identity.')
     for feature, settings in services.items():
-        if settings['enabled'] and feature not in {'dns', 'dhcp4', 'ntp'}:
+        if settings['enabled'] and feature not in {'dns', 'dhcp4', 'ntp', 'discovery'}:
             require(settings['configuration'] in extensions,
                     'Enabled advanced service has no admitted extension declaration.')
     if 'release' in value:
@@ -330,11 +340,15 @@ def normalize(value):
             services.get('dns', {}).get('enabled', False), 'Network DNS requires the DNS service.')
     require(not any('dhcp4' in network for network in networks.values()) or
             services.get('dhcp4', {}).get('enabled', False), 'DHCP pools require the DHCP service.')
+    intent.validate_allocations(value)
+    integrations.validate(value)
+    bindings.validate(value)
     return value
 
 
-def render(value):
+def render(value, *, target_facts=None, retained_allocations=None):
     value = normalize(value)
+    integrations.require_runtime(value, target_facts)
     user = value['administration']['username']
     files = {'etc/hostname': value['hostname'] + '\n',
              'etc/hosts': '127.0.0.1 localhost\n127.0.1.1 '+value['hostname']+'\n'
@@ -355,6 +369,10 @@ def render(value):
         files[f'etc/systemd/network/10-{key}.link'] = (
             f'[Match]\n{match}={selector}\n\n[Link]\nName={interface["name"]}\n'
             f'MTUBytes={interface.get("mtu", 1500)}\n')
+        if interface.get('state') == 'down':
+            files[f'etc/systemd/network/15-{key}-disabled.network'] = (
+                f'[Match]\nName={interface["name"]}\n\n[Link]\nActivationPolicy=always-down\n'
+                'RequiredForOnline=no\n\n[Network]\nLinkLocalAddressing=no\nDHCP=no\nIPv6AcceptRA=no\n')
     wan = interfaces[value['uplink']['interface']]['name']
     uplink = value['uplink']
     dhcp = 'ipv4' if uplink.get('ipv4', 'dhcp') == 'dhcp' else 'no'
@@ -377,19 +395,21 @@ def render(value):
                 f'[NetDev]\nName={network["name"]}\nKind=vlan\n\n[VLAN]\nId={network["vlan"]}\n')
             parents.setdefault(interfaces[network['interface']]['name'], []).append(network['name'])
         text = f'[Match]\nName={network["name"]}\n\n[Network]\n'
-        text += ''.join(f'Address={address}\n' for address in network['addresses'])
+        text += ''.join(f'Address={address}\n' for address in intent.gateway_addresses(network))
         text += 'IPv6AcceptRA=no\nIPv6SendRA=' + ('yes' if network.get('ra') else 'no') + '\n'
         text += 'LinkLocalAddressing=' + ('ipv6' if any(':' in a for a in network['addresses']) else 'no') + '\n'
         text += 'LLMNR=no\nMulticastDNS=no\n'
         if network.get('ra'):
             if network.get('dns'):
-                resolvers = [str(ipaddress.ip_interface(a).ip) for a in network['addresses'] if ':' in a]
+                resolvers = intent.service_addresses(value, 'dns')[1:]
                 text += '\n[IPv6SendRA]\nDNS=' + ' '.join(resolvers) + '\nEmitDNS=yes\n'
             for address in network['addresses']:
                 parsed = ipaddress.ip_interface(address)
                 if parsed.version == 6:
                     text += f'\n[IPv6Prefix]\nPrefix={parsed.network}\n'
-        files[f'etc/systemd/network/40-{key}.network'] = text
+            if 'nat64' in intent.translations(value):
+                text += '\n[IPv6PREF64Prefix]\nPrefix=64:ff9b::/96\nLifetimeSec=1800\n'
+        files[f'etc/systemd/network/40-{key}.network'] = text + routing.static_routes(value, key)
     for parent, vlans in parents.items():
         require(not any(n['name'] == parent for n in networks.values()),
                 'Use tagged networks on a trunk, or an explicitly separate untagged interface.')
@@ -397,24 +417,6 @@ def render(value):
             f'[Match]\nName={parent}\n\n[Network]\nLinkLocalAddressing=no\n' +
             ''.join(f'VLAN={vlan}\n' for vlan in vlans))
     files['etc/nftables.conf'] = firewall.render(value)
-    if value['services'].get('ntp', {}).get('enabled'):
-        text = ('pool 2.pool.ntp.org iburst\ndriftfile /var/lib/chrony/chrony.drift\n'
-                'rtcsync\nmakestep 1 3\ncmdport 0\n')
-        for network in networks.values():
-            for address in network['addresses']:
-                text += f'allow {ipaddress.ip_interface(address).network}\n'
-        files['etc/chrony/chrony.conf'] = text
-    if value['services'].get('dns', {}).get('enabled'):
-        # Address configuration and IPv6 DAD can finish after network.target.
-        # Bind only these explicit addresses before they are ready; health
-        # still requires the declared gateway addresses before acceptance.
-        text = 'server:\n  ip-freebind: yes\n  interface: 127.0.0.1\n  interface: ::1\n  access-control: 0.0.0.0/0 refuse\n  access-control: ::/0 refuse\n'
-        for network in networks.values():
-            if network.get('dns'):
-                for address in network['addresses']:
-                    parsed = ipaddress.ip_interface(address)
-                    text += f'  interface: {parsed.ip}\n  access-control: {parsed.network} allow\n'
-        files['etc/unbound/unbound.conf.d/lanrith.conf'] = text
     if value['services'].get('dhcp4', {}).get('enabled'):
         scopes = []
         for key, network in networks.items():
@@ -422,25 +424,72 @@ def render(value):
                 continue
             address = next(ipaddress.ip_interface(a) for a in network['addresses'] if ':' not in a)
             scopes.append({'id': len(scopes) + 1, 'subnet': str(address.network), 'interface': network['name'],
-                           'pools': [{'pool': ' - '.join(network['dhcp4']['pool'])}],
+                           'pools': [{'pool': pool} for pool in network['dhcp4']['pools']],
+                           'reservations': [{('hw-address' if k == 'mac' else 'ip-address' if k == 'address' else k): v
+                                             for k, v in entry.items()} for entry in network['dhcp4'].get('reservations', [])],
                            'option-data': [{'name': 'routers', 'data': str(address.ip)}] +
-                                          ([{'name': 'domain-name-servers', 'data': str(address.ip)}] if network.get('dns') else [])})
-        files['etc/kea/kea-dhcp4.conf'] = json.dumps({'Dhcp4': {
+                                          ([{'name': 'domain-name-servers', 'data': intent.service_addresses(value, 'dns')[0]}] if network.get('dns') else []) +
+                                          ([{'name': 'ntp-servers', 'data': intent.service_addresses(value, 'ntp')[0]}] if network.get('ntp') else []) +
+                                          ([{'name': 'domain-name', 'data': value['services']['dns']['domain']}]
+                                           if network.get('dns') and value['services']['dns'].get('domain') else [])})
+        dhcp4 = {
             'interfaces-config': {'interfaces': [scope['interface'] for scope in scopes]},
             'lease-database': {'type': 'memfile', 'persist': True, 'name': '/var/lib/kea/kea-leases4.csv'},
-            'valid-lifetime': 3600, 'subnet4': scopes}}, indent=2) + '\n'
-    files['usr/share/lanrith/resolved.json'] = canonical(value).decode()
-    files['usr/share/lanrith/configuration.sha256'] = hashlib.sha256(canonical(value)).hexdigest() + '\n'
+            'valid-lifetime': 3600, 'subnet4': scopes}
+        if value.get('identity', {}).get('radius', {}).get('enabled', False):
+            dhcp4['control-socket'] = {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
+        files['etc/kea/kea-dhcp4.conf'] = json.dumps({'Dhcp4': dhcp4}, indent=2) + '\n'
+    files.update(service_plane.render(value))
+    files.update(authoritative.render(value))
+    files.update(routing.render(value))
+    files.update(nat46.render(value))
+    files.update(nat64.render(value, retained_allocations))
+    files.update(ids.render(value))
+    files.update(metrics.render(value))
+    files.update(radius.render(value))
+    files.update(logs.render(value))
+    files.update(discovery.render(value, retained_allocations))
+    from . import snmp
+    files.update(snmp.render(value))
+    files.update(bindings.render(value))
+    files.update(hardware_policy.ownership_files(value, target_facts))
+    if value.get('identity', {}).get('policy', {}).get('enabled', False):
+        from . import policy_agent
+        # This strict JSON is an intermediate compiler input. The finalizer
+        # consumes and removes it after producing the pinned runtime profile.
+        files['usr/lib/lanrith-build/policy-baseline.json'] = canonical(
+            policy_agent.baseline(value, retained_allocations)).decode()
+        files.update(policy_agent.render(value))
+    for key in value['administration']['networks']:
+        files['etc/ssh/sshd_config.d/00-lanrith.conf'] += ''.join(
+            'ListenAddress '+str(ipaddress.ip_interface(a).ip)+'\n' for a in networks[key]['addresses'])
+    files.update(runtime_plan.render(value, target_facts=target_facts))
+    files['usr/share/lanrith/configuration.sha256'] = rendered_digest(
+        value, target_facts, retained_allocations=retained_allocations) + '\n'
     return files
 
 
-def write(value, directory):
+def rendered_digest(value, target_facts=None, *, retained_allocations=None):
+    inputs = value if target_facts is None else {'configuration': value,
+             'hardware_ownership': hardware_policy.ownership_manifest(value, target_facts)}
+    if retained_allocations is not None:
+        if target_facts is None:
+            inputs = {'configuration': value}
+        inputs['translation_allocations'] = translation.allocate(value, retained_allocations)
+    return hashlib.sha256(canonical(inputs)).hexdigest()
+
+
+def write(value, directory, *, target_facts=None, retained_allocations=None):
     require(not directory.exists() and not directory.is_symlink(), 'Output directory must not exist.')
-    files = render(value)
+    value = normalize(value)
+    files = render(value, target_facts=target_facts, retained_allocations=retained_allocations)
     directory.mkdir(mode=0o700)
     for name, text in files.items():
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-        path.chmod(0o440 if name.startswith('etc/sudoers.d/') else 0o644)
-    return hashlib.sha256(canonical(value)).hexdigest()
+        private_policy = name.startswith('etc/router-policy-agent/') or name.startswith('usr/lib/lanrith-build/')
+        path.chmod(0o600 if private_policy else 0o440 if name.startswith('etc/sudoers.d/') else 0o644)
+        if private_policy:
+            path.parent.chmod(0o700)
+    return rendered_digest(value, target_facts, retained_allocations=retained_allocations)

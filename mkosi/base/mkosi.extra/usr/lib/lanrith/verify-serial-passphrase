@@ -18,7 +18,7 @@ HASH_PATTERN = re.compile(r'scrypt:32768:8:1:([0-9a-f]{32}):([0-9a-f]{64})\n?\Z'
 def permitted_context(environment, policy=None):
     if policy is None:
         try:
-            policy = json.loads(Path('/usr/share/lanrith/resolved.json').read_text())['administration']
+            policy = json.loads(Path('/usr/share/lanrith/administration.json').read_text())
         except (OSError, ValueError, KeyError):
             return False
     serial = policy.get('serial', {})

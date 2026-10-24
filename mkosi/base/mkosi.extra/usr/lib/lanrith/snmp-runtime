@@ -2,6 +2,7 @@
 """SNMP runtime protocol. Private input only on stdin; bounded public output."""
 
 import json
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -23,7 +24,7 @@ try:
     if sys.argv[1:] == ['protocol']:
         print('snmp-runtime-v1')
     elif sys.argv[1:] == ['status']:
-        state = State()
+        state = State(Path(policy['state_directory']), header=policy['credential_header'])
         try:
             state.directory(state.root)
             pending = state.metadata()

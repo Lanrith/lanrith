@@ -80,24 +80,8 @@ def health():
             'Offline recovery-key storage is not acknowledged.')
     require('ro' in command(['findmnt', '--noheadings', '--output', 'OPTIONS', '/']).strip().split(','),
             'Root filesystem is not read-only.')
-    resolved = json.loads(read(Path('/usr/share/lanrith/resolved.json'), 1024 * 1024))
-    units = ['nftables.service', 'ssh.service', 'systemd-networkd.service']
-    units.extend(value.get('integration_health_units', []))
-    for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
-        if resolved['services'].get(feature, {}).get('enabled'):
-            units.append(unit)
-    if resolved['administration']['serial']['enabled']:
-        units.append('lanrith-serial-idle-watchdog.service')
-    for unit in units:
-        require(command(['systemctl', 'is-active', unit]).strip() == 'active', 'Required service is not active.')
-    for network in resolved['networks'].values():
-        arguments = ['ip'] + (['-netns', network['namespace']] if 'namespace' in network else [])
-        rows = json.loads(command(arguments+['-j', 'address', 'show', 'dev', network['name']]))
-        require(len(rows) == 1, 'Required network interface is absent.')
-        observed = {item['local'] for item in rows[0].get('addr_info', [])}
-        import ipaddress
-        require(all(str(ipaddress.ip_interface(address).ip) in observed for address in network['addresses']),
-                'Declared gateway address is absent.')
+    from .boot_health import check
+    check(json.loads(read(Path('/usr/share/lanrith/health.json'), 1024*1024)))
     return value
 
 

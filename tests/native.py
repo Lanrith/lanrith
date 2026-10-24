@@ -64,9 +64,7 @@ for example in ('minimal.yaml', 'segmented.yaml'):
             daemon = subprocess.Popen(['unbound', '-d', '-p', '-c', str(candidate_dns)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             try:
-                expected = {'127.0.0.1', '::1'} | {
-                    str(ipaddress.ip_interface(address).ip) for network in value['networks'].values()
-                    if network.get('dns') for address in network['addresses']}
+                expected = {'127.0.0.1', '::1'} | set(config.intent.service_addresses(value, 'dns'))
                 deadline = time.monotonic()+10
                 while True:
                     sockets = subprocess.run(['ss', '--no-header', '--listening', '--udp', '--tcp', '--numeric',
@@ -117,3 +115,13 @@ with tempfile.TemporaryDirectory(prefix='lanrith-access-native.') as temporary:
     path.write_text(config.render(value)['etc/nftables.conf'])
     subprocess.run(['nft', '--check', '--file', str(path)], check=True)
 print('Both topologies passed native firewall, DNS, DHCP and effective network hardening; advanced generic selectors also parse.')
+
+# Validate generated ordering and executable paths without binding a device.
+from test_hardware_ownership import declaration
+value, facts = declaration()
+with tempfile.TemporaryDirectory(prefix='lanrith-ownership-native.') as temporary:
+    output = Path(temporary)/'root'
+    config.write(value, output, target_facts=facts)
+    unit = output/'usr/lib/systemd/system/lanrith-hardware-ownership.service'
+    subprocess.run(['systemd-analyze', 'verify', '--man=no', str(unit)], check=True)
+print('Dormant hardware ownership unit passed native systemd verification without touching hardware.')

@@ -2,14 +2,93 @@
 """Verify persistent identities and the actual final boot transaction."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import tempfile
 
+
+def finalize_policy(root):
+    """Compile and consume the policy baseline inside an isolated netns."""
+    source = root/'usr/lib/lanrith-build/policy-baseline.json'
+    if not source.exists() and not source.is_symlink():
+        return
+    info = source.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+        raise ValueError('Build-only policy compiler input has unsafe metadata.')
+    for relative in ('usr/bin/router-policy-profile', 'usr/sbin/nft', 'usr/bin/python3'):
+        path = root/relative
+        if not path.is_file() or path.is_symlink():
+            raise ValueError('Policy profile compiler dependency is unavailable.')
+    scratch = root/'run/lanrith-policy-build'
+    if scratch.exists() or scratch.is_symlink():
+        raise ValueError('Policy profile scratch path already exists.')
+    scratch.mkdir(mode=0o700)
+    program = r'''
+import pathlib, subprocess
+root = pathlib.Path('/run/lanrith-policy-build')
+# Loading and listing are separate operations in this same disposable network namespace.
+subprocess.run(['/usr/sbin/nft', '-f', '/etc/nftables.conf'],
+    check=True, stdin=subprocess.DEVNULL, capture_output=True)
+listing = subprocess.run(['/usr/sbin/nft', '-j', 'list', 'ruleset'],
+    check=True, stdin=subprocess.DEVNULL, capture_output=True).stdout
+(root/'ruleset.json').write_bytes(listing)
+(root/'output').mkdir(mode=0o700)
+subprocess.run(['/usr/bin/router-policy-profile',
+    '-baseline', '/usr/lib/lanrith-build/policy-baseline.json',
+    '-ruleset', '/run/lanrith-policy-build/ruleset.json',
+    '-output-directory', '/run/lanrith-policy-build/output'],
+    check=True, stdin=subprocess.DEVNULL)
+'''
+    result = subprocess.run(['unshare', '--net', '--fork', '--', 'chroot', str(root),
+                             '/usr/bin/python3', '-I', '-S', '-c', program],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60,
+                            env={'PATH': '/usr/sbin:/usr/bin'})
+    if result.returncode:
+        raise ValueError('Policy profile compilation failed in its isolated namespace.')
+    output = scratch/'output'
+    expected = {'router-profile.json', 'router-guards.nft', 'router-profile-metadata.json'}
+    if {path.name for path in output.iterdir()} != expected:
+        raise ValueError('Policy profile compiler emitted an unexpected artifact set.')
+    metadata = json.loads((output/'router-profile-metadata.json').read_text())
+    if (set(metadata) != {'schema_version', 'profile_sha256', 'floor_sha256', 'guards_sha256'} or
+            metadata['schema_version'] != 1):
+        raise ValueError('Policy profile metadata is malformed.')
+    profile = (output/'router-profile.json').read_bytes()
+    if not profile.endswith(b'\n') or profile.endswith(b'\n\n'):
+        raise ValueError('Policy profile compiler emitted an ambiguous record terminator.')
+    profile = profile[:-1]
+    guards = (output/'router-guards.nft').read_bytes()
+    for data, key in ((profile, 'profile_sha256'), (guards, 'guards_sha256')):
+        if hashlib.sha256(data).hexdigest() != metadata[key]:
+            raise ValueError('Policy profile artifact differs from its compiler pin.')
+    destination = root/'etc/router-policy-agent/profile'
+    if destination.exists() or destination.is_symlink():
+        raise ValueError('Policy runtime profile destination already exists.')
+    destination.mkdir(mode=0o700, parents=True)
+    (destination/'profile.json').write_bytes(profile)
+    (destination/'profile.json').chmod(0o400)
+    os.replace(output/'router-guards.nft', destination/'guards.nft')
+    (destination/'guards.nft').chmod(0o400)
+    (output/'router-profile.json').unlink()
+    public = root/'usr/share/lanrith/policy-profile-metadata.json'
+    if public.exists() or public.is_symlink():
+        raise ValueError('Policy profile metadata destination already exists.')
+    os.replace(output/'router-profile-metadata.json', public)
+    public.chmod(0o444)
+    shutil.rmtree(scratch)
+    shutil.rmtree(root/'usr/lib/lanrith-build')
+
 root = Path(os.environ['BUILDROOT']).resolve()
 root.chmod(0o755)
-profile = json.loads((root/'usr/share/lanrith/resolved.json').read_text())
+# Assembly embeds the build-owned boundary function in this script. mkosi
+# remounts a finalize script as /work/finalize, without its siblings.
+finalize_policy(root)
+check(root)
+administration = json.loads((root/'usr/share/lanrith/administration.json').read_text())
 installed = json.loads((root/'usr/share/lanrith/installed.json').read_text())
 os_release = root/'usr/lib/os-release'
 lines = os_release.read_text().splitlines()
@@ -20,7 +99,7 @@ branding = {'NAME':'Lanrith','PRETTY_NAME':'Lanrith '+installed['platform_versio
             'LANRITH_DEPLOYMENT_SEQUENCE':str(installed['deployment_sequence'])}
 lines = [line for line in lines if line.partition('=')[0] not in branding]
 os_release.write_text('\n'.join(lines+[key+'='+json.dumps(value) for key,value in branding.items()])+'\n')
-username = profile['administration']['username']
+username = administration['username']
 if username != 'admin':
     if any(line.split(':')[0] == username for line in (root/'etc/passwd').read_text().splitlines()):
         raise ValueError('Administrator account conflicts with a reserved service identity.')

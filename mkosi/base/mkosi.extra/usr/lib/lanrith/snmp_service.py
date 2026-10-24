@@ -25,12 +25,21 @@ FILENAME = 'snmpd.conf'
 
 
 def policy_value(value):
-    if (not isinstance(value, dict) or set(value) != {'schema', 'server', 'username'}
+    if (not isinstance(value, dict) or not {'schema', 'server', 'username'} <= set(value) <=
+            {'schema', 'server', 'username', 'state_directory', 'credential_header'}
             or type(value['schema']) is not int or value['schema'] != 1
-            or value['username'] != 'librenms-router'):
+            or not isinstance(value['username'], str)
+            or re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,31}', value['username']) is None):
         raise SNMPError('SNMP runtime image policy is unsupported.', 76)
     credentials.listener_address(value['server'])
-    return value
+    directory = value.get('state_directory', str(ROOT))
+    if (not isinstance(directory, str) or len(directory) > 256
+            or re.fullmatch(r'/var/lib/[A-Za-z0-9_./-]+', directory) is None
+            or str(Path(directory)) != directory or '..' in Path(directory).parts
+            or Path(directory).is_relative_to(PERSISTENT)):
+        raise SNMPError('SNMP runtime private state path is unsupported.', 76)
+    header = credentials.validate_header(value.get('credential_header', credentials.HEADER))
+    return {**value, 'state_directory': directory, 'credential_header': header}
 
 
 def load_policy():
@@ -43,11 +52,12 @@ def load_policy():
 class State(credential_runtime.State):
     Error = SNMPError
 
-    def __init__(self, root=ROOT, owner=0, group=0):
+    def __init__(self, root=ROOT, owner=0, group=0, *, header=credentials.HEADER):
         super().__init__(root, owner, group)
+        self.header = credentials.validate_header(header)
 
     def validate(self, raw):
-        return credentials.configuration(credentials.parse(raw))
+        return credentials.configuration(credentials.parse(raw, self.header), self.header)
 
     @classmethod
     def names(cls, values):
@@ -56,13 +66,28 @@ class State(credential_runtime.State):
         return values
 
 
-def private_state():
+def protected_ancestors(root):
+    # A protected leaf is insufficient if another account can rename it from
+    # a writable parent and substitute a different root-owned credential store.
+    for parent in root.parents:
+        try:
+            info = parent.stat()
+        except FileNotFoundError:
+            continue
+        if info.st_uid != 0 or not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o022:
+            raise SNMPError('SNMP private state has an unsafe ancestor directory.')
+
+
+def private_state(root=ROOT, *, header=credentials.HEADER):
     """Adopt only the exact legacy root-owned layout, without changing values."""
-    if ROOT.resolve() != ROOT:
+    header = credentials.validate_header(header)
+    if root.resolve() != root:
         raise SNMPError('SNMP state directory contains a symlink.')
-    ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    protected_ancestors(root)
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    protected_ancestors(root)
     with ExitStack() as stack:
-        directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         stack.callback(os.close, directory)
         info = os.fstat(directory)
         # The legacy group's numeric ID may differ in the new image. Mode
@@ -82,7 +107,7 @@ def private_state():
                     or info.st_size > 4097):
                 raise SNMPError('SNMP credential file has unsafe metadata.')
             if info.st_gid != 0:
-                credentials.parse(stream.read(4098))
+                credentials.parse(stream.read(4098), header)
                 os.fchown(stream.fileno(), 0, 0)
                 os.fsync(stream.fileno())
         info = os.fstat(directory)
@@ -90,7 +115,7 @@ def private_state():
             os.fchown(directory, 0, 0)
             os.fchmod(directory, 0o700)
             os.fsync(directory)
-    return State()
+    return State(root, header=header)
 
 
 def persistent_directory():
@@ -144,7 +169,7 @@ class Service(SystemdService):
         return result
 
     def probe(self, value):
-        config = credentials.parse(value)
+        config = credentials.parse(value, self.policy.get('credential_header', credentials.HEADER))
         State(WORK).directory(WORK, create=True)
         with tempfile.TemporaryDirectory(prefix='.acceptance.', dir=WORK) as temporary:
             path = Path(temporary) / 'snmp.conf'
@@ -164,7 +189,7 @@ class Service(SystemdService):
             return result.returncode == 0 and len(value) <= 10 and value.isdigit() and int(value) <= 4294967295
 
     def preflight(self, values):
-        value = credentials.parse(values[FILENAME])
+        value = credentials.parse(values[FILENAME], self.policy.get('credential_header', credentials.HEADER))
         if value['username'] != self.policy['username']:
             raise SNMPError('SNMP request does not match the image-authorized user.')
         if not os.access('/usr/bin/snmpget', os.X_OK):
@@ -195,17 +220,19 @@ class Service(SystemdService):
 
 
 def apply(policy, request):
-    value = credentials.configuration(request)
+    header = policy.get('credential_header', credentials.HEADER)
+    value = credentials.configuration(request, header)
     if request['username'] != policy['username']:
         raise SNMPError('SNMP request does not match the image-authorized user.')
-    state = private_state()
+    state = private_state(Path(policy.get('state_directory', ROOT)), header=header)
     service = Service(policy)
     return Activation(state, service, service.preflight).apply({FILENAME: value})
 
 
 def prepare(policy):
     """ExecCondition: recover before start, or skip the unit when unprovisioned."""
-    state = private_state()
+    header = policy.get('credential_header', credentials.HEADER)
+    state = private_state(Path(policy.get('state_directory', ROOT)), header=header)
     with ExitStack() as stack:
         owned = True
         try:
@@ -222,7 +249,7 @@ def prepare(policy):
         value = state.values([FILENAME])[FILENAME]
         if value is None:
             return False
-        if credentials.parse(value)['username'] != policy['username']:
+        if credentials.parse(value, header)['username'] != policy['username']:
             raise SNMPError('SNMP credentials do not match the image-authorized user.')
         persistent_directory()
         return True

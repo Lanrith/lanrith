@@ -12,7 +12,7 @@ def require(condition, message):
         raise ValueError(message)
 
 require(os.geteuid()==0, 'Host-key provisioning requires root.')
-policy=json.loads(Path('/usr/share/lanrith/resolved.json').read_text())['administration']
+policy=json.loads(Path('/usr/share/lanrith/administration.json').read_text())
 directory=Path(policy['host_key_state'])
 require(directory.is_absolute() and directory.parts[:3]==('/', 'var', 'lib') and '..' not in directory.parts,
         'Invalid host-key state directory.')

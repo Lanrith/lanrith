@@ -142,7 +142,7 @@ def main():
                 'Scan-only evidence must not be deployed in the router filesystem.')
         scan_names = {'alloy', 'prometheus-node-exporter', 'discovery-bridge', 'router-policy-helper',
                       'router-policy-reader', 'router-policy-collector', 'router-policy-check',
-                      'router-policy-status', 'router-policy-recover'}
+                      'router-policy-status', 'router-policy-recover', 'router-policy-profile'}
         require(set(subjects) == scan_names | {'alloy-beyla'}, 'Custom binary scan coverage is incomplete.')
         with tarfile.open(directory/'go-binaries.tar.gz', 'w:gz') as binaries, \
                 tempfile.TemporaryDirectory(prefix='embedded-subject.', dir=directory) as temporary:

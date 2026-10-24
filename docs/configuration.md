@@ -135,12 +135,13 @@ traffic does not gain arbitrary egress. SSH, DNS, DHCP and NTP service units bin
 to successful nftables activation. Replacing a complete firewall through an
 admitted integration also requires qualification of these boundaries.
 
-The current built-in service compiler covers DNS, DHCP and NTP. Advanced
-components remain gated on admitted integrations. Their future typed compilers
-must derive exact listener, peer, namespace, translation and return rules from
-component settings, preserving operator denies through native and translated
-paths. Enabling a package must not grant trust to a cluster, directory or backend.
-Temporary broad permissions remain explicit owner rules.
+The built-in compiler covers DNS, DHCP, NTP, controlled discovery, bounded BGP,
+RADIUS MAC admission, directory policy, NAT64, NAT46, IDS, metrics, log delivery,
+SNMP and VPP ownership. It derives listener, peer, namespace, translation and
+return rules from typed component settings while preserving ordered owner denies
+through native and translated paths. Enabling a package or component grants no
+trust to a cluster, directory or backend. Temporary broad permissions remain
+explicit owner rules.
 
 ## Hardware and optional integrations
 
@@ -164,10 +165,9 @@ opening a watchdog, including during reboot. It does not disarm a watchdog
 already started by firmware or another owner. Qualify watchdog handover and
 recovery on the selected hardware before deployment.
 
-DNS, DHCP and NTP have built-in configuration. Discovery, RADIUS/directory
-policy, FRR, translation, IDS, metrics, logs, SNMP and VPP use integration
-extensions until their typed configuration interfaces are qualified. Merely
-installing their packages does not enable them.
+The shared components above have built-in typed configuration. Private products,
+including a separately admitted console, continue to use integration extensions.
+Merely installing a package or admitting an extension does not enable it.
 
 An extension has `extension.json` and a `root/` directory. Its manifest contains
 `schema`, `id`, `features`, `health_units`, and an exact `files` map of SHA-256,
@@ -184,21 +184,15 @@ Place custom runtime helpers under `/usr/lib/lanrith/integrations/` or an
 owner-specific directory, and integration data under `/etc/` or
 `/usr/share/lanrith/integrations/`.
 
-Optional namespace, translation, OOB and acceleration helpers read the
-owner's `/etc/lanrith/integrations/network-profile.sh`; its settings use the
-`lanrith_` prefix. SNMP reads
-`/etc/lanrith/integrations/snmp-runtime-policy.json`. These files are absent
-from the neutral base and can be supplied by an admitted integration without
-overwriting protected runtime code. PCI binding uses `lanrith_vpp_bdf`,
-`lanrith_vpp_iommu_group`, `lanrith_vpp_linux_interface`,
-`lanrith_vpp_mac_address` and `lanrith_vpp_linux_driver`. There is no default
-NIC model, PCI address or Linux driver. Binding checks the exact function,
+Namespace, translation, OOB and acceleration helpers read compiler-generated
+strict JSON manifests, not owner YAML or shell settings. SNMP reads its generated
+runtime policy and a separately bound protected credential. There is no default
+NIC model, PCI address or Linux driver. PCI binding checks the exact function,
 interface, MAC, expected driver and exclusive IOMMU group before changing
 anything. Shared groups are rejected. `lanrith-vpp-device.service` and
-`verify-vpp-device` retain this ownership boundary; the owner explicitly admits
-the VPP dependency drop-in and its configuration. VPP/DPDK support for a chosen
-NIC still needs qualification. Acceleration devices are separate from declared
-Linux-owned interfaces.
+`verify-vpp-device` retain this ownership boundary. VPP/DPDK support for a chosen
+NIC still needs qualification on that hardware. Acceleration devices are
+separate from Linux-owned interfaces.
 
 Declare both `lanrith-vpp-device.service` and `vpp.service` as selected health
 requirements to unmask that integration. The optional hardware readiness unit
@@ -234,6 +228,23 @@ An extension can declare `identities.users` (`name`, numeric `uid`, numeric
 preserves core accounts, rejects duplicate names/IDs and checks the final native
 registry. Account and sysusers files cannot be supplied as an ordinary overlay.
 Review any ownership conversion of existing state separately.
+
+Private migration inputs may supply an optional `runtime` object. Its
+`credentials` map binds declared credential names to canonical files beneath
+`/var/lib` or `/var/cache`. BIND and FRR use those paths with `LoadCredential`;
+assembly does not read or copy their contents. Other components remain subject
+to their runtime support gates. Without a binding, a credential uses
+`/var/lib/lanrith/credentials/<name>`.
+
+`runtime.service_identities` maps account names to required numeric `uid` and
+`gid`, with optional `home` and `shell`. Assembly checks the admitted base and
+admitted extension account registry, and rejects missing accounts, aliases or
+changed values. These assertions do not create accounts, remap IDs or change
+persistent ownership. `runtime.trust` maps declared `trust/<name>.pem` directory
+CA references to public PEM certificate chains. Only certificates are accepted;
+private keys and arbitrary files are rejected. Trust material and assertions
+are included in the configuration digest. Keep private bindings out of public
+examples and source releases.
 
 `health_units` contains shared requirements. An optional
 `health_units_by_feature` map declares requirements for each selected feature.

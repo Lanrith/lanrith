@@ -25,7 +25,8 @@ class ConfigTests(unittest.TestCase):
             self.assertIn('policy drop;', firewall)
             self.assertIn('chain source_guard', firewall)
             self.assertIn('iifname', firewall)
-            self.assertEqual(json.loads(files['usr/share/lanrith/resolved.json']), value)
+            self.assertNotIn('usr/share/lanrith/resolved.json', files)
+            self.assertEqual(json.loads(files['usr/share/lanrith/health.json'])['schema'], 1)
             for network in value['networks'].values():
                 self.assertIn(network['name'], firewall)
             if example == 'segmented.yaml':
@@ -61,7 +62,6 @@ class ConfigTests(unittest.TestCase):
             lambda value: value['networks']['home']['dhcp4'].update(pool=['192.168.10.1', '192.168.10.200']),
             lambda value: value['services'].update(vpp={'enabled': True}),
             lambda value: value['services'].update(policy={'enabled': True, 'configuration': 'missing'}),
-            lambda value: value['services'].update(dns={'enabled': False}),
             lambda value: value['administration'].update(networks=[]),
             lambda value: value['networks'].update(other=copy.deepcopy(value['networks']['home'])),
             lambda value: value['hardware'].update(boot={'secure_boot': 'false'}),

@@ -77,7 +77,8 @@ def main():
                                      maximum_file=1024*1024*1024, maximum_size=2*1024*1024*1024)
             require(members == {'alloy', 'alloy-beyla', 'prometheus-node-exporter', 'discovery-bridge',
                 'router-policy-helper', 'router-policy-reader', 'router-policy-collector',
-                'router-policy-check', 'router-policy-status', 'router-policy-recover'},
+                'router-policy-check', 'router-policy-status', 'router-policy-recover',
+                'router-policy-profile'},
                 'Retained binary scan coverage is incomplete.')
             for binary in binaries.iterdir():
                 scan = run('govulncheck', '-mode=binary', str(binary), stdout=subprocess.DEVNULL, check=False)

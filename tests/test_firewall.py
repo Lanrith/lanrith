@@ -38,6 +38,13 @@ class FirewallDefaultsTests(unittest.TestCase):
         forward = text[text.index('chain forward'):text.index('chain output')]
         self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index('ct state { new, established, related } accept'))
 
+    def test_unconfigured_interfaces_cannot_inherit_wildcard_owner_permission(self):
+        self.value['access'] = {'rules': [{'action': 'allow', 'from': 'any', 'to': 'any',
+                                        'authorization': 'owner'}]}
+        text = self.firewall()
+        self.assertIn('iifname != { "wan", "lan.10", "lan.20", "lr-services" } drop', text)
+        self.assertLess(text.index('iifname !='), text.index('chain forward'))
+
     def test_disabled_forwarding_blocks_both_directions_before_policy_and_nat(self):
         self.value['networks']['guest']['forwarding'] = False
         self.value['access'] = {'rules': [{'action': 'allow', 'from': 'any', 'to': 'any'}]}
@@ -67,7 +74,7 @@ class FirewallDefaultsTests(unittest.TestCase):
 
     def test_ipv6_control_is_scoped_to_declared_interfaces_and_valid_link_hops(self):
         text = self.firewall()
-        self.assertIn('iifname { "lan.10", "lan.20", "wan" } ip6 hoplimit 255 icmpv6 type', text)
+        self.assertIn('iifname { "lan.10", "lan.20", "wan", "lr-services" } ip6 hoplimit 255 icmpv6 type', text)
         self.assertIn('icmpv6 code 0 accept', text)
         self.assertIn('ip6 daddr ff02::1:ff00:0/104', text)
         self.assertIn('ip6 saddr { ::/128, ::1/128, fe80::/10 } drop', text)
@@ -81,12 +88,14 @@ class FirewallDefaultsTests(unittest.TestCase):
         self.assertNotIn('ip daddr { 172.20.20.1 } udp dport 53 accept', text)
 
     def test_service_egress_is_selected_and_account_scoped(self):
-        text = self.firewall()
-        self.assertIn('meta skuid "unbound" udp dport 53 accept', text)
-        self.assertNotIn('meta skuid "_chrony" udp dport 123 accept', text)
+        files = config.render(self.value)
+        text = files['etc/lanrith/services.nft']
+        self.assertIn('meta skuid "unbound" ip saddr', text)
+        self.assertIn('meta skuid "_chrony" ip saddr', text)
         self.assertNotIn('tcp dport 443 accept', text)
-        self.value['services']['ntp'] = {'enabled': True}
-        self.assertIn('meta skuid "_chrony" udp dport 123 accept', self.firewall())
+        self.assertNotIn('meta skuid "unbound"', files['etc/nftables.conf'])
+        self.value['services']['ntp'] = {'enabled': False}
+        self.assertNotIn('meta skuid "_chrony"', config.render(self.value)['etc/lanrith/services.nft'])
 
     def test_selected_masquerading_includes_routed_sources_without_granting_access(self):
         self.value['networks']['home']['routed_prefixes'] = ['10.30.0.0/16']
