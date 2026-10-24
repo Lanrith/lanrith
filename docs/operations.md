@@ -46,6 +46,16 @@ Either `/boot` or `/efi` is supported, including systemd automounts. Distributio
 automatic update and reboot timers are masked; the approved staging and
 deployment workflow owns those actions.
 
+The ESP is mounted `ro,nodev,nosuid,noexec` during ordinary operation. The
+authenticated staging helper opens a writable mount only while
+`systemd-sysupdate` copies the admitted boot entry; boot blessing does the same
+only while committing a successful counted boot. Each helper flushes the ESP
+and restores the read-only mount before reporting success. Update verification
+and EFI one-shot/default selection occur with the ESP read-only. A failure to
+restore it is a failed operation and a health fault. This protects against
+ordinary services and accidental writes; unrestricted root can remount it and
+remains inside the trusted boundary described in `security-model.md`.
+
 The image deliberately installs no static files in `/usr/lib/sysupdate.d`.
 Invoking `systemd-sysupdate` directly is unsupported: only `lanrith-runtime`
 may generate the temporary definitions after it has authenticated the release,

@@ -65,6 +65,22 @@ class AssemblyTests(unittest.TestCase):
                                  for path in (workspace/'mkosi.extra').rglob('*')))
             self.assertFalse((workspace/'mkosi.extra/etc/sudoers.d/60-lanrith').exists())
 
+    def test_esp_is_read_only_and_non_executable_outside_admitted_mutations(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            workspace = root/'work'
+            build.assembly(value, base, workspace, version='0.1.0', sequence=12)
+            for mount in ('efi', 'boot'):
+                policy = workspace/f'mkosi.extra/etc/systemd/system/{mount}.mount.d/10-lanrith-read-only.conf'
+                self.assertEqual(policy.read_text(),
+                                 '[Mount]\nOptions=umask=0077,ro,nodev,nosuid,noexec\n')
+            blessing = workspace/'mkosi.extra/etc/systemd/system/systemd-bless-boot.service.d/10-lanrith-esp.conf'
+            self.assertEqual(blessing.read_text(),
+                             '[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime bless\n')
+
     @unittest.skipUnless(shutil.which('mkosi'), 'Run in the matching mkosi builder for native configuration checks.')
     def test_pinned_mkosi_accepts_root_and_initrd_configuration(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')

@@ -149,6 +149,16 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
     wants.mkdir(parents=True, exist_ok=True)
+    # systemd-gpt-auto-generator creates the ESP mount dynamically. Keep it
+    # read-only and non-executable outside the admitted update/blessing helper.
+    # Supply both conventional mount names; only the generated unit is used.
+    for mount in ('efi', 'boot'):
+        dropin = wants/f'{mount}.mount.d/10-lanrith-read-only.conf'
+        dropin.parent.mkdir(parents=True, exist_ok=True)
+        dropin.write_text('[Mount]\nOptions=umask=0077,ro,nodev,nosuid,noexec\n')
+    blessing = wants/'systemd-bless-boot.service.d/10-lanrith-esp.conf'
+    blessing.parent.mkdir(parents=True, exist_ok=True)
+    blessing.write_text('[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime bless\n')
     # Factory provisioning owns repartitioning and always supplies the observed
     # disk. Do not let an automatic service select a disk from global labels.
     (wants/'systemd-repart.service').symlink_to('/dev/null')

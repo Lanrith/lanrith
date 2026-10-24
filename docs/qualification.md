@@ -10,7 +10,7 @@ package inventory, artifacts and profile.
 | Packages | Complete inventory/SBOM, source/backport policy, current Debian and custom-source/binary coverage |
 | Assembly | Matching mkosi BaseTrees and initrd; offline signed final tree; identities and native unit transaction |
 | Hardware | x86-64 VM and each claimed physical profile; NIC selectors, disk budgets, TPM/manual encryption, console |
-| Boot | Owner Secure Boot trust, valid dm-verity, encrypted persistent state and acknowledged offline recovery |
+| Boot | Owner Secure Boot trust, valid dm-verity, encrypted persistent state, acknowledged offline recovery, read-only-at-rest ESP and bounded updater/blessing write windows |
 | Privilege boundary | Direct root login denied; administrator elevation reauthenticated; root-only controls denied to administrator-before-elevation and every service identity |
 | Service confinement | Live Unbound, Kea, Chrony and networkd identities match their capability, no-new-privileges and seccomp contracts; unused cron, hostname and alternate SSH units remain masked |
 | Factory | Wrong trust, mismatched payload, ambiguous/mounted target and interrupted installation rejection; read-back |
@@ -69,3 +69,13 @@ It also checks the running SSH master for the rootless unit's
 root-enabled profiles deliberately do not apply that SSH restriction to the
 post-`sudo` session because successful elevation enters the trusted root
 boundary described in `security-model.md`.
+
+Boot-authority qualification inventories firmware `db`/`dbx`, shim and MOK
+trust separately for OVMF and each supported physical profile. It records every
+boot entry and tests unsigned and broadly vendor-signed alternate loaders,
+fallback paths, `BootOrder`, loader default and boot-count manipulation, plus a
+complete older signed UKI/root/verity set. The test confirms that a rejected or
+older boot cannot unlock current protected state or silently become accepted.
+It also observes the ESP read-only during ordinary operation, writable only
+inside staging/blessing, and read-only again after success and every injected
+failure. Source checks for the mount policy are not hardware evidence.

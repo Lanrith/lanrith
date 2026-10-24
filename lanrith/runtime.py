@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from .release import canonical, read, require, ReleaseError
-from .update import accepted_boot, boot_esp, command, promote, stage
+from .update import accepted_boot, boot_esp, command, promote, stage, writable_esp
 from . import factory
 
 
@@ -80,20 +80,31 @@ def health():
             'Offline recovery-key storage is not acknowledged.')
     require('ro' in command(['findmnt', '--noheadings', '--output', 'OPTIONS', '/']).strip().split(','),
             'Root filesystem is not read-only.')
+    # Boot acceptance requires the generated mount policy to be effective, not
+    # merely present in the signed root.
+    boot_esp(value)
     from .boot_health import check
     check(json.loads(read(Path('/usr/share/lanrith/health.json'), 1024*1024)))
     return value
 
 
-def publish():
-    value = health()
+def bless(value=None):
+    """Bless one healthy counted boot through the bounded ESP write window."""
+    value = installed() if value is None else value
     require(command(['systemctl', 'is-active', 'boot-complete.target']).strip() == 'active',
             'Boot acceptance target is not complete.')
     current = Path(command(['bootctl', '--print-stub-path']).strip())
     expected = value['uki_name']
-    if current.name != expected:
-        command(['/usr/lib/systemd/systemd-bless-boot', 'good'])
-    stable = accepted_boot(current, expected, boot_esp(value))
+    esp = boot_esp(value)
+    if current.name != expected and current.exists():
+        with writable_esp(value, esp=esp):
+            command(['/usr/lib/systemd/systemd-bless-boot', 'good'])
+    return accepted_boot(current, expected, esp)
+
+
+def publish():
+    value = health()
+    stable = bless(value)
     boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     require(re.fullmatch(r'[0-9a-f-]{36}', boot_id), 'Invalid boot identity.')
     observation = {'schema': 1, 'accepted': True, 'boot_complete': True, 'boot_id': boot_id,
@@ -127,6 +138,7 @@ def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('health')
+    commands.add_parser('bless')
     commands.add_parser('publish')
     commands.add_parser('status')
     commands.add_parser('initialize')
@@ -141,6 +153,8 @@ def main(arguments=None):
         elif args.command == 'health':
             health()
             print('Local boot health checks passed.')
+        elif args.command == 'bless':
+            print(bless().name)
         elif args.command == 'publish':
             print(json.dumps(publish(), sort_keys=True))
         elif args.command == 'initialize':

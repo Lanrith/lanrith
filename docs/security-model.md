@@ -100,6 +100,14 @@ changes are persistent inputs to recovery and therefore need separate tests;
 the ability to reject one unsigned UKI is not proof that every allowed firmware
 trust path is safe.
 
+During normal userspace operation the ESP is mounted read-only with device,
+set-ID and execution semantics disabled. The authenticated updater and boot
+blessing operation each use a bounded writable window, flush their changes and
+restore the read-only mount before success. Boot-entry authentication and
+one-shot selection happen after that restoration. This is a least-authority
+control for non-root processes and operational errors, not containment of an
+attacker already inside the unrestricted-root boundary.
+
 External telemetry can detect missing heartbeats, policy changes and unexpected
 boot identities. It cannot prove live policy integrity when its only source is
 the compromised router, so release qualification also uses observations made
