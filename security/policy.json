@@ -74,7 +74,7 @@
     },
     "prometheus-node-exporter": {
       "source": "node-exporter",
-      "version": "1.12.1-1+lanrith1"
+      "version": "1.12.1-1+lanrith2"
     },
     "router-policy-collector": {
       "source": "router-policy-collector",
@@ -115,7 +115,7 @@
     "lanrith-tayga-internal": "0.9.6-1",
     "libunbound8": "1.26.2-0+deb13u1",
     "libvppinfra": "25.06-release",
-    "prometheus-node-exporter": "1.12.1-1+lanrith1",
+    "prometheus-node-exporter": "1.12.1-1+lanrith2",
     "router-policy-collector": "0.1.3",
     "router-policy-helper": "0.1.3",
     "router-policy-reader": "0.1.3",

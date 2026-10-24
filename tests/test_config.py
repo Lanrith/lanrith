@@ -25,7 +25,8 @@ class ConfigTests(unittest.TestCase):
             self.assertIn('policy drop;', firewall)
             self.assertIn('chain source_guard', firewall)
             self.assertIn('iifname', firewall)
-            self.assertEqual(json.loads(files['usr/share/lanrith/resolved.json']), value)
+            self.assertNotIn('usr/share/lanrith/resolved.json', files)
+            self.assertEqual(json.loads(files['usr/share/lanrith/health.json'])['schema'], 1)
             for network in value['networks'].values():
                 self.assertIn(network['name'], firewall)
             if example == 'segmented.yaml':
@@ -61,7 +62,6 @@ class ConfigTests(unittest.TestCase):
             lambda value: value['networks']['home']['dhcp4'].update(pool=['192.168.10.1', '192.168.10.200']),
             lambda value: value['services'].update(vpp={'enabled': True}),
             lambda value: value['services'].update(policy={'enabled': True, 'configuration': 'missing'}),
-            lambda value: value['services'].update(dns={'enabled': False}),
             lambda value: value['administration'].update(networks=[]),
             lambda value: value['networks'].update(other=copy.deepcopy(value['networks']['home'])),
             lambda value: value['hardware'].update(boot={'secure_boot': 'false'}),
@@ -86,6 +86,58 @@ class ConfigTests(unittest.TestCase):
             self.assertIn('PermitRootLogin no', (output/'etc/ssh/sshd_config.d/00-lanrith.conf').read_text())
             with self.assertRaises(ReleaseError):
                 config.write(self.example, output)
+
+    def test_root_access_is_a_build_time_mode_with_a_rootless_variant(self):
+        self.assertEqual(self.example['administration']['root_access'], 'enabled')
+        enabled = config.render(self.example)
+        self.assertIn('etc/sudoers.d/60-lanrith', enabled)
+        self.assertIn('etc/security/authorized_keys', enabled)
+        self.assertNotIn('AllowAgentForwarding no', enabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+
+        value = copy.deepcopy(self.example)
+        value['administration']['root_access'] = 'disabled'
+        disabled = config.render(value)
+        self.assertNotEqual(enabled['usr/share/lanrith/configuration.sha256'],
+                            disabled['usr/share/lanrith/configuration.sha256'])
+        self.assertNotIn('etc/sudoers.d/60-lanrith', disabled)
+        self.assertNotIn('etc/security/authorized_keys', disabled)
+        self.assertIn('PermitRootLogin no', disabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        self.assertIn('AllowAgentForwarding no', disabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        ssh = disabled['etc/systemd/system/ssh.service.d/60-lanrith-rootless.conf']
+        self.assertIn('NoNewPrivileges=yes', ssh)
+        self.assertIn('ProtectSystem=strict', ssh)
+        self.assertIn('ReadWritePaths=/var/tmp/lanrith-update', ssh)
+        self.assertNotIn('etc/systemd/system/ssh.service.d/60-lanrith-rootless.conf',
+                         enabled)
+        manifest = json.loads(disabled['usr/share/lanrith/administration.json'])
+        self.assertEqual(manifest['root_access'], 'disabled')
+        self.assertEqual(manifest['host_key_rotation'], 'retain')
+        self.assertFalse(any(path.endswith(('.yaml', '.yml')) for path in disabled))
+
+    def test_host_key_recovery_rotation_is_a_build_time_generation(self):
+        value = copy.deepcopy(self.example)
+        value['administration']['host_key_rotation'] = '0123456789abcdef0123456789abcdef'
+        files = config.render(value)
+        manifest = json.loads(files['usr/share/lanrith/administration.json'])
+        self.assertEqual(manifest['host_key_rotation'], value['administration']['host_key_rotation'])
+        self.assertNotIn('host_key_rotation', files['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        for invalid in ('rotate', '0'*31, 'G'*32, True):
+            changed = copy.deepcopy(value)
+            changed['administration']['host_key_rotation'] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ReleaseError):
+                config.normalize(changed)
+
+    def test_rootless_mode_rejects_serial_recovery_and_unknown_values(self):
+        for root_access in (False, 'sometimes'):
+            value = copy.deepcopy(self.example)
+            value['administration']['root_access'] = root_access
+            with self.subTest(root_access=root_access), self.assertRaises(ReleaseError):
+                config.normalize(value)
+        value = copy.deepcopy(self.example)
+        value['administration']['root_access'] = 'disabled'
+        value['administration']['serial'] = {'enabled': True}
+        with self.assertRaisesRegex(ReleaseError, 'Serial recovery requires root access'):
+            config.normalize(value)
 
 
 if __name__ == '__main__':

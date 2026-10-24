@@ -50,7 +50,7 @@ def selector(value, networks, interfaces, uplink, *, source):
     addresses = None
     if 'addresses' in value:
         entries = [value['addresses']] if isinstance(value['addresses'], str) else value['addresses']
-        bounded_list(entries, 32, 'Declare bounded access addresses.')
+        bounded_list(entries, 256, 'Declare bounded access addresses.')
         addresses = []
         for entry in entries:
             require(isinstance(entry, str), 'Access addresses must be IP addresses or CIDRs.')
@@ -68,11 +68,11 @@ def selector(value, networks, interfaces, uplink, *, source):
 
 
 def endpoints(value, networks, interfaces, uplink, *, source):
-    entries = bounded_list(value, 16, 'Declare bounded access endpoints.') if isinstance(value, list) else [value]
+    entries = bounded_list(value, 256, 'Declare bounded access endpoints.') if isinstance(value, list) else [value]
     return [selector(entry, networks, interfaces, uplink, source=source) for entry in entries]
 
 
-def render(access, networks, interfaces, uplink):
+def render(access, networks, interfaces, uplink, *, translated=None):
     """Return ordered forward rules; mandatory safety and return handling are separate."""
     fields(access, {'default', 'rules'})
     require(access.get('default', 'deny') == 'deny', 'The routed access default must remain deny.')
@@ -83,7 +83,7 @@ def render(access, networks, interfaces, uplink):
     names = set()
     for rule in rules:
         fields(rule, {'action', 'from', 'to', 'protocol', 'ports', 'family', 'states',
-                      'direction', 'tcp_flags', 'icmp_types', 'icmp_codes', 'name', 'description'}, {'action', 'from', 'to'})
+                      'direction', 'tcp_flags', 'icmp_types', 'icmp_codes', 'name', 'description', 'authorization'}, {'action', 'from', 'to'})
         if 'name' in rule:
             name = rule['name']
             require(isinstance(name, str) and 1 <= len(name) <= 96 and
@@ -91,6 +91,8 @@ def render(access, networks, interfaces, uplink):
                     'Access rule names must contain 1–96 printable characters without surrounding whitespace.')
             require(name.casefold() not in names, 'Access rule names must be unique, ignoring case.')
             names.add(name.casefold())
+        require(rule.get('authorization', 'inherit') in ('owner', 'directory', 'inherit'),
+                'Unknown access authorization mode.')
         require(rule['action'] in ('allow', 'deny'), 'Access action must be allow or deny.')
         protocol = rule.get('protocol', 'any')
         require(protocol in ('any', 'tcp', 'udp', 'sctp', 'icmp', 'icmpv6', 'gre', 'esp', 'ah'),
@@ -172,9 +174,14 @@ def render(access, networks, interfaces, uplink):
                     conditions.append('ct state { '+', '.join(states)+' }')
                     if rule.get('direction') is not None:
                         conditions.append('ct direction '+rule['direction'])
-                    conditions.append('accept' if rule['action'] == 'allow' else 'drop')
+                    # A directory match is terminal when no fresh grant is present.
+                    # The chain is populated only by the admitted policy agent.
+                    conditions.append('jump directory_grants' if rule['action'] == 'allow' and
+                        rule.get('authorization') == 'directory' else
+                        'accept' if rule['action'] == 'allow' else 'drop')
                     result.append('  '+' '.join(conditions))
                     emitted += 1
                     require(len(result) <= MAX_GENERATED, 'Access policy exceeds its generated rule bound.')
-        require(emitted, 'An access rule must select at least one supported packet family.')
+        require(emitted or translated is not None and translated(rule),
+                'An access rule must select at least one supported packet family.')
     return result

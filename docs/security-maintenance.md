@@ -84,6 +84,12 @@ approval flag. The admission check enforces full qualification for build changes
 and source checks for documentation-only PRs. Keep stale-review dismissal, last-push approval and up-to-date checks.
 Keep default workflow permissions read-only and shared Actions PR approval off.
 
+The Debian gate maps versioned signed kernel packages to the `linux` advisory
+source. Assembly requires matching `Built-Using` metadata for those payloads.
+Retained assessments read the authenticated kernel package version from existing
+signed source maps. Missing kernel feed data, ambiguous fields or conflicting
+source metadata fail the check.
+
 ## Trace a change
 
 Every candidate records its advisory or qualified-component reasons, base commit,

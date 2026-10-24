@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from lanrith import config, hardware
+from lanrith import config, hardware, hardware_config
 from lanrith.release import ReleaseError
 
 
@@ -79,15 +79,15 @@ class HardwareTests(unittest.TestCase):
             (interface/'address').write_text('02:00:00:00:05:01\n')
             value = {'hardware': {'interfaces': {'edge': {'name': 'port0',
                 'match': {'mac': '02:00:00:00:05:01'}}}}, 'services': {}}
-            hardware.network_status(value, sysfs=root)
+            hardware.network_status(hardware_config.manifest(value), sysfs=root)
             value['hardware']['acceleration'] = {'pci': ['0000:05:00.0'], 'hugepages_mib': 6}
             pages = root/'kernel/mm/hugepages/hugepages-2048kB/nr_hugepages'
             pages.parent.mkdir(parents=True)
             pages.write_text('3\n')
-            hardware.network_status(value, sysfs=root)
+            hardware.network_status(hardware_config.manifest(value), sysfs=root)
             pages.write_text('2\n')
             with self.assertRaisesRegex(ReleaseError, 'hugepage allocation'):
-                hardware.network_status(value, sysfs=root)
+                hardware.network_status(hardware_config.manifest(value), sysfs=root)
 
     def test_acceleration_rejects_duplicate_devices_and_fractional_pages(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')

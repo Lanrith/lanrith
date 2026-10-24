@@ -97,7 +97,7 @@ def main():
             '/scanner -mode=binary /work/node_exporter > /work/exporter-binary.txt; '
             'python3 /work/collect-notices.py go --output /work/exporter-notices.txt')
         inert_package(work/'node_exporter', source/'LICENSE', 'prometheus-node-exporter',
-                      '1.12.1-1+lanrith1', args.output, work/'exporter-notices.txt')
+                      pin['package_version'], args.output, work/'exporter-notices.txt')
         reports['node-exporter'] = {'source_commit': pin['commit'], 'patch_sha256':
                                     file_record(ROOT/'builders/node-exporter/dependencies.patch')['sha256'],
                                     'binary_sha256': {'prometheus-node-exporter':
@@ -127,7 +127,8 @@ def main():
         locked = tomllib.loads((pam/'Cargo.lock').read_text())
         from lanrith import advisories
         queries = advisories.cargo_queries(locked)
-        feed_digest = advisories.assess(queries)
+        diagnostic = work/'pam-rssh-osv.json'
+        feed_digest = advisories.assess(queries, diagnostic=diagnostic)
         shutil.copyfile(ROOT/'scripts/collect-notices.py', pam/'collect-notices.py')
         shutil.copyfile(ROOT/'builders/pam/.dockerignore', pam/'.dockerignore')
         pam_inputs = {key: inputs[key] for key in ('PAM_RSSH_BUILDER_OCI', 'PAM_RSSH_RUST_VERSION',
@@ -154,7 +155,8 @@ def main():
             run('docker', 'rm', container, stdout=subprocess.DEVNULL)
         reports['pam-rssh'] = {'source_commit': commit, 'cargo_lock_sha256': file_record(pam/'Cargo.lock')['sha256'],
                                'advisory_feed_sha256': feed_digest,
-                               'queried_packages': len(queries), 'queries': queries}
+                               'queried_packages': len(queries), 'queries': queries,
+                               'diagnostic': json.loads(diagnostic.read_text())}
         # Recheck the exact component binaries independently of their original release age.
         for package in args.output.glob('*.deb'):
             name = run('dpkg-deb', '--field', str(package), 'Package', capture_output=True, text=True).stdout.strip()

@@ -15,6 +15,15 @@ spec.loader.exec_module(audit)
 
 
 class RetainedSupportTests(unittest.TestCase):
+    def test_legacy_and_phase_b_binary_sets_follow_the_authenticated_inventory(self):
+        components = {'router-policy-helper': {'binary_sha256': {'router-policy-helper': 'a'*64}}}
+        legacy = audit.retained_binary_names(components)
+        self.assertEqual(len(legacy), 10)
+        self.assertNotIn('router-policy-profile', legacy)
+        components['router-policy-helper']['binary_sha256']['router-policy-profile'] = 'b'*64
+        current = audit.retained_binary_names(components)
+        self.assertEqual(current, legacy | {'router-policy-profile'})
+
     def test_an_unsafe_latest_release_cannot_retire_itself_or_an_older_release(self):
         newest = {'result': 'fail', 'scanner_errors': [], 'supported': True, 'platform_version': '1.0.2'}
         older = {'result': 'fail', 'scanner_errors': [], 'supported': True, 'platform_version': '1.0.1'}

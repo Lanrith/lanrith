@@ -2,6 +2,7 @@
   "builder": "docker.io/library/golang@sha256:88750ccdd0f2a77fcc00a14b1a48d6409bd8ddb5d7c2dd6ec0b4a2e916daf9d9",
   "commit": "6044da783597cc3b57aef7580ddcdcff58a4ee99",
   "go_version": "go1.26.10",
+  "package_version": "1.12.1-1+lanrith2",
   "repository": "https://github.com/prometheus/node_exporter.git",
   "scanner": "golang.org/x/vuln/cmd/govulncheck@v1.9.0",
   "tag": "v1.12.1",

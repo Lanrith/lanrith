@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-POLICY = json.loads(Path('/usr/share/lanrith/resolved.json').read_text())['administration']['serial']
+POLICY = json.loads(Path('/usr/share/lanrith/administration.json').read_text())['serial']
 TTY = POLICY.get('tty', 'ttyS0')
 UNIT = 'serial-getty@'+TTY+'.service'
 SERIAL_STATUS = Path('/proc/tty/driver/serial')

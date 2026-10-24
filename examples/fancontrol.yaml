@@ -1,0 +1,52 @@
+# Synthetic router with optional CPU/NIC fan control. Replace the hardware
+# selectors, sensor names, thresholds, fan wiring and administrator public key.
+schema: 1
+hostname: example-router
+hardware:
+  machine_id: 0123456789abcdef0123456789abcdef
+  interfaces:
+    wan: {match: {mac: '02:00:00:00:01:01'}}
+    lan: {match: {mac: '02:00:00:00:01:02'}}
+  fancontrol:
+    enabled: true
+    interval_seconds: 5
+    startup_seconds: 3
+    hysteresis_c: 3
+    sensors:
+      cpu:
+        # Illustrative name: use fancontrol-runtime inspect on your hardware.
+        # All matching packages/cores contribute; the hottest reading wins.
+        hwmon: {name: cpu_sensor}
+        inputs: all
+        minimum_c: 40
+        maximum_c: 80
+      nic:
+        # References hardware.interfaces, rather than a PCI address or driver.
+        # Only hwmon devices belonging to this NIC provide these readings.
+        interface: wan
+        inputs: all
+        minimum_c: 45
+        maximum_c: 85
+    fans:
+      chassis:
+        # Select the actual controller and the output wired to this fan.
+        # If the name repeats, add device: <path reported by inspect>.
+        hwmon: {name: board_fan}
+        pwm: pwm1
+        tachometer: fan1_input
+        minimum_rpm: 500
+        minimum_pwm: 100
+        sensors: [cpu, nic]
+uplink: {interface: wan, ipv4: dhcp, ipv6: ra, masquerade: true}
+networks:
+  home:
+    interface: lan
+    ipv4: 192.168.10.0/24
+    dhcp4: {pools: [192.168.10.100-192.168.10.200]}
+access:
+  rules:
+    - {action: allow, from: home, to: uplink}
+administration:
+  networks: [home]
+  authorized_keys:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFhpcHJoRXhhbXBsZU9ubHlOb3RBVXNlcklkZW50aXR5

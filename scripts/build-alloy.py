@@ -22,6 +22,13 @@ def run(*arguments, **kwargs):
     return subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, **kwargs)
 
 
+def assess_java(queries, output):
+    diagnostics = output/'security-diagnostics'
+    diagnostics.mkdir(exist_ok=True)
+    diagnostic = diagnostics/'java-osv.json'
+    return advisories.assess(queries, diagnostic=diagnostic), diagnostic
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -66,7 +73,7 @@ def main():
             'Java agent runtime dependency coverage is incomplete.')
     java_queries = [{'package': {'ecosystem': 'Maven', 'name': item['name']}, 'version': item['version']}
                     for item in java['dependencies']]
-    java_assessment = advisories.assess(java_queries)
+    java_assessment, java_diagnostic = assess_java(java_queries, args.output)
     feeds = {}
     source_fixes = {}
     for repository in ('grafana/alloy', 'grafana/beyla', 'grafana/opentelemetry-ebpf-instrumentation',
@@ -174,7 +181,9 @@ def main():
     if args.resume:
         for binary in ('alloy-security', 'beyla-security'):
             run(*command[:-6], '/scanner', '-mode=binary', '/work/'+binary)
-    npm_assessment = advisories.assess(advisories.npm_queries(evidence['npm_modules']))
+    npm_queries = advisories.npm_queries(evidence['npm_modules'])
+    npm_diagnostic = args.work/'evidence/npm-osv.json'
+    npm_assessment = advisories.assess(npm_queries, diagnostic=npm_diagnostic)
     beyla_subject = args.output/'alloy-beyla.scan'
     require(file_record(args.work/'beyla-security')['sha256'] == evidence['beyla']['binary_sha256'],
             'Embedded Beyla differs from its independently scanned bytes.')
@@ -235,8 +244,10 @@ def main():
         'upstream_deb_sha256': pin['upstream_deb_sha256'], 'fresh_source_advisories': feeds,
         'source_fix_ancestry': source_fixes,
         'npm_osv_feed_sha256': npm_assessment,
+        'npm_osv_diagnostic': json.loads(npm_diagnostic.read_text()),
         'java_agent': {'sha256': java['sha256'], 'queries': java_queries,
-                       'advisory_feed_sha256': java_assessment},
+                       'advisory_feed_sha256': java_assessment,
+                       'diagnostic': json.loads(java_diagnostic.read_text())},
         'builder_definition_sha256': file_record(definition/'Containerfile')['sha256'],
         'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}))
     if not args.resume:

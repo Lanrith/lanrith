@@ -1,0 +1,88 @@
+{
+  "approval": "Fresh exact-head independent human GitHub review and complete source/package/native qualification are required. Approval automation remains disabled. The final release update record binds the actual approval actor, review ID and validation runs.",
+  "collected_at": "2026-10-24T10:51:14.697548+00:00",
+  "diagnostic_failure": {
+    "error": "Dependency diagnostic path is unsafe.",
+    "failure_log_sha256": "2095fb9e2d32962a2e3158e3e12a40bfca73e4b1185d10fa4ff2a2e353443bf7",
+    "fix": "Create and use the output security-diagnostics directory for the host prebuild assessment. Preserve the strict symlink check and retain failures outside the disposable source workspace.",
+    "root_cause": "The prebuild Java assessment wrote to the worker evidence directory before the worker created it.",
+    "run_id": 40084653007,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40084653007"
+  },
+  "input_changes_against_integrated_main": {
+    "build-inputs.json": {
+      "after_sha256": "ece481f5fd20198c9bf893a511cfcd6fa446628d993fd996743bb4d785efa7e7",
+      "before_sha256": "134f5e8ae7d495df8436337af367b9ba45abfcfec12e623b59f447e9b8124f27"
+    },
+    "builders/alloy/dependencies.patch": {
+      "after_sha256": "08b85b4882e73eef8ea14ed8a1072ee6f2a7e3a11a910d4139dde9814dbf00db",
+      "before_sha256": "08b85b4882e73eef8ea14ed8a1072ee6f2a7e3a11a910d4139dde9814dbf00db"
+    },
+    "builders/alloy/source.json": {
+      "after_sha256": "3652dbeab2d9389ecba86133c979a4d5ab756c97d1691c8d9a2189536ba0fd31",
+      "before_sha256": "a0cb9fe1a379376e2914dd4478fbcf26347acf003d2c894c021d0d25d1397282"
+    },
+    "builders/alloy/ui-dependencies.patch": {
+      "after_sha256": "b4e4b9c13b0f496fee061a6a1341b7e93dd73ba8e823cf648f5058f68f8dc9c7",
+      "before_sha256": "b4e4b9c13b0f496fee061a6a1341b7e93dd73ba8e823cf648f5058f68f8dc9c7"
+    },
+    "builders/build-inputs.lock": {
+      "after_sha256": "353e3430cffb30a78a6482968dc8daf044ad73bc571f861df584c7dc55e49a34",
+      "before_sha256": "c4470b621a24b4555af56bb7fe917f8382ecbc77972c21cb37fa3275410e2089"
+    },
+    "builders/node-exporter/source.json": {
+      "after_sha256": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18",
+      "before_sha256": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18"
+    },
+    "scripts/build-alloy.py": {
+      "after_sha256": "344835e37e930f0f31fe1cc540780e8d05d771d2affa1d61f01ca82571a47b3b",
+      "before_sha256": "e5195927f37c8c040f935340de1672ee1b225c19c1213d91b773929c8970fbf4"
+    },
+    "security/audit-debian-vulnerabilities.py": {
+      "after_sha256": "609c4dfd178e4f5e5a247ee848e4a3464abc28b33d3768b9c03c348046e25612",
+      "before_sha256": "fbbfef9e3fa1ff5c920fd8257e812870316379f8627a9da2994991423df48cdf"
+    },
+    "security/policy.json": {
+      "after_sha256": "bf0f5028e94db843d17995f9280f9f3f6697e29468b617378310b9735db1d567",
+      "before_sha256": "cccad73612bee0145ef67ecc6533317a7d262d006f44ef7993dd762aa6d6dd90"
+    },
+    "tests/test_alloy_diagnostics.py": {
+      "after_sha256": "704bfbda3ffd2c3ae06653e9b0d4455f185eb49e9f4eb9b31faa29af72b59bda",
+      "before_sha256": null
+    }
+  },
+  "integrated_main": "8d2261863bf885c9e4dfcf372a82aded87c54de7",
+  "integrated_pull_request": "https://github.com/Lanrith/lanrith/pull/13",
+  "kind": "security-remediation-integration",
+  "prior_evidence": {
+    "brotli": "https://github.com/Lanrith/lanrith/releases/tag/audit-brotli-resolution-20261024T091913Z",
+    "kernel_coverage": "https://github.com/Lanrith/lanrith/releases/tag/audit-kernel-source-coverage-20261024T101819Z",
+    "undici": "https://github.com/Lanrith/lanrith/releases/tag/audit-undici-resolution-20261024T070631Z"
+  },
+  "prior_security_head": "77d45f440e56becd880e87131bf269308b77023a",
+  "production_qualified": false,
+  "reason": "Main advanced with Phase B/fan control while the security remediation was being qualified. Preserve that complete merge and its additional Chai, tinyrainbow, Go directive and node-exporter package fixes; compose the signed Brotli snapshot and Alloy local revision without reverting main. The Phase B release exposed a Java diagnostic directory lifecycle failure before compilation.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "validation": {
+    "actionlint": "pass",
+    "java_assessment_sha256": "a695960dbd857a99b1fa5950f6b69013974aef100c8b9b4c2dbc4fe8c1fc42e9",
+    "java_diagnostic_sha256": "91a4caaaf842d10d3c5e9d3a1ff6cfb1fbf0616c1079f80843747e6d1e0df590",
+    "native_checks": "Required in fresh complete CI qualification.",
+    "npm_audit_sha256": "f4b0105b5abdc1a1b37b1e1f16fecf56bb8c2819ba2bf0976182b4c9050afcec",
+    "npm_vulnerabilities": {
+      "critical": 0,
+      "high": 0,
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "total": 0
+    },
+    "source_and_workflow_checks": "pass",
+    "test_log_sha256": "1a9749dd3c0e8f549d60efc06901830242803e6cb79cdedc682fffe0db59bd0c",
+    "tests_passed": 427,
+    "tests_run": 438,
+    "tests_skipped": 11,
+    "whitespace": "pass"
+  }
+}

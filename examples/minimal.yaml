@@ -40,6 +40,10 @@ access:
     from: home
     to: uplink
 administration:
+  # Set to disabled for an image with no human root login, sudo or su path.
+  root_access: enabled
+  # After root-compromise recovery, set host_key_rotation to a fresh random
+  # 32-character lowercase hexadecimal generation; the default retains the key.
   networks:
   - home
   authorized_keys:

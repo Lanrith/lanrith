@@ -7,9 +7,10 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 
 from .release import canonical, read, require, ReleaseError
-from .update import accepted_boot, boot_esp, command, promote, stage
+from .update import accepted_boot, boot_esp, command, promote, stage, writable_esp
 from . import factory
 
 
@@ -26,7 +27,29 @@ def status():
         require(observation.stat().st_uid==0 and not observation.stat().st_mode & 0o022,
                 'Boot observation is not protected.')
         boot=json.loads(read(observation,65536))
-    return {key:value[key] for key in ('image_id','platform_version','deployment_sequence')} | {'boot':boot}
+    return {key:value[key] for key in ('image_id','platform_version','deployment_sequence',
+                                       'configuration_sha256')} | {'boot':boot}
+
+
+def telemetry():
+    """Emit a replay-identifiable heartbeat for the authenticated remote sink."""
+    value = status()
+    boot = value['boot']
+    require(isinstance(boot, dict) and set(boot) == {'schema', 'accepted', 'boot_complete', 'boot_id',
+            'image_id', 'platform_version', 'deployment_sequence', 'selected_entry'} and
+            boot['schema'] == 1 and boot['accepted'] is True and boot['boot_complete'] is True and
+            boot['image_id'] == value['image_id'] and boot['platform_version'] == value['platform_version'] and
+            boot['deployment_sequence'] == value['deployment_sequence'] and
+            re.fullmatch(r'[0-9a-f-]{36}', boot['boot_id']) and
+            isinstance(boot['selected_entry'], str), 'Accepted boot observation is unavailable.')
+    require(re.fullmatch(r'[0-9a-f]{64}', value['configuration_sha256']),
+            'Installed configuration identity is malformed.')
+    return {'schema': 1, 'event': 'lanrith-heartbeat', 'boot_id': boot['boot_id'],
+            'selected_entry': boot['selected_entry'], 'image_id': value['image_id'],
+            'platform_version': value['platform_version'],
+            'deployment_sequence': value['deployment_sequence'],
+            'configuration_sha256': value['configuration_sha256'],
+            'monotonic_ns': time.monotonic_ns()}
 
 
 def installed():
@@ -80,36 +103,34 @@ def health():
             'Offline recovery-key storage is not acknowledged.')
     require('ro' in command(['findmnt', '--noheadings', '--output', 'OPTIONS', '/']).strip().split(','),
             'Root filesystem is not read-only.')
-    resolved = json.loads(read(Path('/usr/share/lanrith/resolved.json'), 1024 * 1024))
-    units = ['nftables.service', 'ssh.service', 'systemd-networkd.service']
-    units.extend(value.get('integration_health_units', []))
-    for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
-        if resolved['services'].get(feature, {}).get('enabled'):
-            units.append(unit)
-    if resolved['administration']['serial']['enabled']:
-        units.append('lanrith-serial-idle-watchdog.service')
-    for unit in units:
-        require(command(['systemctl', 'is-active', unit]).strip() == 'active', 'Required service is not active.')
-    for network in resolved['networks'].values():
-        arguments = ['ip'] + (['-netns', network['namespace']] if 'namespace' in network else [])
-        rows = json.loads(command(arguments+['-j', 'address', 'show', 'dev', network['name']]))
-        require(len(rows) == 1, 'Required network interface is absent.')
-        observed = {item['local'] for item in rows[0].get('addr_info', [])}
-        import ipaddress
-        require(all(str(ipaddress.ip_interface(address).ip) in observed for address in network['addresses']),
-                'Declared gateway address is absent.')
+    state_options = set(command(['findmnt', '--noheadings', '--output', 'OPTIONS', '/var']).strip().split(','))
+    require({'nodev', 'nosuid', 'noexec'} <= state_options,
+            'Persistent state filesystem permits device, set-ID or executable content.')
+    # Boot acceptance requires the generated mount policy to be effective, not
+    # merely present in the signed root.
+    boot_esp(value)
+    from .boot_health import check
+    check(json.loads(read(Path('/usr/share/lanrith/health.json'), 1024*1024)))
     return value
 
 
-def publish():
-    value = health()
+def bless(value=None):
+    """Bless one healthy counted boot through the bounded ESP write window."""
+    value = installed() if value is None else value
     require(command(['systemctl', 'is-active', 'boot-complete.target']).strip() == 'active',
             'Boot acceptance target is not complete.')
     current = Path(command(['bootctl', '--print-stub-path']).strip())
     expected = value['uki_name']
-    if current.name != expected:
-        command(['/usr/lib/systemd/systemd-bless-boot', 'good'])
-    stable = accepted_boot(current, expected, boot_esp(value))
+    esp = boot_esp(value)
+    if current.name != expected and current.exists():
+        with writable_esp(value, esp=esp):
+            command(['/usr/lib/systemd/systemd-bless-boot', 'good'])
+    return accepted_boot(current, expected, esp)
+
+
+def publish():
+    value = health()
+    stable = bless(value)
     boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     require(re.fullmatch(r'[0-9a-f-]{36}', boot_id), 'Invalid boot identity.')
     observation = {'schema': 1, 'accepted': True, 'boot_complete': True, 'boot_id': boot_id,
@@ -143,6 +164,8 @@ def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('health')
+    commands.add_parser('bless')
+    commands.add_parser('telemetry')
     commands.add_parser('publish')
     commands.add_parser('status')
     commands.add_parser('initialize')
@@ -157,6 +180,10 @@ def main(arguments=None):
         elif args.command == 'health':
             health()
             print('Local boot health checks passed.')
+        elif args.command == 'bless':
+            print(bless().name)
+        elif args.command == 'telemetry':
+            print(json.dumps(telemetry(), sort_keys=True, separators=(',', ':')))
         elif args.command == 'publish':
             print(json.dumps(publish(), sort_keys=True))
         elif args.command == 'initialize':

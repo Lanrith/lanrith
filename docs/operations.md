@@ -46,6 +46,21 @@ Either `/boot` or `/efi` is supported, including systemd automounts. Distributio
 automatic update and reboot timers are masked; the approved staging and
 deployment workflow owns those actions.
 
+The ESP is mounted `ro,nodev,nosuid,noexec` during ordinary operation. The
+authenticated staging helper opens a writable mount only while
+`systemd-sysupdate` copies the admitted boot entry; boot blessing does the same
+only while committing a successful counted boot. Each helper flushes the ESP
+and restores the read-only mount before reporting success. Update verification
+and EFI one-shot/default selection occur with the ESP read-only. A failure to
+restore it is a failed operation and a health fault. This protects against
+ordinary services and accidental writes; unrestricted root can remount it and
+remains inside the trusted boundary described in `security-model.md`.
+
+The image deliberately installs no static files in `/usr/lib/sysupdate.d`.
+Invoking `systemd-sysupdate` directly is unsupported: only `lanrith-runtime`
+may generate the temporary definitions after it has authenticated the release,
+identified the mounted verified-root graph, and selected the inactive slots.
+
 Staging also requires the running slot to be the explicitly accepted persistent
 default. Accept a healthy candidate before staging another update, so its
 previously accepted fallback cannot be overwritten prematurely.
@@ -56,6 +71,41 @@ and recovery enrollment. Only then accept the deployment as default. A failed
 candidate must return automatically to the previously accepted entry. Keep the
 matching factory image, public trust, recovery key and previous configuration
 offline. Exercise recovery with populated state before a production cutover.
+
+After any suspected root compromise, do not treat a successful reboot as
+credential recovery. Isolate the router, preserve external evidence, build from
+independently verified inputs, set a fresh `administration.host_key_rotation`,
+and rotate every reusable authority that was readable on the device: directory
+bind, BGP authentication, DNS update/transfer, RADIUS client/proxy, log ingest,
+SNMPv3 and private extension/console credentials. Revoke old values at their
+remote systems before reconnecting the router, distribute the new SSH host
+fingerprint independently, invalidate directory grants/enrollment and RADIUS
+fallback data, and reauthorize devices. Treat forwarded SSH-agent use during
+the compromise window as exposed session authority; remove affected keys from
+the administrator allowlist if its security-key confirmation history is not
+conclusive. Encryption at rest does not undo disclosure after `/var` was
+unlocked.
+
+Restore only explicitly inventoried data. Leases and DNS journals need native
+parser validation; policy history and grants must retain freshness/epoch checks;
+translation allocations must retain unique source mappings; credentials and
+SSH identity must come from the new recovery generation. Never restore update
+inboxes, executable content, service-manager overrides, old enrollment markers
+or a complete `/var` snapshot from the compromised system. Private extension
+state needs an owner-specific migration and withdrawal test.
+
+The signed image places hard memory, process and descriptor ceilings on its
+DNS, DHCP, NTP, directory-policy and translation services. Exhausting a ceiling
+is an availability event, never an authorization fallback: firewall defaults
+and directory terminal-deny behavior remain installed while the affected
+service restarts or stays failed. Update subprocesses also have bounded
+deadlines and report only the public tool name. Durable policy and translation
+writers flush a complete temporary file before replacement, so an exhausted
+filesystem retains the last complete record or no new record. These controls
+do not qualify storage exhaustion by themselves. Before production, run the
+candidate-specific resource, malformed-state and clock campaign in
+`qualification.md` and retain its external alarms in the signed evidence
+bundle.
 
 Initial factory installation verifies media against the certificate embedded
 in the booted verified root, checks matching root identities, excludes the boot
@@ -87,3 +137,19 @@ the old accepted fallback. For evidence-key rotation, review the new public
 certificate separately. Revoke compromised artifact digests in the reviewed
 revocation policy and publish a fresh signed assessment. Do not silently fall
 back to an older vulnerable release when admission fails.
+
+Seal a completed security campaign only after its report and evidence are
+final. Prepare the strict `campaign.json` binding described in
+`qualification.md`, retain the evaluation key outside the campaign workspace,
+and run:
+
+```sh
+python3 scripts/evidence-bundle.py seal /absolute/path/to/campaign \
+  --key /independent/evaluation.key
+python3 scripts/evidence-bundle.py verify /absolute/path/to/campaign \
+  --certificate /independent/evaluation.crt
+```
+
+Do not edit the bundle after sealing. A correction is a new campaign ID and
+seal, not an overwritten manifest or an exception recorded outside the signed
+inventory.
