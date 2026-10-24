@@ -17,6 +17,18 @@ from lanrith.release import ReleaseError
 
 
 class UpdatePlanTests(unittest.TestCase):
+    def test_no_static_transfer_definition_can_bypass_the_authenticated_planner(self):
+        definitions = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/sysupdate.d'
+        self.assertFalse(definitions.exists() and any(definitions.glob('*.transfer')))
+        value = self.plan()
+        generated = update.transfers(value, Path('/var/lib/lanrith/update-inbox/10'), Path('/efi'))
+        self.assertEqual(set(generated), {'51-verity-sig.transfer', '52-verity.transfer',
+                                          '53-root.transfer', '59-uki.transfer'})
+        self.assertTrue(all('MatchPattern=l_@v_' in generated[name]
+                            for name in generated if name != '59-uki.transfer'))
+        self.assertTrue(all('Path=/dev/vda' in text for name, text in generated.items()
+                            if name != '59-uki.transfer'))
+
     @unittest.skipUnless(os.geteuid() == 0, 'Requires root-owned metadata in the native builder.')
     def test_admission_directory_flush_failure_prevents_disk_staging(self):
         for fail_at in (None, 'destination', 'parent'):

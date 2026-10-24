@@ -46,6 +46,11 @@ Either `/boot` or `/efi` is supported, including systemd automounts. Distributio
 automatic update and reboot timers are masked; the approved staging and
 deployment workflow owns those actions.
 
+The image deliberately installs no static files in `/usr/lib/sysupdate.d`.
+Invoking `systemd-sysupdate` directly is unsupported: only `lanrith-runtime`
+may generate the temporary definitions after it has authenticated the release,
+identified the mounted verified-root graph, and selected the inactive slots.
+
 Staging also requires the running slot to be the explicitly accepted persistent
 default. Accept a healthy candidate before staging another update, so its
 previously accepted fallback cannot be overwritten prematurely.
