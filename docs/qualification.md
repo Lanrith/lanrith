@@ -102,3 +102,14 @@ TSIG, BGP, RADIUS, log, SNMP and extension/console credential is rejected after
 external rotation. Expired grants and unused automation identities remain
 denied. Populated-state upgrade and rollback still pass for the non-compromise
 path; recovery deliberately does not promise to retain exposed authority.
+
+The final campaign is staged as one directory containing `campaign.json`,
+`report.md`, `harness/` and `evidence/`. The campaign binding names the exact
+source commit, owner configuration, effective configuration, factory release,
+local patch and lab certificate digests; firmware, Secure Boot variables, disk
+and TPM baselines; every update candidate and disposable clone; deviations and
+required report/harness/oracle paths. Run `scripts/evidence-bundle.py seal` with
+a separate evaluation key, then verify with an independently obtained
+certificate. Verification recomputes every member and rejects missing, extra,
+altered, linked, noncanonical or wrong-authority bundles. The signing key and
+trusted certificate are not evidence supplied by the tested router.

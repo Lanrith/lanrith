@@ -124,3 +124,19 @@ the old accepted fallback. For evidence-key rotation, review the new public
 certificate separately. Revoke compromised artifact digests in the reviewed
 revocation policy and publish a fresh signed assessment. Do not silently fall
 back to an older vulnerable release when admission fails.
+
+Seal a completed security campaign only after its report and evidence are
+final. Prepare the strict `campaign.json` binding described in
+`qualification.md`, retain the evaluation key outside the campaign workspace,
+and run:
+
+```sh
+python3 scripts/evidence-bundle.py seal /absolute/path/to/campaign \
+  --key /independent/evaluation.key
+python3 scripts/evidence-bundle.py verify /absolute/path/to/campaign \
+  --certificate /independent/evaluation.crt
+```
+
+Do not edit the bundle after sealing. A correction is a new campaign ID and
+seal, not an overwritten manifest or an exception recorded outside the signed
+inventory.
