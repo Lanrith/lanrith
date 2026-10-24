@@ -92,37 +92,30 @@ Java and upstream-source advisory checks supplement Go and Debian coverage.
 The SBOM records these dependency graphs; package notices retain upstream
 licenses, including any reviewed correction for an omitted archive notice.
 
-Daily proposals refresh immutable Debian snapshots, qualified components and
-supported toolchain patches. Upstream source candidates appear in
-`docs/upstream-proposals.json`; their patches and behavior need review before
-the selected source revision changes. Proposals do not merge themselves or
-grant security exceptions. A source branch that is no longer supported blocks
-the resolver until its migration is reviewed.
+Security-only proposals run every six hours across Lanrith and its two component
+repositories. They select authenticated fixes on existing supported patch lines,
+preserve checksum and signature verification, and record the advisory, exact
+input changes and policy revision. Native source upgrades and workflow or policy
+changes require human review. Upstream source candidates in
+`docs/upstream-proposals.json` remain review proposals.
 
-The Debian proposal uses the current UTC hour so security fixes do not wait for
-the next day's snapshot. Missing archive metadata blocks the proposal. For a
-focused security update, use `scripts/refresh-inputs.py --debian-only --snapshot
-YYYYMMDDTHHMMSSZ`; this retains component and toolchain selections. Future and
-backwards snapshot proposals are rejected. The build still authenticates the
-archive signatures and assesses the actual installed package inventory before
-an image can be published.
+A separate restricted App inspects the actual PR bytes and fresh GitHub
+qualification results. The initial rollout is report-only. Once the pilot is
+verified, both the protected policy and repository flag must enable commit-bound
+approval. Neither App bypasses protection. See [security maintenance](security-maintenance.md)
+for setup, rollout, validation evidence and audit verification.
 
-The proposal job uses a GitHub App installed only on this repository, with
-Contents and Pull requests read/write access and no protection bypass. Store
-its numeric App ID as `LANRITH_UPDATE_APP_ID` and its existing private key as
-`LANRITH_UPDATE_APP_PRIVATE_KEY` in the `lanrith-updates` environment. Restrict
-that environment to protected `main`; it contains no image-signing authority.
-The action requests a short-lived token for this repository only. App-authored
-proposals trigger normal PR checks and still need an independent review.
-Keep default workflow permissions read-only and GitHub's shared option to
-create and approve PRs disabled. Missing App credentials block proposals
-clearly; they do not weaken protection or silently skip security updates.
+Release assets include the merged PR, exact successful validation attempts and
+commit-bound approvals. The publisher stages a draft, seals it as an immutable
+prerelease, verifies its source tag and every asset digest, then promotes it to
+stable. A separate attested publication record binds the released bytes to that
+history. Actions artifacts are temporary one-day handoffs; audit records and
+release assets remain in immutable releases.
 
-Admission also requires complete current scanner coverage, an inventory-bound
-successful assessment within 24 hours, no selected revoked digest, and passing
-native and SLSA qualification. Retained releases are rescanned independently.
-Missing success after 48 hours triggers the watchdog. Unavailable or malformed
-advisory data fails closed; it is not a clean scan.
+Admission requires complete scanner coverage, inventory-bound evidence within
+24 hours, no selected revoked digest, and passing native and SLSA qualification.
+The watchdog alerts on the latest maintenance failure and scan age above 18 hours.
+Unavailable or malformed advisory data blocks approval and publication.
 
 Debian packages resolve from the reviewed immutable archive snapshot and use
 the authenticated archive's actual source versions for backport checks. Custom

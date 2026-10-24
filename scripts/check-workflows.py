@@ -21,6 +21,16 @@ for path in (root/'.github/workflows').glob('*.yml'):
         handoff = next(step for step in jobs['attest']['steps'] if step.get('id') == 'cache-download')
         assert handoff['with']['artifact-ids'] == '${{ needs.packages.outputs.cache-artifact-id }}', path.name
         assert "needs.build.outputs.production-qualified == 'true'" in handoff['if'], path.name
+    if path.name == 'package-check.yml':
+        report = next(s for s in value['jobs']['build']['steps']
+                      if s.get('name') == 'Retain small qualification reports, including on failure')
+        # The privileged VM/storage work tree contains private authorities and
+        # root-owned directories. Upload only the flat public report directory.
+        assert report['if'] == 'always()', path.name
+        assert set(report['with']['path'].splitlines()) == {
+            '${{ runner.temp }}/lanrith-output/*.json',
+            '${{ runner.temp }}/lanrith-output/*.txt'}, 'Qualification reports must not traverse the privileged work tree'
+        assert report['with']['retention-days'] == 1, path.name
     if path.name == 'consumer.yml':
         call = value[True]['workflow_call']
         assert call['inputs']['signing-profile'] == {'type': 'string', 'default': 'protected'}, path.name
@@ -45,7 +55,10 @@ for path in (root/'.github/workflows').glob('*.yml'):
     for name, job in value.get('jobs', {}).items():
         assert job.get('cache-mode') in (None, 'none', 'read', 'write-only'), path.name
         if name in ('attest', 'sign', 'publish'):
-            assert 'runs-on' in job and job['runs-on'] == 'ubuntu-24.04', path.name
+            if 'uses' in job:
+                assert job['uses'] == './.github/workflows/publish-release.yml' and path.name == 'build-base.yml', path.name
+            else:
+                assert job.get('runs-on') == 'ubuntu-24.04', path.name
         if name == 'attest':
             assert 'actions/checkout@' not in str(job) and 'setup-go@' not in str(job), path.name
         for step in job.get('steps', []):
@@ -63,4 +76,26 @@ for path in (root/'.github/workflows').glob('*.yml'):
                         step.get('if') == "steps.cache-bundle.outcome == 'success'", path.name
                 else:
                     raise AssertionError('Implicit cache restore/save is not allowed: '+path.name)
+    if path.name == 'security-review.yml':
+        assert 'pull_request_target' not in text and 'pull_request:' not in text, path.name
+        for job_name in ('inspect', 'admission', 'approve', 'finalize'):
+            job = value['jobs'][job_name]
+            checkouts = [s for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@')]
+            assert checkouts and all(s['with'].get('repository') == '${{ job.workflow_repository }}' and
+                s['with'].get('ref') == '${{ job.workflow_sha }}' and s['with'].get('persist-credentials') is False
+                for s in checkouts), 'Reviewer must execute only its reviewed workflow source'
+        assert {'approve', 'archive'} <= set(value['jobs']['finalize']['needs']), 'Merge gate must wait for durable approval evidence'
+        approval = value['jobs']['approve']
+        assert approval['environment'] == 'lanrith-review' and "outputs.mode == 'enforce'" in approval['if'], path.name
+        assert "LANRITH_SECURITY_APPROVALS_ENABLED == 'true'" in approval['if'], path.name
+        assert approval['permissions'] == {'contents': 'read'}, path.name
+    if path.name == 'cleanup-artifacts.yml':
+        assert value['jobs']['archive']['if'] == "needs.plan.outputs.has-artifacts == 'true'", 'Empty cleanup must not generate audit releases'
+        upload = next(s for s in value['jobs']['plan']['steps'] if s.get('id') == 'upload')
+        assert upload['if'] == "steps.plan.outputs.has-artifacts == 'true'", 'Empty cleanup must not upload its own artifacts'
+    if path.name == 'security-proposal.yml':
+        assert set(value['jobs']['publish']['needs']) == {'resolve', 'archive'}, 'PR publication must wait for immutable proposal evidence'
+        assert value['jobs']['archive']['needs'] == 'resolve', 'Proposal archive must precede the publishing credential'
+    if path.name in ('archive-evidence.yml', 'publish-release.yml'):
+        assert '--draft' in text and '--draft=false' in text and '--clobber' not in text.replace('# No overwrite or --clobber path is available, including on retries.', ''), path.name
 print('Workflow trust boundaries verified.')

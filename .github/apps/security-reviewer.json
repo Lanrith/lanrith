@@ -1,0 +1,15 @@
+{
+  "name": "Lanrith Security Reviewer",
+  "description": "Independent, policy-bound security update review. No source write or protection bypass.",
+  "url": "https://github.com/Lanrith/lanrith",
+  "public": false,
+  "default_permissions": {
+    "actions": "read",
+    "checks": "write",
+    "contents": "read",
+    "metadata": "read",
+    "pull_requests": "write"
+  },
+  "default_events": [],
+  "hook_attributes": {"active": false}
+}

@@ -132,7 +132,7 @@ def _advisory_details(identities):
     return details, complete
 
 
-def assess(queries, *, diagnostic=None):
+def report(queries, *, diagnostic=None):
     require(isinstance(queries, list) and 0 < len(queries) <= 1000, 'Invalid dependency advisory query set.')
     query_data = json.dumps(queries, sort_keys=True, separators=(',', ':')).encode()
     base = {'schema': 1, 'service': 'OSV querybatch', 'query_count': len(queries),
@@ -183,6 +183,14 @@ def assess(queries, *, diagnostic=None):
                                   'advisory_ids': sorted({item['id'] for item in findings}),
                                   'advisories': advisory_details, 'advisory_details_complete': details_complete,
                                   'finding_count': len(findings), 'incomplete_query_indexes': incomplete})
-    require(valid and not findings and not incomplete,
-            'Dependencies have unresolved advisories or incomplete coverage.')
-    return response_sha256
+    require(valid and not incomplete, 'Dependency advisory coverage is incomplete or malformed.')
+    grouped = [{'query': query, 'advisories': [v['id'] for v in result.get('vulns', [])]}
+               for query, result in zip(queries, results) if result.get('vulns')]
+    return {'schema': 1, 'feed_sha256': response_sha256,
+            'queries': queries, 'results': results, 'findings': grouped}
+
+
+def assess(queries, *, diagnostic=None):
+    value = report(queries, diagnostic=diagnostic)
+    require(not value['findings'], 'Dependencies have unresolved advisories.')
+    return value['feed_sha256']

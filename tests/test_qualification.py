@@ -45,7 +45,9 @@ class QualificationTests(unittest.TestCase):
             'test': 'factory-slot-expansion', 'initial_partitions': 4, 'expanded_partitions': 8}))
         workflows = {}
         for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
-                     '.github/workflows/check.yml', '.github/workflows/restore-cache.yml'):
+                     '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
+                     '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
+                     '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'):
             path = project/name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('synthetic workflow fixture')

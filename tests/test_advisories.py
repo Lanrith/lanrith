@@ -65,6 +65,24 @@ class AdvisoryTests(unittest.TestCase):
                              {'fixed': '1.0.1'})
             self.assertEqual(record.stat().st_mode & 0o777, 0o600)
 
+    def test_report_keeps_findings_available_to_the_retained_release_scanner(self):
+        queries = [{'package': {'ecosystem': 'npm', 'name': 'synthetic'}, 'version': '1.0.0'}]
+        response = {'results': [{'vulns': [{'id': 'OSV-SYNTHETIC-1'}]}]}
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(json.dumps(response).encode())):
+            value = advisories.report(queries)
+        self.assertEqual(value['findings'], [{'query': queries[0], 'advisories': ['OSV-SYNTHETIC-1']}])
+        self.assertEqual(len(value['feed_sha256']), 64)
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(json.dumps(response).encode())), \
+                self.assertRaises(ReleaseError):
+            advisories.assess(queries)
+
+    def test_report_rejects_malformed_or_paginated_coverage_instead_of_known_findings(self):
+        for response in ({'results': [{'vulns': [{'id': False}]}]},
+                         {'results': [{'next_page_token': 'more'}]}):
+            with self.subTest(response=response), patch('urllib.request.urlopen',
+                    return_value=io.BytesIO(json.dumps(response).encode())), self.assertRaises(ReleaseError):
+                advisories.report([{'commit': 'a'*40}])
+
     def test_advisory_detail_failure_is_recorded_without_leaking_transport_details(self):
         queries = [{'package': {'ecosystem': 'npm', 'name': 'synthetic'}, 'version': '1.0.0'}]
         response = {'results': [{'vulns': [{'id': 'OSV-SYNTHETIC-1'}]}]}

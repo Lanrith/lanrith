@@ -152,7 +152,17 @@ def main():
                 'python3', '/implementation/scripts/alloy-worker.py', '--work', '/work',
                 '--definition', '/implementation/builders/alloy']
     if not args.resume:
-        run(*command)
+        try:
+            run(*command)
+        except subprocess.CalledProcessError:
+            # custom-packages owns a temporary source tree. Copy only diagnostic
+            # data out before its context manager removes the failed worker tree.
+            diagnostics = args.output/'security-diagnostics'
+            diagnostics.mkdir(exist_ok=True)
+            for path in (args.work/'evidence').glob('*'):
+                if path.is_file() and not path.is_symlink() and path.suffix in ('.json', '.txt', '.stderr') and path.stat().st_size <= 8*1024*1024:
+                    shutil.copyfile(path, diagnostics/path.name)
+            raise
     evidence = json.loads((args.work/'evidence/result.json').read_text())
     require(evidence['result'] == 'pass' and evidence['source_commit'] == pin['commit'] and
             evidence['binary_sha256'] == file_record(args.work/'alloy-security')['sha256'] and

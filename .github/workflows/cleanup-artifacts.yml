@@ -1,0 +1,104 @@
+name: Clean completed Actions handoffs
+on:
+  schedule:
+    - cron: '11 * * * *'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+cache-mode: none
+concurrency:
+  group: completed-artifact-cleanup
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      has-artifacts: ${{ steps.plan.outputs.has-artifacts }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - id: plan
+        run: python3 tools/scripts/security-updates.py cleanup --output "$RUNNER_TEMP/cleanup-record.json"
+      - id: upload
+        if: steps.plan.outputs.has-artifacts == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cleanup-plan
+          path: ${{ runner.temp }}/cleanup-record.json
+          if-no-files-found: error
+          retention-days: 1
+  archive:
+    needs: plan
+    if: needs.plan.outputs.has-artifacts == 'true'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.plan.outputs.artifact-id }}
+      topic: cleanup
+  apply:
+    needs: [plan, archive]
+    outputs:
+      result-id: ${{ steps.result.outputs.artifact-id }}
+    if: vars.LANRITH_ARTIFACT_CLEANUP_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact-id }}
+          path: plan
+          merge-multiple: true
+      - name: Delete only the already archived, rechecked temporary artifacts
+        run: |
+          PYTHONPATH=tools python3 - <<'PY'
+          from pathlib import Path
+          from automation import cleanup,evidence
+          cleanup.execute(evidence.read(Path('plan/cleanup-record.json')),
+              progress=lambda value: evidence.write(Path('result/cleanup-record.json'), value))
+          PY
+      - id: result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cleanup-result
+          path: result/cleanup-record.json
+          if-no-files-found: ignore
+          retention-days: 1
+  archive-result:
+    needs: apply
+    if: always() && needs.apply.outputs.result-id != ''
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.apply.outputs.result-id }}
+      topic: cleanup-result

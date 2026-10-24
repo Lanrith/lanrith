@@ -87,7 +87,9 @@ def qualify(directory, project, environment, *, now=None):
             'The build platform lacks a complete requirement assessment.')
     workflows = assessment.get('reviewed_workflows', {})
     require(set(workflows) == {'.github/workflows/build-base.yml', '.github/workflows/release.yml',
-                              '.github/workflows/check.yml', '.github/workflows/restore-cache.yml'},
+                              '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
+                              '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
+                              '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'},
             'The reviewed workflow set is incomplete.')
     require(all(file_record(project/name)['sha256'] == expected for name, expected in workflows.items()),
             'A build workflow changed after its platform requirement assessment.')
