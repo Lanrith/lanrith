@@ -1,0 +1,99 @@
+name: Archive maintenance evidence
+on:
+  workflow_call:
+    inputs:
+      artifact-id:
+        required: true
+        type: string
+      topic:
+        required: true
+        type: string
+    outputs:
+      release-tag:
+        description: Exact verified immutable archive tag, including its producing attempt
+        value: ${{ jobs.publish.outputs.tag }}
+permissions:
+  contents: read
+cache-mode: none
+jobs:
+  attest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          path: evidence
+          merge-multiple: true
+      - name: Check the bounded evidence envelope without executing it
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path('evidence')
+          files=list(root.iterdir())
+          assert 0 < len(files) <= 20
+          assert all(p.is_file() and not p.is_symlink() and p.name in ('update-record.json','proposed-inputs.tar.gz','input-evidence.tar.gz','cleanup-record.json','publication-verification.json') and 0 < p.stat().st_size <= 32*1024**2 for p in files)
+          for p in files:
+              if p.suffix=='.json': assert json.loads(p.read_text())['schema']==1
+          PY
+      - id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: evidence/*
+      - name: Preserve the offline verification bundle
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" evidence/evidence.intoto.jsonl
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: attested-maintenance-${{ inputs.topic }}-${{ github.run_attempt }}
+          path: evidence/*
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: attest
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TOPIC: ${{ inputs.topic }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.attest.outputs.artifact-id }}
+          path: evidence
+          merge-multiple: true
+      - id: publish
+        name: Publish an append-only audit release
+        run: |
+          [[ "$TOPIC" =~ ^(proposal|decision|cleanup|cleanup-result|publication)$ ]]
+          tag="audit-$TOPIC-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --draft --prerelease --latest=false --title "Maintenance $TOPIC evidence" \
+            --notes "Attested maintenance evidence for Actions run $GITHUB_RUN_ID, attempt $GITHUB_RUN_ATTEMPT." evidence/*
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          python3 - <<'PYVERIFY'
+          import hashlib,json,os,pathlib,subprocess
+          repo=os.environ['GITHUB_REPOSITORY']
+          assert repo in ('Lanrith/lanrith','Lanrith/discovery-bridge','Lanrith/router-policy-agent')
+          tag='audit-'+os.environ['TOPIC']+'-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']
+          published=json.loads(subprocess.run(['gh','api','repos/'+repo+'/releases/tags/'+tag],check=True,capture_output=True,text=True).stdout)
+          expected={}
+          for path in pathlib.Path('evidence').iterdir():
+              assert path.is_file() and not path.is_symlink()
+              with path.open('rb') as stream: expected[path.name]='sha256:'+hashlib.file_digest(stream,'sha256').hexdigest()
+          assert published.get('immutable') is True and not published['draft'] and published['prerelease']
+          assert {asset['name']:asset['digest'] for asset in published['assets']}==expected
+          PYVERIFY
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"

@@ -4,26 +4,28 @@
   "component_releases": {
     "discovery-bridge": {
       "files": {
-        "discovery-bridge_0.1.0_amd64.deb": "a723598e01b779d53e8edc545f1a590e4424135c671697f64281ee31ef315102",
-        "release.json": "73961a1fef4f57c3ef325ef7ed5856a20abc82f14578bd04178272e9311f91ae"
+        "discovery-bridge_0.1.1_amd64.deb": "3f250028cdd91bc6387b4f320792980596b2be48250f4757a9d7e4caf173b844",
+        "release.json": "6e6a26c2cd158fb86938f94836e471bf3b0cc3e6396120247640a941f023186a",
+        "update-record.json": "57b152e7f1c66dbec9a30e1bf4f29c0d416f1ffd22a513d492e8bf5abb42660d"
       },
       "repository": "Lanrith/discovery-bridge",
-      "source_commit": "d32680a5ba00bbea5e999c2e0e88fe74793583b6",
-      "tag": "v0.1.0",
-      "workflow_commit": "d32680a5ba00bbea5e999c2e0e88fe74793583b6"
+      "source_commit": "cc26cb5a15505f2c8af832afb2c1d118d1cfe0a6",
+      "tag": "v0.1.1",
+      "workflow_commit": "cc26cb5a15505f2c8af832afb2c1d118d1cfe0a6"
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "816f9172ea0217bcf4728f3b50b9a4b05bd6b33da28bac2f6fc0574b818b174d",
-        "router-policy-collector_0.1.2_amd64.deb": "f47585c82d84b2edd5dd2a8ce19133882dd537104e7bb40be3abdad0bbd84c20",
-        "router-policy-helper_0.1.2_amd64.deb": "d9144fe65265a15b1d3de845e0a5bc92f1edf908995de3ad8414b4c6a116540d",
-        "router-policy-reader_0.1.2_amd64.deb": "88df40fc36462b3840ea4c3eba745dbcb137a88be4b9bd23949648c12b63b6c4",
-        "security.txt": "a80224713684e78c409a3dc7f54aa866b1c90fd7c332bd0fa46a4d0de1fa93bb"
+        "component-release.json": "641a0f164e6e09b74c507db9d166d8ad58e3189f737803b307145c2b739e4683",
+        "router-policy-collector_0.1.3_amd64.deb": "98e49d1af771ae5dc58632265c1c18c9d9dfcfc67f665fec9a2fee31f82a9428",
+        "router-policy-helper_0.1.3_amd64.deb": "10aa67585b0b7e93bf59e47fe32a5b2b88a52d88fabbff36bffc27d98771a110",
+        "router-policy-reader_0.1.3_amd64.deb": "60b5919f3ba89c1e0857eabfc809873e77c12a7e7d0044d9761670028ca21640",
+        "security.txt": "4dda556990083e2e842a06ae6278f207d3147baf4d6c5bd9c2b71b85a8d4abdf",
+        "update-record.json": "4be5ad0d4cb043395cd2612a78df58094a9bcbf5c75e7b91bbcd3ad2e7efe8ed"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "821cce8935b24b0d682d4776b22688fbdde1fd41",
-      "tag": "v0.1.2",
-      "workflow_commit": "821cce8935b24b0d682d4776b22688fbdde1fd41"
+      "source_commit": "7f7aac51abd1f99fe0f27b9b500adf1fdb9b2d55",
+      "tag": "v0.1.3",
+      "workflow_commit": "7f7aac51abd1f99fe0f27b9b500adf1fdb9b2d55"
     }
   },
   "custom_package_inputs": {
@@ -34,27 +36,27 @@
     "builders/alloy/patches/github.com_burningalchemist_sql_exporter.patch": "b97a4ee85a12055205cd232b2b6b4ec8b83079a4d2a891a96a20d3cbfe235cec",
     "builders/alloy/patches/github.com_grafana_snowflake-prometheus-exporter.patch": "94fd8d639043bbbcae3880190c02d39542c92074cae0afab735455bde17eb8ba",
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
-    "builders/alloy/source.json": "28fe1c280a3f6aaaaa84a197208e232779a18f19750148ce860b4431d1cc1d00",
-    "builders/alloy/ui-dependencies.patch": "12bd0cf639d82f128f364743a0873f2fab9357534d630449ce09e342fc698206",
-    "builders/build-inputs.lock": "d1e6d19f8f1fc55eb5ecd5e7035d54063370c8ecf5f25b983cb6b22a37f8517c",
+    "builders/alloy/source.json": "a0cb9fe1a379376e2914dd4478fbcf26347acf003d2c894c021d0d25d1397282",
+    "builders/alloy/ui-dependencies.patch": "54b5eed98bcbad0398db27edd21c82c8474929a921b2ce3e8aa5baa402304927",
+    "builders/build-inputs.lock": "c4470b621a24b4555af56bb7fe917f8382ecbc77972c21cb37fa3275410e2089",
     "builders/mkosi/Containerfile": "55e4e902a27db01837d7f88a69d4ad8e53887c4f93c08b0de0982e2795a40736",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
-    "builders/node-exporter/source.json": "dafa25364dffccd9b4f575920fc26d1d09419d6a02524533ae06b1de3a800f97",
+    "builders/node-exporter/source.json": "ab58d411f964a4ed672a536a1a95c706c05e08cbee4f6747eda1ad0479922177",
     "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",
     "builders/pam/Containerfile": "5c65522d02b1062c5ea61441aee839f9d59f1f97d1b3eea795abb0d98e2e531f",
     "builders/patches/GHSA-rc9p-89wj-mx7h.patch": "331f3464663b277a29bdd924d9385672355d68e313d799889aa89ce0803414bb",
     "builders/tayga-source.lock": "47fe031be8568eb3db5751b366c88108cdf9adce3b32ff4d928536093e71d6dc",
     "builders/tayga/Containerfile": "7907f28a5146ce1319147f2c7ed6d9e8f1cfa84c654eecd1344536b1967fcb89",
-    "builders/unbound-source.lock": "50570574c939e538a95c30304acf6bb5b68ef694133c76077d656d5bfa3bd7d7",
+    "builders/unbound-source.lock": "5288ab6c4997873ba550f9bab3dca2ca67d8a7bdd8d1ee16a829b7d15f6be887",
     "builders/unbound/Containerfile": "5ab04367ffcdfaccbf631b09a17de6a3b42dc55f892a8c2358536e4de0e02289",
     "builders/vpp-source.lock": "aff9ec73e3c1f47e0cc968fe70eca5825c4658d0a724268ccce387401ba1f55f",
     "builders/vpp/Containerfile": "8e83ccd74bd7c747a3429e7fd76f685f3f15218bbd48ebab55fca270957b25fa"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261016T100000Z",
+  "debian_snapshot": "20261023T140000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "8f835d0dd6ca7fb6884eb209ce33bb627b847765c4da8e021f79ca4d4c2b688c",
-  "security_snapshot": "20261016T100000Z"
+  "security_release_sha256": "d3277a45cd24aa00846e73436d2f86e2d829a150181b9e3258ad3df0d7785e66",
+  "security_snapshot": "20261023T140000Z"
 }

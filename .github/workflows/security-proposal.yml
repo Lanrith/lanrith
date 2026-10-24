@@ -1,0 +1,206 @@
+name: Resolve verified security updates
+on:
+  workflow_call:
+permissions:
+  contents: read
+cache-mode: none
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.proposal.outputs.changed }}
+      artifact-id: ${{ steps.stage.outputs.artifact-id }}
+      audit-id: ${{ steps.audit.outputs.artifact-id }}
+      result-id: ${{ steps.result.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+          printf 'LANRITH_EVIDENCE_DIR=%s\n' "$RUNNER_TEMP/public-input-evidence" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - name: Install source signature and Debian version verifiers
+        run: sudo apt-get update -qq && sudo apt-get install --yes dpkg gnupg
+      - name: Install the reviewed reachable-code scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - id: proposal
+        name: Resolve authenticated security fixes without installation hooks
+        run: python3 tools/scripts/security-updates.py propose --owner owner --output "$RUNNER_TEMP/proposal-result.json"
+      - name: Seal only recorded proposal inputs
+        if: steps.proposal.outputs.changed == 'true'
+        run: python3 tools/scripts/security-updates.py stage --owner owner --output "$RUNNER_TEMP/proposal"
+      - id: stage
+        if: steps.proposal.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-proposal
+          path: ${{ runner.temp }}/proposal/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve successful and blocked resolution evidence
+        if: always()
+        run: |
+          python3 tools/scripts/security-updates.py bundle --candidate "$RUNNER_TEMP/proposal-result.json" \
+            --owner "$RUNNER_TEMP/proposal" --output "$RUNNER_TEMP/proposal-audit"
+      - id: audit
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-proposal-audit
+          path: ${{ runner.temp }}/proposal-audit/*
+          if-no-files-found: error
+          retention-days: 1
+      - id: result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-proposal-result
+          path: ${{ runner.temp }}/proposal-result.json
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [resolve, archive]
+    if: needs.resolve.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: lanrith-updates
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+          printf 'LANRITH_EVIDENCE_DIR=%s\n' "$RUNNER_TEMP/public-input-evidence" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.artifact-id }}
+          path: ${{ runner.temp }}/proposal
+          merge-multiple: true
+      - name: Install source signature verifiers before accessing the publishing credential
+        run: sudo apt-get update -qq && sudo apt-get install --yes gnupg
+      - id: state
+        name: Avoid rewriting an unchanged candidate PR
+        run: |
+          python3 tools/scripts/security-updates.py proposal-state --candidate "$RUNNER_TEMP/proposal/security/update-candidate.json" \
+            --body "$RUNNER_TEMP/proposal-body.md" --output "$RUNNER_TEMP/publication-state.json"
+      - name: Recheck the recorded inputs before acquiring a write credential
+        if: steps.state.outputs.publish == 'true'
+        run: |
+          python3 tools/scripts/security-updates.py apply-proposal --owner owner --candidate "$RUNNER_TEMP/proposal" \
+            --output "$RUNNER_TEMP/applied.json"
+      - id: app-token
+        if: steps.state.outputs.publish == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_UPDATE_APP_ID }}
+          private-key: ${{ secrets.LANRITH_UPDATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - id: pr
+        if: steps.state.outputs.publish == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          path: owner
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automation/security-updates
+          title: Apply verified security updates
+          commit-message: Apply advisory-bound security input updates
+          committer: lanrith-dependency-updater[bot] <343878804+lanrith-dependency-updater[bot]@users.noreply.github.com>
+          author: lanrith-dependency-updater[bot] <343878804+lanrith-dependency-updater[bot]@users.noreply.github.com>
+          body-path: ${{ runner.temp }}/proposal-body.md
+      - name: Link the proposal to its tracked remediation
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          python3 tools/scripts/security-updates.py track --candidate owner/security/update-candidate.json \
+            --pr "$PR_NUMBER" --output "$RUNNER_TEMP/tracked.json"
+      - name: Request protected auto-merge only after the pilot is enabled
+        if: steps.pr.outputs.pull-request-number != '' && vars.LANRITH_SECURITY_APPROVALS_ENABLED == 'true' && steps.state.outputs.requires-human != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+          PR_HEAD: ${{ steps.pr.outputs.pull-request-head-sha }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$PR_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash --match-head-commit "$PR_HEAD"
+  archive:
+    needs: resolve
+    if: always() && needs.resolve.outputs.audit-id != '' && (needs.resolve.outputs.changed == 'true' || needs.resolve.result == 'failure')
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.resolve.outputs.audit-id }}
+      topic: proposal
+  alert:
+    needs: [resolve, publish, archive]
+    if: always() && (needs.resolve.result == 'failure' || needs.publish.result == 'failure' || needs.archive.result == 'failure') && needs.resolve.outputs.result-id != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.result-id }}
+          path: result
+          merge-multiple: true
+      - run: python3 tools/scripts/security-updates.py blocked-issue --output result/proposal-result.json

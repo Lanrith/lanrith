@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -22,6 +23,29 @@ from lanrith import advisories, embedded
 from lanrith.release import ReleaseError
 
 
+def dependency_scan(queries, name, destination, failures, scanner_errors):
+    try:
+        value = advisories.report(queries)
+        (destination/(name+'-advisories.json')).write_bytes(canonical(value))
+        if value['findings']:
+            print(json.dumps(value['findings'], sort_keys=True), flush=True)
+            failures.append(name)
+    except (ReleaseError, ValueError, OSError, KeyError):
+        failures.append(name)
+        scanner_errors.append(name)
+
+
+def support_decisions(completed):
+    # Unknown scanner coverage cannot be retired as a known vulnerable release.
+    # The newest stable release always remains supported and blocking if unsafe.
+    if completed and completed[0][1]['result'] == 'pass' and not completed[0][1]['scanner_errors']:
+        for destination, report in completed[1:]:
+            if report['result'] != 'pass' and not report['scanner_errors']:
+                report.update(supported=False, retirement_reason='superseded-vulnerable',
+                              superseded_by=completed[0][1]['platform_version'])
+                (destination/'security-assessment.json').write_bytes(canonical(report))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -33,8 +57,9 @@ def main():
     require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
             'Retained release enumeration is malformed.')
     releases = [item for page in pages for item in page]
-    versions = [item for item in releases if not item['draft'] and
+    versions = [item for item in releases if not item['draft'] and not item['prerelease'] and
                 __import__('re').fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
+    versions.sort(key=lambda item: tuple(map(int, item['tag_name'][1:].split('.'))), reverse=True)
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'],'a') as stream:
             stream.write('retained='+('true' if versions else 'false')+'\n')
@@ -42,6 +67,7 @@ def main():
         print('No published platform exists yet; no retained assessment is required.')
         return
     args.output.mkdir(mode=0o755)
+    completed = []
     for item in versions[:3]:
         with tempfile.TemporaryDirectory(prefix='lanrith-rescan.') as temporary:
             work = Path(temporary)
@@ -58,18 +84,27 @@ def main():
                 run('gh', 'release', 'download', item['tag_name'], '--repo', 'Lanrith/lanrith', '--dir', str(work), '--pattern', name)
                 require(file_record(work/name)['sha256'] == selection['files'][name], 'Retained security input differs.')
             inventory = selection['files']['inventory.json']
+            destination = args.output/inventory[:12]
+            destination.mkdir()
             with urllib.request.urlopen('https://security-tracker.debian.org/tracker/data/json', timeout=90) as response:
                 data = response.read(256*1024*1024+1)
             require(0 < len(data) <= 256*1024*1024, 'Invalid Debian advisory feed size.')
             (work/'tracker.json.gz').write_bytes(gzip.compress(data, mtime=0))
             failures = []
+            scanner_errors = []
             gate = run(sys.executable, str(ROOT/'security/audit-debian-vulnerabilities.py'),
                 '--manifest', str(work/'inventory.json'), '--policy', str(work/'policy.json'),
                 '--release', item['tag_name'][1:], '--suite', 'trixie', '--source-map', str(work/'package-sources.json'),
                 '--tracker', str(work/'tracker.json.gz'), '--tracker-url', 'https://security-tracker.debian.org/tracker/data/json',
                 '--status', str(work/'debian-security.txt'), capture_output=True, check=False)
+            (destination/'debian.stdout.txt').write_bytes(gate.stdout)
+            (destination/'debian.stderr.txt').write_bytes(gate.stderr)
+            if gate.returncode:
+                print(gate.stderr.decode(errors='replace')[-16000:], flush=True)
             if gate.returncode:
                 failures.append('debian-admission')
+                if b'installed source-package vulnerabilities violate policy' not in gate.stderr:
+                    scanner_errors.append('debian-admission')
             # A positive scan does not execute binaries. The archive is already digest-bound.
             binaries = work/'binaries'
             binaries.mkdir()
@@ -80,9 +115,13 @@ def main():
                 'router-policy-check', 'router-policy-status', 'router-policy-recover'},
                 'Retained binary scan coverage is incomplete.')
             for binary in binaries.iterdir():
-                scan = run('govulncheck', '-mode=binary', str(binary), stdout=subprocess.DEVNULL, check=False)
+                scan = run('govulncheck', '-mode=binary', str(binary), capture_output=True, check=False)
+                (destination/(binary.name+'.govulncheck.txt')).write_bytes(scan.stdout+scan.stderr)
                 if scan.returncode:
                     failures.append('go-binary-'+binary.name)
+                    print(binary.name+': '+(scan.stdout+scan.stderr).decode(errors='replace')[-24000:], flush=True)
+                    if scan.returncode != 3:
+                        scanner_errors.append('go-binary-'+binary.name)
             for repository, patched in (('FDio/vpp', {'GHSA-rc9p-89wj-mx7h'}), ('apalrd/tayga', set())):
                 feed = json.loads(run('gh', 'api', 'repos/'+repository+'/security-advisories',
                                       capture_output=True, text=True).stdout)
@@ -92,19 +131,12 @@ def main():
             require(embedded.verify(binaries/'alloy', binaries/'alloy-beyla',
                     old['custom']['components']['alloy']['beyla']['binary_sha256']) == old['embedded_beyla'],
                     'Retained Beyla scan subject differs from the deployed embedded payload.')
-            queries = old['custom']['components']['pam-rssh']['queries']
-            try:
-                advisories.assess(queries)
-            except (ReleaseError, ValueError, OSError):
-                failures.append('pam-dependencies')
-            try:
-                advisories.assess(old['custom']['components']['alloy']['java_agent']['queries'])
-            except (ReleaseError, ValueError, OSError, KeyError):
-                failures.append('alloy-embedded-java')
-            try:
-                advisories.assess(advisories.npm_queries(old['custom']['components']['alloy']['npm_modules']))
-            except (ReleaseError, ValueError, OSError, KeyError):
-                failures.append('alloy-ui-dependencies')
+            dependency_scan(old['custom']['components']['pam-rssh']['queries'],
+                            'pam-dependencies', destination, failures, scanner_errors)
+            dependency_scan(old['custom']['components']['alloy']['java_agent']['queries'],
+                            'alloy-embedded-java', destination, failures, scanner_errors)
+            dependency_scan(advisories.npm_queries(old['custom']['components']['alloy']['npm_modules']),
+                            'alloy-ui-dependencies', destination, failures, scanner_errors)
             alloy = old['custom']['components']['alloy']
             for repository in ('grafana/alloy', 'grafana/beyla', 'grafana/opentelemetry-ebpf-instrumentation',
                                'open-telemetry/opentelemetry-ebpf-instrumentation'):
@@ -121,11 +153,14 @@ def main():
                       'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                       'debian_feed_sha256': hashlib.sha256(data).hexdigest(),
                       'failures': sorted(set(failures)),
+                      'scanner_errors': sorted(set(scanner_errors)),
+                      'supported': True,
+                      'diagnostics': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in destination.iterdir() if p.is_file()},
                       'revoked_sha256': json.loads((ROOT/'security/revocations.json').read_text())['revoked_sha256']}
-            destination = args.output/inventory[:12]
-            destination.mkdir()
             (destination/'security-assessment.json').write_bytes(canonical(report))
+            completed.append((destination, report))
             print('Retained inventory '+inventory[:12]+' assessment: '+report['result']+'.')
+    support_decisions(completed)
 
 
 if __name__ == '__main__':

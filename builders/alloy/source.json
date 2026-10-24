@@ -25,8 +25,8 @@
     "version": "3.35.0"
   },
   "commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
-  "go_image": "docker.io/library/golang@sha256:55395706e9703db746cc507abfc4eb2aea75918f8a8024e4848e2cb81004f5ad",
-  "go_version": "1.27.2",
+  "go_image": "docker.io/library/golang@sha256:fea12ba16096adec0f699ce1c4da2154d320450e56c1f63671f95d2a3551c77b",
+  "go_version": "1.27.3",
   "modules": [
     {
       "directory": "github.com_burningalchemist_sql_exporter",
@@ -50,9 +50,9 @@
       "version": "v1.37.2"
     }
   ],
-  "node_image": "docker.io/library/node@sha256:7f7f17f773027e7f0475fa829fc0d793d75918fda85b9e517c9cc5aa46200406",
-  "node_version": "24.22.0",
-  "package_version": "1.20.1-1+lanrith2",
+  "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
+  "node_version": "24.22.1",
+  "package_version": "1.20.1-1+lanrith3",
   "schema": 1,
   "supplemental_notices": {
     "github.com/dennwc/ioctl@v1.0.0": {

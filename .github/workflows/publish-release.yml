@@ -1,0 +1,182 @@
+name: Publish immutable qualified release
+on:
+  workflow_call:
+    inputs:
+      artifact-id:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+permissions:
+  contents: read
+cache-mode: none
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+      pull-requests: read
+    outputs:
+      verification-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          path: release
+          merge-multiple: true
+      - name: Publish all attested assets through a draft, then verify the immutable result
+        run: |
+          python3 - <<'PY'
+          import base64,datetime,hashlib,json,os,pathlib,re,subprocess
+          def run(*args): return subprocess.run(args,check=True,capture_output=True,text=True).stdout
+          def authorized_human(review,head,author):
+              user=review['user']
+              if review['state']!='APPROVED' or review['commit_id']!=head or user['type']!='User' or user['login']==author:
+                  return False
+              assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,38}',user['login'])
+              permission=json.loads(run('gh','api',f"repos/{repo}/collaborators/{user['login']}/permission"))
+              assert permission['user']['id']==user['id'] and permission['user']['login']==user['login']
+              return permission['permission'] in ('admin','write')
+          repo=os.environ['GITHUB_REPOSITORY']
+          source=os.environ['GITHUB_SHA']
+          version=os.environ['RELEASE_VERSION'].removeprefix('v')
+          assert repo in ('Lanrith/lanrith','Lanrith/discovery-bridge','Lanrith/router-policy-agent')
+          assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',version)
+          assert re.fullmatch('[0-9a-f]{40}',source)
+          root=pathlib.Path('release')
+          files=sorted(root.iterdir())
+          assert files and len(files)<=200 and all(p.is_file() and not p.is_symlink() and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,191}',p.name) and 0<p.stat().st_size<2*1024**3 for p in files)
+          update=json.loads((root/'update-record.json').read_text())
+          assert update['repository']==repo and update['source_commit']==source and update['pull_requests']
+          assert update['version'].removeprefix('v')==version
+          policy_file=json.loads(run('gh','api',f'repos/{repo}/contents/security/update-policy.json?ref={source}'))
+          policy=json.loads(base64.b64decode(policy_file['content']))
+          # Independently confirm the claimed review identities before publishing their record.
+          for pr in update['pull_requests']:
+              current=json.loads(run('gh','api',f"repos/{repo}/pulls/{pr['number']}"))
+              assert current['merged'] and current['merge_commit_sha']==source and current['head']['sha']==pr['head_sha']
+              review_pages=json.loads(run('gh','api',f"repos/{repo}/pulls/{pr['number']}/reviews?per_page=100",'--paginate','--slurp'))
+              assert isinstance(review_pages,list) and all(isinstance(p,list) for p in review_pages)
+              actual=[r for page in review_pages for r in page]
+              latest={r['user']['id']:r for r in sorted(actual,key=lambda r:r['id']) if r['state'] in ('APPROVED','CHANGES_REQUESTED','DISMISSED')}
+              assert pr['approvals'] and all(any(r['id']==a['id'] and r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['id']==a['actor_id'] for r in latest.values()) for a in pr['approvals'])
+              assert {v['workflow'] for v in pr['validation']}==set(policy['required_workflows'])
+              for validation in pr['validation']:
+                  current_runs=json.loads(run('gh','api',f"repos/{repo}/actions/workflows/{validation['workflow'].rsplit('/',1)[-1]}/runs?event=pull_request&head_sha={pr['head_sha']}&per_page=100"))['workflow_runs']
+                  assert current_runs and max(current_runs,key=lambda r:r['id'])['id']==validation['id']
+                  observed=json.loads(run('gh','api',f"repos/{repo}/actions/runs/{validation['id']}"))
+                  assert observed['event']=='pull_request' and observed['head_sha']==pr['head_sha'] and observed['path']==validation['workflow'] and observed['status']=='completed' and observed['conclusion']=='success' and observed['run_attempt']==validation['attempt']
+              automated_branch=current['head']['ref']==policy['proposal_branch'] and current['head']['repo']['full_name']==repo
+              if automated_branch:
+                  assert pr['candidate']
+                  candidate_file=json.loads(run('gh','api',f"repos/{repo}/contents/security/update-candidate.json?ref={pr['head_sha']}"))
+                  assert pr['candidate']==json.loads(base64.b64decode(candidate_file['content']))
+              if automated_branch and not pr['candidate']['requires_human'] and policy['mode']=='enforce':
+                  checks=json.loads(run('gh','api',f"repos/{repo}/commits/{pr['head_sha']}/check-runs?check_name=Security%20update%20admission&filter=latest"))['check_runs']
+                  admitted=[c for c in checks if c['name']=='Security update admission' and c['app']['id']==policy['reviewer_app_id'] and c['status']=='completed' and c['conclusion']=='success']
+                  assert admitted
+                  reviewer=admitted[-1]['app']['slug']+'[bot]'
+                  assert any(r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['login']==reviewer for r in latest.values())
+              else:
+                  # Private organisation membership can appear as CONTRIBUTOR to
+                  # installation tokens. Verify effective write access directly.
+                  assert any(authorized_human(r,pr['head_sha'],current['user']['login']) for r in latest.values())
+          if repo=='Lanrith/lanrith':
+              security=json.loads((root/'security.json').read_text())
+              assert security.get('production_qualified') is True and security.get('slsa_spec')=='1.2' and security.get('slsa_build_level')==3 and security.get('qualification',{}).get('result')=='pass'
+          expected={}
+          for p in files:
+              with p.open('rb') as stream: expected[p.name]='sha256:'+hashlib.file_digest(stream,'sha256').hexdigest()
+          tag='v'+version
+          # No overwrite or --clobber path is available, including on retries.
+          def release():
+              # A draft has no published Git tag. The tag REST endpoint returns
+              # 404 for it; the CLI resolves drafts and exposes their stable API ID.
+              lookup=subprocess.run(['gh','release','view',tag,'--repo',repo,'--json','apiUrl'],capture_output=True,text=True)
+              if lookup.returncode:
+                  assert 'release not found' in lookup.stderr.lower() or 'HTTP 404' in lookup.stderr
+                  return None
+              url=json.loads(lookup.stdout)['apiUrl']
+              assert re.fullmatch(r'https://api[.]github[.]com/repos/'+re.escape(repo)+r'/releases/[0-9]+',url)
+              return json.loads(run('gh','api',url.removeprefix('https://api.github.com/')))
+          draft=release()
+          if draft is None:
+              run('gh','release','create',tag,'--repo',repo,'--target',source,'--draft','--prerelease','--latest=false','--title','Lanrith '+version,'--generate-notes',*(str(p) for p in files))
+              draft=release()
+          assert draft is not None
+          assert {a['name']:a['digest'] for a in draft['assets']}==expected
+          if draft['draft']:
+              assert draft['prerelease']
+              run('gh','release','edit',tag,'--repo',repo,'--draft=false')
+          published=release()
+          assert published.get('immutable') is True and not published['draft']
+          assert len(published['assets'])==len(expected)
+          for asset in published['assets']:
+              assert asset['name'] in expected and asset['digest']==expected[asset['name']]
+          ref=json.loads(run('gh','api',f'repos/{repo}/git/ref/tags/{tag}'))['object']
+          for _ in range(4):
+              if ref['type']=='commit': break
+              assert ref['type']=='tag'
+              ref=json.loads(run('gh','api',f"repos/{repo}/git/tags/{ref['sha']}"))['object']
+          assert ref['type']=='commit' and ref['sha']==source
+          # Stable/latest is promoted only after immutable bytes and tag have passed verification.
+          if published['prerelease']:
+              run('gh','release','edit',tag,'--repo',repo,'--prerelease=false','--latest')
+          promoted=release()
+          assert promoted['id']==published['id'] and promoted['immutable'] and not promoted['prerelease']
+          record={'schema':1,'kind':'publication-verification','result':'pass','repository':repo,'source_commit':source,'tag':tag,'release_id':published['id'],'release_url':published['html_url'],'immutable':True,'verified_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'assets':expected,'update_record_sha256':expected['update-record.json'][7:],'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT']}
+          pathlib.Path('verification').mkdir()
+          pathlib.Path('verification/publication-verification.json').write_text(json.dumps(record,sort_keys=True,indent=2)+'\n')
+          print(published['html_url'])
+          PY
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publication-verification
+          path: verification/publication-verification.json
+          if-no-files-found: error
+          retention-days: 1
+  archive:
+    needs: publish
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.publish.outputs.verification-id }}
+      topic: publication
+  complete:
+    needs: [publish, archive]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AUDIT_TAG: ${{ needs.archive.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.publish.outputs.verification-id }}
+          path: verification
+          merge-multiple: true
+      - name: Mark only the verified and durably archived remediation complete
+        run: |
+          python3 tools/scripts/security-updates.py complete-release --source "$GITHUB_SHA" \
+            --candidate verification/publication-verification.json --audit-tag "$AUDIT_TAG" --output "$RUNNER_TEMP/completion.json"

@@ -2,7 +2,7 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: ['lanrith/**', 'scripts/**', 'security/**', 'builders/**', 'mkosi/**', 'tests/**', 'build-inputs.json', 'VERSION', '.github/workflows/**']
+    paths: ['lanrith/**', 'scripts/**', 'security/**', 'builders/**', 'mkosi/**', 'tests/**', 'build-inputs.json', 'VERSION', '.go-version', 'automation/**', 'schemas/**', '.github/workflows/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,6 +14,10 @@ jobs:
     if: github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
+      actions: read
+      checks: read
+      pull-requests: read
+      issues: write
       packages: write
       attestations: write
       id-token: write

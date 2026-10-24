@@ -180,12 +180,16 @@ def main():
     ui = source/'internal/web/ui'
     run('npm', 'ci', '--no-audit', '--no-fund', cwd=ui)
     assessment = subprocess.run(['npm', 'audit', '--json'], cwd=ui, capture_output=True, text=True)
+    (evidence/'npm-audit.json').write_text(assessment.stdout)
+    if assessment.stderr:
+        (evidence/'npm-audit.stderr').write_text(assessment.stderr)
     require(assessment.returncode in (0, 1), 'UI advisory service failed.')
     report = json.loads(assessment.stdout)
+    if report.get('vulnerabilities'):
+        print(json.dumps(report['vulnerabilities'], sort_keys=True), flush=True)
     require('error' not in report and 'vulnerabilities' in report and
             all(item['severity'] in ('info', 'low') and not item.get('fixAvailable')
                 for item in report['vulnerabilities'].values()), 'Alloy UI has unresolved security findings.')
-    (evidence/'npm-audit.json').write_text(assessment.stdout)
     npm_modules = javascript_inventory(ui, evidence/'npm-notices.txt')
     run('npm', 'run', 'build', cwd=ui)
     collector = source/'collector'

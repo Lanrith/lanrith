@@ -1,7 +1,10 @@
 name: Retained release security
 on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   schedule:
-    - cron: '17 4 * * *'
+    - cron: '37 */12 * * *'
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   assess:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -23,7 +27,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version-file: .go-version
           cache: false
       - name: Install the reviewed scanner and Debian version tool
         run: |
@@ -40,7 +44,7 @@ jobs:
           name: assessed-inventories
           path: ${{ runner.temp }}/assessments/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
   attest:
     if: needs.assess.outputs.retained == 'true'
     needs: assess
@@ -71,7 +75,7 @@ jobs:
           name: signed-assessments
           path: assessments/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
   publish:
     needs: attest
     runs-on: ubuntu-24.04
@@ -91,13 +95,17 @@ jobs:
           for directory in assessments/*; do
             inventory=${directory##*/}
             [[ "$inventory" =~ ^[0-9a-f]{12}$ ]]
-            gh release create "assessment-$stamp-$inventory" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Security assessment $stamp" --prerelease --notes "Retained inventory security assessment." "$directory"/*
+            tag="assessment-$stamp-$inventory"
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --draft --title "Security assessment $stamp" --prerelease --latest=false \
+              --notes "Retained inventory security assessment, diagnostics and explicit support decision." "$directory"/*
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
           done
       - name: Fail the watchdog signal when any retained release is unsafe
         run: |
           python3 - <<'PY'
           import json,pathlib
           reports=[json.loads(p.read_text()) for p in pathlib.Path('assessments').glob('*/security-assessment.json')]
-          assert reports and all(report['result']=='pass' for report in reports)
+          active=[report for report in reports if report.get('supported',True)]
+          assert active and all(report['result']=='pass' for report in active)
           PY

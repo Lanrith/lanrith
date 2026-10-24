@@ -1,0 +1,272 @@
+name: Security update review
+on:
+  workflow_run:
+    workflows: [Check, Package qualification, CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request to inspect
+        required: true
+        type: number
+  workflow_call:
+    inputs:
+      pr:
+        required: false
+        type: number
+        default: 0
+permissions:
+  contents: read
+cache-mode: none
+concurrency:
+  group: security-review-${{ github.event.workflow_run.head_sha || inputs.pr || github.run_id }}
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.review.outputs.pr }}
+      eligible: ${{ steps.review.outputs.eligible }}
+      mode: ${{ steps.review.outputs.mode }}
+      decision-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ inputs.pr || '' }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+          printf 'LANRITH_EVIDENCE_DIR=%s\n' "$RUNNER_TEMP/public-input-evidence" >> "$GITHUB_ENV"
+      # Only the reviewed reusable-workflow source is executed, never the PR checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - name: Install source signature verifiers
+        run: sudo apt-get update -qq && sudo apt-get install --yes gnupg
+      - id: review
+        name: Inspect actual source bytes, advisory evidence and exact validation runs
+        run: |
+          args=()
+          if [[ -n "$PR_NUMBER" ]]; then [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; args+=(--pr "$PR_NUMBER"); fi
+          python3 tools/scripts/security-updates.py review-event --output "$RUNNER_TEMP/update-record.json" "${args[@]}"
+      - id: upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-decision
+          path: |
+            ${{ runner.temp }}/update-record.json
+            ${{ runner.temp }}/input-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  admission:
+    needs: inspect
+    if: needs.inspect.outputs.pr != '' && vars.LANRITH_REVIEW_CONFIGURED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: lanrith-review
+    permissions:
+      contents: read
+    outputs:
+      decision-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      PR_NUMBER: ${{ needs.inspect.outputs.pr }}
+      LANRITH_REVIEW_APP_ID: ${{ vars.LANRITH_REVIEW_APP_ID }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+          printf 'LANRITH_EVIDENCE_DIR=%s\n' "$RUNNER_TEMP/public-input-evidence" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.inspect.outputs.decision-id }}
+          path: decision
+          merge-multiple: true
+      - name: Install source verifiers before accessing the review credential
+        run: sudo apt-get update -qq && sudo apt-get install --yes gnupg
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_REVIEW_APP_ID }}
+          private-key: ${{ secrets.LANRITH_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-actions: read
+          permission-checks: write
+          permission-pull-requests: read
+      - name: Publish qualification status while preserving independent human review
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          python3 tools/scripts/security-updates.py admission --pr "$PR_NUMBER" --output decision/update-record.json
+      - id: upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-admission-decision
+          path: |
+            decision/update-record.json
+            decision/input-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  approve:
+    needs: [inspect, admission]
+    if: needs.inspect.outputs.eligible == 'true' && needs.inspect.outputs.mode == 'enforce' && vars.LANRITH_SECURITY_APPROVALS_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: lanrith-review
+    permissions:
+      contents: read
+    outputs:
+      decision-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      LANRITH_SECURITY_APPROVALS_ENABLED: ${{ vars.LANRITH_SECURITY_APPROVALS_ENABLED }}
+      PR_NUMBER: ${{ needs.inspect.outputs.pr }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+          printf 'LANRITH_EVIDENCE_DIR=%s\n' "$RUNNER_TEMP/public-input-evidence" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.admission.outputs.decision-id }}
+          path: decision
+          merge-multiple: true
+      - name: Install source verifiers before accessing the review credential
+        run: sudo apt-get update -qq && sudo apt-get install --yes gnupg
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_REVIEW_APP_ID }}
+          private-key: ${{ secrets.LANRITH_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-actions: read
+          permission-checks: write
+          permission-pull-requests: write
+      - name: Recheck current evidence before submitting a commit-bound approval
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          python3 tools/scripts/security-updates.py approve --pr "$PR_NUMBER" --output decision/update-record.json
+      - id: upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-approved-decision
+          path: |
+            decision/update-record.json
+            decision/input-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  archive:
+    needs: [inspect, admission, approve]
+    if: always() && needs.inspect.outputs.decision-id != ''
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.approve.outputs.decision-id || needs.admission.outputs.decision-id || needs.inspect.outputs.decision-id }}
+      topic: decision
+  finalize:
+    needs: [inspect, admission, approve, archive]
+    if: needs.inspect.outputs.eligible == 'true' && needs.inspect.outputs.mode == 'enforce' && vars.LANRITH_SECURITY_APPROVALS_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: lanrith-review
+    permissions:
+      contents: read
+    env:
+      PR_NUMBER: ${{ needs.inspect.outputs.pr }}
+      AUDIT_TAG: ${{ needs.archive.outputs.release-tag }}
+      LANRITH_SECURITY_APPROVALS_ENABLED: ${{ vars.LANRITH_SECURITY_APPROVALS_ENABLED }}
+    steps:
+      - name: Bind the reviewed reusable workflow identity
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/.go-version
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.approve.outputs.decision-id }}
+          path: decision
+          merge-multiple: true
+      - name: Install source verifiers before accessing the check credential
+        run: sudo apt-get update -qq && sudo apt-get install --yes gnupg
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_REVIEW_APP_ID }}
+          private-key: ${{ secrets.LANRITH_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-actions: read
+          permission-checks: write
+          permission-pull-requests: read
+      - name: Recheck the exact archived approval before allowing protected merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          python3 tools/scripts/security-updates.py finalize --pr "$PR_NUMBER" \
+            --audit-tag "$AUDIT_TAG" --output decision/update-record.json
