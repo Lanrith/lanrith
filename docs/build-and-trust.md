@@ -95,7 +95,10 @@ licenses, including any reviewed correction for an omitted archive notice.
 Security-only proposals run every six hours across Lanrith and its two component
 repositories. They select authenticated fixes on existing supported patch lines,
 preserve checksum and signature verification, and record the advisory, exact
-input changes and policy revision. Native source upgrades and workflow or policy
+input changes and policy revision. Existing npm fixes outside the approved patch
+set can be proposed for human review, including a same-major minor migration.
+These retain the direct dependency set, locked graph and installation behavior.
+Native source upgrades and workflow or policy
 changes require human review. Upstream source candidates in
 `docs/upstream-proposals.json` remain review proposals.
 

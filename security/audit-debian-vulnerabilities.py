@@ -25,7 +25,9 @@ MAX_TRACKER_JSON_BYTES = 128 * 1024 * 1024
 PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]+")
 ARCHITECTURE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 SOURCE_RE = re.compile(r"([a-z0-9][a-z0-9+.-]+)(?: \(([^()\s]+)\))?")
-SCANNER_VERSION = "2"
+BUILT_USING_RE = re.compile(r"([a-z0-9][a-z0-9+.-]+)\s*\(\s*=\s*([^()\s,]+)\s*\)")
+KERNEL_PAYLOAD_RE = re.compile(r"linux-image-[0-9][a-z0-9.+~:-]*")
+SCANNER_VERSION = "3"
 
 
 def fail(message: str) -> NoReturn:
@@ -167,20 +169,48 @@ def deb822_records(path: Path) -> list[dict[str, str]]:
         fail(f"cannot read APT metadata: {error}")
     records: list[dict[str, str]] = []
     current: dict[str, str] = {}
+    last_field: str | None = None
     for line in [*lines, ""]:
         if not line:
             if current:
                 records.append(current)
                 current = {}
+            last_field = None
             continue
         if line[0].isspace():
+            if last_field is None:
+                fail("APT metadata continuation has no field")
+            current[last_field] += (" " if current[last_field] else "") + line.strip()
             continue
         name, separator, value = line.partition(":")
         if not separator or not name:
             fail("APT metadata contains a malformed field")
-        if name not in current:
-            current[name] = value.lstrip()
+        if name in current:
+            fail("APT metadata contains a duplicate field")
+        current[name] = value.lstrip()
+        last_field = name
     return records
+
+
+def kernel_payload_version(version: str) -> str:
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9][A-Za-z0-9.+:~\-]*-[A-Za-z0-9.+~]+", version):
+        fail("signed kernel payload has an invalid Debian version")
+    compare_debian_versions(version, version)
+    return re.sub(r"\+b[0-9]+$", "", version)
+
+
+def advisory_source(record: dict[str, str]) -> tuple[str, str]:
+    source, version = record["source"], record["source_version"]
+    if KERNEL_PAYLOAD_RE.fullmatch(record.get("package", "")):
+        payload_version = kernel_payload_version(record.get("version", ""))
+        if source.startswith("linux-signed-"):
+            # Debian's signing wrapper has its own source version. Its payload's
+            # authenticated binary version identifies the underlying linux build.
+            # This also covers retained maps without rewriting their signed bytes.
+            return "linux", payload_version
+        if source != "linux" or version != payload_version:
+            fail("kernel payload source does not identify its Linux build")
+    return source, version
 
 
 def source_from_record(record: dict[str, str]) -> tuple[str, str] | None:
@@ -191,11 +221,21 @@ def source_from_record(record: dict[str, str]) -> tuple[str, str] | None:
         return None
     source_field = record.get("Source")
     if source_field is None:
+        if KERNEL_PAYLOAD_RE.fullmatch(name):
+            fail("APT kernel metadata is missing its source identity")
         return name, version
     match = SOURCE_RE.fullmatch(source_field)
     if match is None:
         fail(f"APT metadata has an invalid Source field for {name!r}")
     source, source_version = match.groups()
+    if KERNEL_PAYLOAD_RE.fullmatch(name) and source.startswith("linux-signed-"):
+        entries = [BUILT_USING_RE.fullmatch(entry.strip())
+                   for entry in record.get("Built-Using", "").split(",")]
+        if not entries or any(entry is None for entry in entries):
+            fail("signed kernel metadata has invalid Built-Using provenance")
+        linux = [entry.group(2) for entry in entries if entry.group(1) == "linux"]
+        if linux != [kernel_payload_version(version)]:
+            fail("signed kernel Built-Using does not match its Linux payload version")
     return source, source_version or version
 
 
@@ -315,8 +355,7 @@ def evaluate(
 ]:
     sources: dict[str, str] = {}
     for record in records:
-        source = record["source"]
-        version = record["source_version"]
+        source, version = advisory_source(record)
         previous = sources.setdefault(source, version)
         if previous != version:
             fail(f"installed binaries disagree on source version for {source!r}")
@@ -328,6 +367,8 @@ def evaluate(
     tracked_sources = 0
     for source, installed in sorted(sources.items()):
         raw_cves = tracker.get(source)
+        if source == "linux" and not raw_cves:
+            fail("Debian tracker does not cover the installed Linux source")
         if raw_cves is None:
             continue
         if not isinstance(raw_cves, dict):
@@ -457,6 +498,8 @@ def main() -> None:
         f"policy_sha256={policy_hash}",
         f"binary_package_count={len(records)}",
         f"source_package_count={source_count}",
+        f"advisory_source_package_count={len({advisory_source(record)[0] for record in records})}",
+        "kernel_advisory_mapping=authenticated-linux-payload-version",
         f"tracked_source_package_count={tracked_sources}",
         f"cves_evaluated={evaluated}",
         f"unresolved_tracker_records={sum(unresolved.values())}",

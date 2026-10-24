@@ -22,6 +22,13 @@ def run(*arguments, **kwargs):
     return subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, **kwargs)
 
 
+def assess_java(queries, output):
+    diagnostics = output/'security-diagnostics'
+    diagnostics.mkdir(exist_ok=True)
+    diagnostic = diagnostics/'java-osv.json'
+    return advisories.assess(queries, diagnostic=diagnostic), diagnostic
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -66,8 +73,7 @@ def main():
             'Java agent runtime dependency coverage is incomplete.')
     java_queries = [{'package': {'ecosystem': 'Maven', 'name': item['name']}, 'version': item['version']}
                     for item in java['dependencies']]
-    java_diagnostic = args.work/'evidence/java-osv.json'
-    java_assessment = advisories.assess(java_queries, diagnostic=java_diagnostic)
+    java_assessment, java_diagnostic = assess_java(java_queries, args.output)
     feeds = {}
     source_fixes = {}
     for repository in ('grafana/alloy', 'grafana/beyla', 'grafana/opentelemetry-ebpf-instrumentation',
