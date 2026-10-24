@@ -57,12 +57,14 @@
   "repository": "Lanrith/lanrith",
   "requires_human": true,
   "schema": 1,
+  "subsequent_snapshot_remediation": "security/remediations/2026-10-24-brotli.json",
   "trigger": {
     "result": "blocked-before-publication",
     "run_id": 40070204084,
     "url": "https://github.com/Lanrith/lanrith/actions/runs/40070204084",
     "workflow": "Release"
   },
+  "validated_intermediate_head": "2eb7d0fc459ce5967687ede0d60849d857c9e118",
   "validation": {
     "advisory_evidence": "Canonical JSON SHA256, independently refetched and revalidated; exact response bytes archived separately.",
     "direct_dependency_changes": [],
