@@ -197,4 +197,17 @@ def render(value):
         'usr/share/lanrith/logs.json': canonical(policy).decode(),
         'etc/alloy/config.alloy': configuration(value),
         'etc/systemd/system/alloy.service.d/60-lanrith.conf': unit,
+        'usr/lib/systemd/system/lanrith-telemetry-heartbeat.service': (
+            '[Unit]\nDescription=Emit the remote telemetry liveness identity\n'
+            'Requires=boot-complete.target alloy.service\nAfter=boot-complete.target alloy.service\n\n'
+            '[Service]\nType=oneshot\nUser=alloy\nGroup=alloy\n'
+            'ExecStart=/usr/bin/lanrith-runtime telemetry\n'
+            'NoNewPrivileges=yes\nPrivateTmp=yes\nPrivateDevices=yes\nProtectHome=yes\nProtectSystem=strict\n'
+            'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            'RestrictAddressFamilies=AF_UNIX\nMemoryDenyWriteExecute=yes\nLockPersonality=yes\n'
+            'SystemCallArchitectures=native\nSystemCallFilter=@system-service\n'),
+        'usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer': (
+            '[Unit]\nDescription=Emit a bounded router heartbeat every minute\n\n'
+            '[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nAccuracySec=5s\nRandomizedDelaySec=5s\n'
+            'Unit=lanrith-telemetry-heartbeat.service\n\n[Install]\nWantedBy=timers.target\n'),
     }

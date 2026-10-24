@@ -41,7 +41,7 @@ def required_units(value, *, target_facts=None, integrations=()):
     if value.get('observability', {}).get('snmp', {}).get('enabled'):
         units.append('snmpd.service')
     if value.get('observability', {}).get('logs', {}).get('enabled'):
-        units.append('alloy.service')
+        units += ['alloy.service', 'lanrith-telemetry-heartbeat.timer']
     if value['services'].get('discovery', {}).get('enabled'):
         units += ['avahi-daemon.service', 'discovery-bridge-publisher.service',
                   'discovery-bridge-collector.service', 'discovery-bridge-dns.service']

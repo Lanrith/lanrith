@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 
 from .release import canonical, read, require, ReleaseError
 from .update import accepted_boot, boot_esp, command, promote, stage, writable_esp
@@ -26,7 +27,29 @@ def status():
         require(observation.stat().st_uid==0 and not observation.stat().st_mode & 0o022,
                 'Boot observation is not protected.')
         boot=json.loads(read(observation,65536))
-    return {key:value[key] for key in ('image_id','platform_version','deployment_sequence')} | {'boot':boot}
+    return {key:value[key] for key in ('image_id','platform_version','deployment_sequence',
+                                       'configuration_sha256')} | {'boot':boot}
+
+
+def telemetry():
+    """Emit a replay-identifiable heartbeat for the authenticated remote sink."""
+    value = status()
+    boot = value['boot']
+    require(isinstance(boot, dict) and set(boot) == {'schema', 'accepted', 'boot_complete', 'boot_id',
+            'image_id', 'platform_version', 'deployment_sequence', 'selected_entry'} and
+            boot['schema'] == 1 and boot['accepted'] is True and boot['boot_complete'] is True and
+            boot['image_id'] == value['image_id'] and boot['platform_version'] == value['platform_version'] and
+            boot['deployment_sequence'] == value['deployment_sequence'] and
+            re.fullmatch(r'[0-9a-f-]{36}', boot['boot_id']) and
+            isinstance(boot['selected_entry'], str), 'Accepted boot observation is unavailable.')
+    require(re.fullmatch(r'[0-9a-f]{64}', value['configuration_sha256']),
+            'Installed configuration identity is malformed.')
+    return {'schema': 1, 'event': 'lanrith-heartbeat', 'boot_id': boot['boot_id'],
+            'selected_entry': boot['selected_entry'], 'image_id': value['image_id'],
+            'platform_version': value['platform_version'],
+            'deployment_sequence': value['deployment_sequence'],
+            'configuration_sha256': value['configuration_sha256'],
+            'monotonic_ns': time.monotonic_ns()}
 
 
 def installed():
@@ -139,6 +162,7 @@ def main(arguments=None):
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('health')
     commands.add_parser('bless')
+    commands.add_parser('telemetry')
     commands.add_parser('publish')
     commands.add_parser('status')
     commands.add_parser('initialize')
@@ -155,6 +179,8 @@ def main(arguments=None):
             print('Local boot health checks passed.')
         elif args.command == 'bless':
             print(bless().name)
+        elif args.command == 'telemetry':
+            print(json.dumps(telemetry(), sort_keys=True, separators=(',', ':')))
         elif args.command == 'publish':
             print(json.dumps(publish(), sort_keys=True))
         elif args.command == 'initialize':

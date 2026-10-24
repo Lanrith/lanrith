@@ -143,6 +143,14 @@ through native and translated paths. Enabling a package or component grants no
 trust to a cluster, directory or backend. Temporary broad permissions remain
 explicit owner rules.
 
+When authenticated log delivery is enabled, Lanrith also emits a one-minute
+heartbeat containing the accepted boot ID, selected entry, release sequence and
+effective configuration digest. The timer is part of boot health and the event
+uses the same redacted, TLS-authenticated, bounded Alloy queue as the journal.
+The remote collector must alert on a missing or stale heartbeat and retain the
+event outside the router. This is a liveness signal, not remote attestation: an
+attacker with unrestricted root can forge local events.
+
 ## Hardware and optional integrations
 
 Defaults allocate a 1 GiB ESP, two 4 GiB root slots and 64 GiB encrypted state.

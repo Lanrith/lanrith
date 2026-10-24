@@ -19,7 +19,8 @@ def check(plan):
             isinstance(plan['interfaces'], list) and 1 <= len(plan['interfaces']) <= 256 and
             isinstance(plan['probes'], list) and len(plan['probes']) <= len(PROBES),
             'Invalid compiled boot requirements.')
-    require(all(isinstance(unit, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}\.service', unit)
+    require(all(isinstance(unit, str) and re.fullmatch(
+                r'[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}\.(?:service|timer)', unit)
                 for unit in plan['units']) and len(set(plan['units'])) == len(plan['units']) and
             all(isinstance(probe, str) and probe in PROBES for probe in plan['probes']) and
             len(set(plan['probes'])) == len(plan['probes']), 'Invalid compiled boot requirements.')

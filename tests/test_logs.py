@@ -42,6 +42,14 @@ class LogsContractTests(unittest.TestCase):
         self.assertIn('LoadCredential=log_ingest:/var/lib/lanrith/credentials/log_ingest', unit)
         self.assertIn('NetworkNamespacePath=/run/netns/lanrith-services', unit)
         self.assertIn('ExecStartPre=+/usr/lib/lanrith/logs-runtime stage', unit)
+        heartbeat = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.service']
+        timer = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer']
+        self.assertIn('User=alloy\n', heartbeat)
+        self.assertIn('NoNewPrivileges=yes\n', heartbeat)
+        self.assertIn('ExecStart=/usr/bin/lanrith-runtime telemetry\n', heartbeat)
+        self.assertIn('OnUnitActiveSec=60s\n', timer)
+        self.assertIn('lanrith-telemetry-heartbeat.timer',
+                      json.loads(files['usr/share/lanrith/health.json'])['units'])
         alloy = files['etc/alloy/config.alloy']
         self.assertIn('loki.process "router_redaction"', alloy)
         self.assertLess(alloy.index('loki.process "router_redaction"'), alloy.index('otelcol.storage.file "router"'))
@@ -82,6 +90,7 @@ class LogsContractTests(unittest.TestCase):
         files = config.render(config.normalize(value))
         self.assertNotIn('usr/share/lanrith/logs.json', files)
         self.assertNotIn('etc/alloy/config.alloy', files)
+        self.assertNotIn('usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer', files)
         for endpoint in ('https://logs.example.test/otlp',
                          'https://[fd42:1234:5678:99::31]/otlp',
                          'https://[fd42:1234:5678:10::31]:8443/otlp'):

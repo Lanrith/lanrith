@@ -79,3 +79,14 @@ older boot cannot unlock current protected state or silently become accepted.
 It also observes the ESP read-only during ordinary operation, writable only
 inside staging/blessing, and read-only again after success and every injected
 failure. Source checks for the mount policy are not hardware evidence.
+
+Telemetry qualification uses a collector outside the router. It verifies the
+TLS server identity and credential, receives the boot observation and at least
+two one-minute heartbeats, and checks their boot, release and configuration
+identities against the candidate. The collector must alert when Alloy stops,
+the route or collector becomes unavailable, a heartbeat is replayed or stale,
+or an unexpected identity arrives. Independent probes must also alert on
+changed listeners and enforcement behavior; a plausible heartbeat supplied by
+compromised root is not evidence that live policy remains intact. Qualification
+records queue saturation/eviction behavior, collector outage recovery and
+redaction fixtures without retaining credentials.
