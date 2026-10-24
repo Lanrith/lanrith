@@ -1,16 +1,16 @@
 {
   "candidates": {
     "alloy": {
-      "release": "https://github.com/grafana/alloy/releases/tag/v1.20.1",
+      "release": "https://github.com/grafana/alloy/releases/tag/v1.21.2",
       "repository": "grafana/alloy",
       "review": "source, patches, native behavior and security",
-      "tag": "v1.20.1"
+      "tag": "v1.21.2"
     },
     "beyla": {
-      "release": "https://github.com/grafana/beyla/releases/tag/v3.38.0",
+      "release": "https://github.com/grafana/beyla/releases/tag/v3.39.1",
       "repository": "grafana/beyla",
       "review": "source, patches, native behavior and security",
-      "tag": "v3.38.0"
+      "tag": "v3.39.1"
     },
     "mkosi": {
       "release": "https://github.com/systemd/mkosi/releases/tag/v27.1",
@@ -37,10 +37,10 @@
       "tag": "0.9.6"
     },
     "unbound": {
-      "release": "https://github.com/NLnetLabs/unbound/releases/tag/release-1.26.1",
+      "release": "https://github.com/NLnetLabs/unbound/releases/tag/release-1.26.2",
       "repository": "NLnetLabs/unbound",
       "review": "source, patches, native behavior and security",
-      "tag": "release-1.26.1"
+      "tag": "release-1.26.2"
     },
     "vpp": {
       "repository": "FDio/vpp",

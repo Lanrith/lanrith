@@ -93,19 +93,21 @@ def main():
             require(embedded.verify(binaries/'alloy', binaries/'alloy-beyla',
                     old['custom']['components']['alloy']['beyla']['binary_sha256']) == old['embedded_beyla'],
                     'Retained Beyla scan subject differs from the deployed embedded payload.')
-            queries = old['custom']['components']['pam-rssh']['queries']
-            try:
-                advisories.assess(queries)
-            except (ReleaseError, ValueError, OSError):
-                failures.append('pam-dependencies')
-            try:
-                advisories.assess(old['custom']['components']['alloy']['java_agent']['queries'])
-            except (ReleaseError, ValueError, OSError, KeyError):
-                failures.append('alloy-embedded-java')
-            try:
-                advisories.assess(advisories.npm_queries(old['custom']['components']['alloy']['npm_modules']))
-            except (ReleaseError, ValueError, OSError, KeyError):
-                failures.append('alloy-ui-dependencies')
+            dependency_assessments = {}
+            dependency_queries = {
+                'pam-dependencies': old['custom']['components']['pam-rssh']['queries'],
+                'alloy-embedded-java': old['custom']['components']['alloy']['java_agent']['queries'],
+                'alloy-ui-dependencies': advisories.npm_queries(
+                    old['custom']['components']['alloy']['npm_modules']),
+            }
+            for name, queries in dependency_queries.items():
+                diagnostic = work/(name+'.json')
+                try:
+                    advisories.assess(queries, diagnostic=diagnostic)
+                except (ReleaseError, ValueError, OSError, KeyError):
+                    failures.append(name)
+                if diagnostic.is_file():
+                    dependency_assessments[name] = json.loads(diagnostic.read_text())
             alloy = old['custom']['components']['alloy']
             for repository in ('grafana/alloy', 'grafana/beyla', 'grafana/opentelemetry-ebpf-instrumentation',
                                'open-telemetry/opentelemetry-ebpf-instrumentation'):
@@ -121,6 +123,7 @@ def main():
                       'platform_version': item['tag_name'], 'source_commit': os.environ['GITHUB_SHA'],
                       'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                       'debian_feed_sha256': hashlib.sha256(data).hexdigest(),
+                      'dependency_assessments': dependency_assessments,
                       'failures': sorted(set(failures)),
                       'revoked_sha256': json.loads((ROOT/'security/revocations.json').read_text())['revoked_sha256']}
             destination = args.output/inventory[:12]

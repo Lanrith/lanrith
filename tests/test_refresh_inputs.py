@@ -1,7 +1,9 @@
 """Security proposals can include today's fixes without selecting future snapshots."""
 
 import datetime
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -34,3 +36,30 @@ class SnapshotSelectionTests(unittest.TestCase):
                 else:
                     with self.assertRaises((ReleaseError, ValueError)):
                         refresh.snapshot(value, now=now)
+
+    def test_selected_security_repair_inputs_are_fixed_and_digest_bound(self):
+        root = source.parents[1]
+        alloy = json.loads((root/'builders/alloy/source.json').read_text())
+        exporter = json.loads((root/'builders/node-exporter/source.json').read_text())
+        selection = json.loads((root/'build-inputs.json').read_text())
+        policy = json.loads((root/'security/policy.json').read_text())
+        self.assertGreaterEqual(tuple(map(int, alloy['go_version'].split('.'))), (1, 27, 3))
+        self.assertGreaterEqual(tuple(map(int, exporter['go_version'].removeprefix('go').split('.'))),
+                                (1, 26, 10))
+        self.assertEqual(policy['required_exact_packages']['alloy'], alloy['package_version'])
+        self.assertEqual(policy['required_exact_packages']['prometheus-node-exporter'],
+                         exporter['package_version'])
+        self.assertEqual(policy['required_exact_packages']['unbound'], '1.26.2-0+deb13u1')
+        self.assertEqual(selection['component_releases']['discovery-bridge']['tag'], 'v0.1.1')
+        self.assertEqual(selection['component_releases']['router-policy-agent']['tag'], 'v0.1.3')
+        ui_patch = (root/'builders/alloy/ui-dependencies.patch').read_text()
+        for dependency, vulnerable, fixed in (('@vitest/mocker', '4.1.11', '4.1.12'),
+                                              ('undici', '7.29.1', '7.30.1'),
+                                              ('vite', '7.3.5', '7.3.7')):
+            with self.subTest(dependency=dependency):
+                self.assertIn('"version": "'+fixed+'"', ui_patch)
+                self.assertNotIn(' "version": "'+vulnerable+'"',
+                                 '\n'.join(line for line in ui_patch.splitlines()
+                                           if line.startswith(('+', ' '))))
+        for name, expected in selection['custom_package_inputs'].items():
+            self.assertEqual(hashlib.sha256((root/name).read_bytes()).hexdigest(), expected, name)
