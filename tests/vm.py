@@ -290,13 +290,13 @@ class Guest:
         return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
             'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(buffer).hexdigest()},sort_keys=True)
 
-    def ssh_arguments(self, command, *, agent=True):
+    def ssh_arguments(self, command, *, agent=True, user='admin'):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
             '-i', str(self.secret/'ssh'), '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes',
             '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=accept-new',
             '-o', 'HostKeyAlias=lanrith-qualification',
             '-o', 'UserKnownHostsFile='+str(self.secret/'known-hosts'),
-            '-p', str(self.port), 'admin@127.0.0.1', command]
+            '-p', str(self.port), user+'@127.0.0.1', command]
 
     def wait_shutdown(self, timeout=180):
         deadline = time.monotonic()+timeout
@@ -310,8 +310,8 @@ class Guest:
         self.wait_shutdown()
         self.close()
 
-    def ssh(self, command, *, success=True, timeout=180, agent=True):
-        result = subprocess.run(self.ssh_arguments(command, agent=agent), stdin=subprocess.DEVNULL,
+    def ssh(self, command, *, success=True, timeout=180, agent=True, user='admin'):
+        result = subprocess.run(self.ssh_arguments(command, agent=agent, user=user), stdin=subprocess.DEVNULL,
                                 capture_output=True, env=self.environment, timeout=timeout)
         if success:
             release.require(result.returncode == 0, 'Guest SSH operation failed: '+
@@ -487,6 +487,111 @@ journalctl --quiet --no-pager -t lanrith-qualification | grep -q synthetic-persi
 
 def root(guest, script, **kwargs):
     return guest.ssh('sudo sh -c '+shlex.quote(script), **kwargs)
+
+
+UNPRIVILEGED_PROBE = '''set -eu
+deny() {
+    if "$@" >/dev/null 2>&1; then
+        exit 77
+    fi
+}
+test "$(id -u)" -ne 0
+awk '$1 == "CapEff:" && $2 ~ /^0+$/' /proc/self/status >/dev/null
+deny sudo -k -n true
+deny nft add table inet lanrith_unprivileged_probe
+deny ip route add blackhole 198.18.0.0/15 table 500
+deny sysctl -w kernel.kptr_restrict=0
+probe=/var/tmp/lanrith-unprivileged-$(id -u)
+mkdir -m 0700 "$probe"
+deny mount -t tmpfs tmpfs "$probe"
+rmdir "$probe"
+deny systemctl --no-ask-password stop kea-dhcp4-server.service
+deny systemd-run --quiet --wait /usr/bin/true
+deny sh -c 'printf probe > /etc/lanrith-unprivileged-probe'
+deny sh -c 'printf probe > /var/lib/lanrith/unprivileged-probe'
+deny sh -c 'printf probe > /boot/lanrith-unprivileged-probe'
+deny dd if=/dev/zero of=/dev/vda bs=1 count=0 status=none
+deny lanrith-runtime accept 9
+deny head -c 1 /etc/shadow
+deny kill -TERM 1
+'''
+
+
+def unprivileged_control_boundary(guest):
+    """Prove root-only control paths stay unavailable before elevation.
+
+    This is intentionally not a claim that UID 0 is constrained after a
+    successful administrative PAM/sudo transition. The VM is disposable; a
+    surprising success fails qualification and the postconditions identify
+    any partial mutation.
+    """
+    release.require(guest.ssh('id -u', user='root', agent=False, success=False).returncode != 0,
+                    'Direct root SSH login succeeded.')
+    administrator = guest.ssh('sh -c '+shlex.quote(UNPRIVILEGED_PROBE), agent=False, success=False)
+    service_probe = '''set -eu
+probe=%s
+tested=0
+for account in $(awk -F: '$3 != 0 && $1 != "admin" {print $1}' /etc/passwd); do
+    uid=$(id -u "$account")
+    gid=$(id -g "$account")
+    setpriv --reuid "$uid" --regid "$gid" --clear-groups sh -c "$probe"
+    tested=$((tested + 1))
+done
+test "$tested" -gt 0
+''' % shlex.quote(UNPRIVILEGED_PROBE.replace('deny sudo -k -n true\n', ''))
+    services = root(guest, service_probe, success=False)
+    postconditions = root(guest, '''set -eu
+test "$(sshd -T | awk '$1 == "permitrootlogin" {print $2}')" = no
+test "$(sysctl -n kernel.kptr_restrict)" = 2
+! nft list table inet lanrith_unprivileged_probe >/dev/null 2>&1
+! ip route show table 500 | grep -q 198.18.0.0/15
+! findmnt --list --noheadings --output TARGET | grep -q '^/var/tmp/lanrith-unprivileged-'
+test ! -e /etc/lanrith-unprivileged-probe
+test ! -e /var/lib/lanrith/unprivileged-probe
+test ! -e /boot/lanrith-unprivileged-probe
+systemctl is-active --quiet kea-dhcp4-server.service
+python3 - <<'PY'
+from pathlib import Path
+import subprocess
+
+# A compromised non-root process must not already hold capabilities that can
+# administer policy, mount filesystems, bypass discretionary access, ptrace
+# peers, change identity, load code into the kernel, or use privileged BPF.
+# systemd-networkd is a declared network-control TCB identity rather than an
+# unprivileged daemon. Its constrained process may hold only the capabilities
+# required by the packaged unit, and must retain no-new-privileges and seccomp.
+forbidden = sum(1 << bit for bit in (1, 2, 3, 6, 7, 12, 16, 17, 19, 21, 38, 39, 40))
+networkd = int(subprocess.check_output(
+    ['systemctl', 'show', '--property', 'MainPID', '--value', 'systemd-networkd.service'], text=True))
+if networkd <= 0:
+    raise SystemExit('The declared network-control TCB process is absent.')
+properties = subprocess.check_output(['systemctl', 'show', '--property', 'NoNewPrivileges',
+    '--property', 'SystemCallFilter', 'systemd-networkd.service'], text=True).splitlines()
+if 'NoNewPrivileges=yes' not in properties or not any(line.startswith('SystemCallFilter=') and
+                                                       line != 'SystemCallFilter=' for line in properties):
+    raise SystemExit('The network-control TCB lost its execution restrictions.')
+networkd_allowed = sum(1 << bit for bit in (10, 11, 12, 13, 21, 39))
+allowed = {networkd: networkd_allowed}
+seen = set()
+for status in Path('/proc').glob('[0-9]*/status'):
+    try:
+        fields = {line.split(':', 1)[0]: line.split(':', 1)[1].strip()
+                  for line in status.read_text().splitlines() if ':' in line}
+        uid = int(fields['Uid'].split()[1])
+        effective = int(fields['CapEff'], 16)
+    except (FileNotFoundError, KeyError, ValueError, PermissionError):
+        continue
+    if uid != 0:
+        seen.add(uid)
+        permitted = allowed.get(int(status.parent.name), 0)
+        if effective & forbidden & ~permitted or effective & ~permitted and permitted:
+            raise SystemExit('A non-root process holds a root-equivalent capability.')
+if not seen:
+    raise SystemExit('No non-root process context was observed.')
+PY
+''', success=False)
+    release.require(administrator.returncode == 0 and services.returncode == 0 and postconditions.returncode == 0,
+                    'A non-root identity reached a root-only control path or changed its postcondition.')
 
 
 def check_state(guest, expected, message):
@@ -704,6 +809,7 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
         release.require(guest.ssh('sudo id -u', agent=False, success=False).returncode != 0,
                         'Root administration succeeded without the forwarded test agent.')
         guest.ssh('sudo lanrith-runtime accept 9')
+        unprivileged_control_boundary(guest)
         root(guest, '''set -eu
 mkdir -p /var/lib/lanrith/qualification-state /var/lib/kea
 systemctl stop kea-dhcp4-server.service
@@ -741,7 +847,7 @@ done''')
             return {'profile': 'manual-encryption', 'result': 'pass', 'checks': [
                 'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
                 'ssh-pam-administration', 'automatic-boot-observation',
-                'persistent-state-reboot', 'optional-services-inactive']}
+                'persistent-state-reboot', 'optional-services-inactive', 'unprivileged-control-boundary']}
         firewall_failure(guest)
         second_assembly, _, second = image(value, base, initrd, work, secret, 10)
         shutil.rmtree(second_assembly)
@@ -831,7 +937,8 @@ done''')
             'optional-services-inactive', 'one-shot-upgrade', 'fallback-protection', 'unaccepted-reboot-fallback',
             'explicit-acceptance', 'replay-rejection', 'tamper-rejection', 'interrupted-staging',
             'failed-health-fallback', 'populated-state-upgrade-and-rollback',
-            'initrd-provisioning-failure-boundary', 'firewall-listener-failure-boundary']}
+            'initrd-provisioning-failure-boundary', 'firewall-listener-failure-boundary',
+            'unprivileged-control-boundary']}
     finally:
         guest.close()
 

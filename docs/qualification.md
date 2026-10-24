@@ -11,6 +11,7 @@ package inventory, artifacts and profile.
 | Assembly | Matching mkosi BaseTrees and initrd; offline signed final tree; identities and native unit transaction |
 | Hardware | x86-64 VM and each claimed physical profile; NIC selectors, disk budgets, TPM/manual encryption, console |
 | Boot | Owner Secure Boot trust, valid dm-verity, encrypted persistent state and acknowledged offline recovery |
+| Privilege boundary | Direct root login denied; administrator elevation reauthenticated; root-only controls denied to administrator-before-elevation and every service identity |
 | Factory | Wrong trust, mismatched payload, ambiguous/mounted target and interrupted installation rejection; read-back |
 | Network | Two unrelated synthetic topologies; explicit administration, default deny, DHCP/RA/DNS, optional services off |
 | Advanced integration | Routing, translation, policy enforcement, discovery, directory, telemetry and acceleration tests for enabled profiles |
@@ -49,3 +50,9 @@ bounded JSON result is retained publicly; test disk images, recovery keys,
 serial transcripts and test credentials are not release artifacts. Adding
 this runner does not establish a passing result: the actual candidate must
 complete it before production admission can be enabled.
+
+The root boundary and its residual risk are defined in `security-model.md`.
+Native qualification's `unprivileged-control-boundary` check exercises the
+administrator without a forwarded credential and all installed non-root
+accounts. Root policy mutation is a positive control on a disposable clone,
+not a promise that the running kernel can constrain unrestricted root.

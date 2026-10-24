@@ -19,22 +19,35 @@ from . import admission, archive, config, extensions, release, trust
 def signing_space(engine, name):
     private = Path(tempfile.mkdtemp(prefix=name+'.', dir='/dev/shm'))
     private.chmod(0o700)
+    body_error = None
     try:
         yield private
+    except BaseException as error:
+        body_error = error
+        raise
     finally:
-        # Stop only this transaction's container before removing its keys.
-        # If the engine is unavailable, retain the owned tmpfs for recovery.
-        observed = subprocess.run([engine, 'inspect', '--format',
-            '{{index .Config.Labels "io.lanrith.local.owner"}}', name], capture_output=True, timeout=30)
-        if observed.returncode == 0:
-            release.require(observed.stdout.decode().strip() == name, 'Local build container ownership changed.')
-            subprocess.run([engine, 'rm', '--force', name], check=True, capture_output=True, timeout=60)
-        else:
-            diagnostic = observed.stderr.decode(errors='replace').lower()
-            release.require(observed.returncode == 1 and
-                            any(text in diagnostic for text in ('no such object', 'no such container')),
-                            'Container cleanup is unconfirmed; owned private tmpfs retained at '+str(private))
-        shutil.rmtree(private)
+        try:
+            # Stop only this transaction's container before removing its keys.
+            # Podman reports a missing container with 125; Docker commonly uses
+            # 1. The diagnostic must still prove absence, because 125 also
+            # represents engine failures.
+            observed = subprocess.run([engine, 'inspect', '--format',
+                '{{index .Config.Labels "io.lanrith.local.owner"}}', name], capture_output=True, timeout=30)
+            if observed.returncode == 0:
+                release.require(observed.stdout.decode().strip() == name,
+                                'Local build container ownership changed.')
+                subprocess.run([engine, 'rm', '--force', name], check=True, capture_output=True, timeout=60)
+            else:
+                diagnostic = observed.stderr.decode(errors='replace').lower()
+                release.require(observed.returncode in (1, 125) and
+                                any(text in diagnostic for text in ('no such object', 'no such container')),
+                                'Container cleanup is unconfirmed; owned private tmpfs retained at '+str(private))
+            shutil.rmtree(private)
+        except BaseException as cleanup_error:
+            if body_error is None:
+                raise
+            body_error.add_note('Signing cleanup also failed; private material may require managed recovery: '
+                                +str(cleanup_error))
 
 
 def consumer():
@@ -68,14 +81,17 @@ def inputs(owner, platform, sequence, serial_hash=None):
         release.require(not any(parent.is_symlink() for parent in path.parents if parent != owner.parent),
                         'Owner input has a linked parent.')
         records[name] = {**release.file_record(path), 'mode': stat.S_IMODE(path.stat().st_mode)}
+    integration_digests = {name: pin[1] for name, pin in pins.items()}
+    serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
     return {'schema': 1, 'purpose': 'local-owner-build', 'deployment_sequence': sequence,
             'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
-            'integration_digests': {name: pin[1] for name, pin in pins.items()},
+            'effective_configuration_sha256': config.effective_digest(value, integration_digests, serial_digest),
+            'integration_digests': integration_digests,
             'files': records, 'platform_files': selection['files'],
             'platform_manifest_sha256': selection['manifest_sha256'],
             'compiler_source_commit': selection['source_commit'],
             'builder': selection['builder']+'@sha256:'+selection['builder_digest'],
-            'serial_provisioning_sha256': release.file_record(serial_hash)['sha256'] if serial_hash else None,
+            'serial_provisioning_sha256': serial_digest,
             'assessment_sha256': release.file_record(platform/'security-assessment.json')['sha256']
                 if (platform/'security-assessment.json').exists() else None}
 
@@ -161,6 +177,8 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
         (private/'admitted.json').write_bytes(release.canonical({
             'platform_lock_sha256': actual['files']['platform.lock']['sha256'],
             'configuration_sha256': actual['configuration_sha256'], 'files': actual['platform_files'],
+            'effective_configuration_sha256': actual['effective_configuration_sha256'],
+            'serial_provisioning_sha256': actual['serial_provisioning_sha256'],
             'integration_digests': actual['integration_digests'], 'assessment_sha256': actual['assessment_sha256']}))
         (private/'admitted.json').chmod(0o600)
         # Normalize ownership inside this isolated mount only. Rootless Podman's
