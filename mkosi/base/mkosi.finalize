@@ -103,6 +103,10 @@ def main():
                 'suricata.service','tayga.service','avahi-daemon.service','avahi-daemon.socket',
                 'prometheus-node-exporter.service','alloy.service','snmpd.service','vpp.service',
                 'discovery-bridge.service','discovery-bridge-dns.service','dpdk.service',
+                # The appliance has no scheduled local jobs or mutable hostname
+                # API. SSH service activation is explicit; its alternate socket
+                # and per-connection unit must not bypass the service drop-ins.
+                'cron.service','systemd-hostnamed.service','ssh.socket','sshd@.service',
                 # Only the authenticated staging helper owns image updates and
                 # reboot selection. Package presets must not schedule either.
                 'systemd-sysupdate.service','systemd-sysupdate.timer',

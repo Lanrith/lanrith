@@ -49,6 +49,17 @@ bounding sets, namespace, writable paths and reachable sockets must be recorded
 and justified. Root-running front ends need protocol-specific privilege
 separation or must be counted in the root trusted computing base.
 
+The base image gives Kea only `CAP_NET_BIND_SERVICE` and `CAP_NET_RAW` and runs
+it as `_kea`. Unbound starts with the five capabilities needed to refresh its
+trust anchor, bind port 53 and drop identity; the live resolver must have empty
+effective and permitted sets. Both units use `NoNewPrivileges`, seccomp,
+read-only system paths and restricted address families. `cron`,
+`systemd-hostnamed`, `ssh.socket` and `sshd@.service` are masked because Lanrith
+has no workflow that needs them. The selected `ssh.service` remains the login
+broker. In root-enabled images its privileged monitor is part of the root TCB;
+in rootless images it also receives `NoNewPrivileges`, a bounded capability
+set and read-only filesystem views with only the upload directory writable.
+
 ## Guarantees before root compromise
 
 An administrator before elevation, an unprivileged service identity and any
@@ -109,7 +120,9 @@ Candidate-specific service qualification records effective UID, groups,
 capabilities, `NoNewPrivileges`, seccomp state, namespaces, writable paths and
 network reachability for each enabled daemon. Tests run from the real daemon
 context where a unit grants capabilities or supplementary groups. Static unit
-inspection alone is not enough.
+inspection alone is not enough. The native gate also rejects an active cron,
+hostname API or alternate SSH activation path and checks the live Unbound, Kea,
+Chrony and networkd process capability sets against their declared bounds.
 
 A disposable root positive control may repeat policy-mutation attacks to show
 that the oracle is capable of detecting them. That result confirms the declared

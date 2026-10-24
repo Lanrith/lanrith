@@ -103,6 +103,12 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn('etc/security/authorized_keys', disabled)
         self.assertIn('PermitRootLogin no', disabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
         self.assertIn('AllowAgentForwarding no', disabled['etc/ssh/sshd_config.d/00-lanrith.conf'])
+        ssh = disabled['etc/systemd/system/ssh.service.d/60-lanrith-rootless.conf']
+        self.assertIn('NoNewPrivileges=yes', ssh)
+        self.assertIn('ProtectSystem=strict', ssh)
+        self.assertIn('ReadWritePaths=/var/tmp/lanrith-update', ssh)
+        self.assertNotIn('etc/systemd/system/ssh.service.d/60-lanrith-rootless.conf',
+                         enabled)
         manifest = json.loads(disabled['usr/share/lanrith/administration.json'])
         self.assertEqual(manifest['root_access'], 'disabled')
         self.assertFalse(any(path.endswith(('.yaml', '.yml')) for path in disabled))

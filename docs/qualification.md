@@ -12,6 +12,7 @@ package inventory, artifacts and profile.
 | Hardware | x86-64 VM and each claimed physical profile; NIC selectors, disk budgets, TPM/manual encryption, console |
 | Boot | Owner Secure Boot trust, valid dm-verity, encrypted persistent state and acknowledged offline recovery |
 | Privilege boundary | Direct root login denied; administrator elevation reauthenticated; root-only controls denied to administrator-before-elevation and every service identity |
+| Service confinement | Live Unbound, Kea, Chrony and networkd identities match their capability, no-new-privileges and seccomp contracts; unused cron, hostname and alternate SSH units remain masked |
 | Factory | Wrong trust, mismatched payload, ambiguous/mounted target and interrupted installation rejection; read-back |
 | Network | Two unrelated synthetic topologies; explicit administration, default deny, DHCP/RA/DNS, optional services off |
 | Advanced integration | Routing, translation, policy enforcement, discovery, directory, telemetry and acceleration tests for enabled profiles |
@@ -63,3 +64,8 @@ that direct root login, sudo, su, agent forwarding, set-user-ID/set-group-ID
 files, file capabilities and source YAML are absent. Its unprivileged SSH
 session can inspect status and stage upload bytes in its bounded temporary
 directory, but cannot invoke a privileged runtime or service-control operation.
+It also checks the running SSH master for the rootless unit's
+`NoNewPrivileges`, seccomp, capability and filesystem restrictions. The
+root-enabled profiles deliberately do not apply that SSH restriction to the
+post-`sudo` session because successful elevation enters the trusted root
+boundary described in `security-model.md`.

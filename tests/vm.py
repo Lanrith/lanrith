@@ -556,6 +556,10 @@ test ! -e /etc/lanrith-unprivileged-probe
 test ! -e /var/lib/lanrith/unprivileged-probe
 test ! -e /boot/lanrith-unprivileged-probe
 systemctl is-active --quiet kea-dhcp4-server.service
+for unit in cron.service systemd-hostnamed.service ssh.socket sshd@.service; do
+    test "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked
+    ! systemctl is-active --quiet "$unit"
+done
 python3 - <<'PY'
 from pathlib import Path
 import subprocess
@@ -578,6 +582,29 @@ if 'NoNewPrivileges=yes' not in properties or not any(line.startswith('SystemCal
     raise SystemExit('The network-control TCB lost its execution restrictions.')
 networkd_allowed = sum(1 << bit for bit in (10, 11, 12, 13, 21, 39))
 allowed = {networkd: networkd_allowed}
+for unit, names, mask in (
+        ('unbound.service', set('cap_chown cap_dac_override cap_setgid cap_setuid '
+                                'cap_net_bind_service'.split()), 0),
+        ('kea-dhcp4-server.service', {'cap_net_bind_service', 'cap_net_raw'},
+         sum(1 << bit for bit in (10, 13))),
+        ('chrony.service', {'cap_net_bind_service', 'cap_sys_time'},
+         sum(1 << bit for bit in (10, 25)))):
+    rows = subprocess.check_output(['systemctl', 'show', '--property', 'MainPID',
+        '--property', 'NoNewPrivileges', '--property', 'ProtectSystem', '--property', 'PrivateTmp',
+        '--property', 'MemoryDenyWriteExecute', '--property', 'SystemCallFilter',
+        '--property', 'CapabilityBoundingSet', unit], text=True).splitlines()
+    fields = dict(row.split('=', 1) for row in rows)
+    if fields.get('NoNewPrivileges') != 'yes' or fields.get('ProtectSystem') != 'strict' or \
+            fields.get('PrivateTmp') != 'yes' or fields.get('MemoryDenyWriteExecute') != 'yes' or \
+            not fields.get('SystemCallFilter'):
+        raise SystemExit(unit+' lost its execution or filesystem restrictions.')
+    observed = set(fields.get('CapabilityBoundingSet', '').split())
+    if not observed or not observed <= names:
+        raise SystemExit(unit+' has an undeclared capability bound: '+str(sorted(observed-names)))
+    pid = int(fields['MainPID'])
+    if pid <= 0:
+        raise SystemExit(unit+' has no live service process.')
+    allowed[pid] = mask
 seen = set()
 for status in Path('/proc').glob('[0-9]*/status'):
     try:
@@ -585,13 +612,14 @@ for status in Path('/proc').glob('[0-9]*/status'):
                   for line in status.read_text().splitlines() if ':' in line}
         uid = int(fields['Uid'].split()[1])
         effective = int(fields['CapEff'], 16)
+        retained = effective | int(fields['CapPrm'], 16) | int(fields['CapInh'], 16) | int(fields['CapAmb'], 16)
     except (FileNotFoundError, KeyError, ValueError, PermissionError):
         continue
     if uid != 0:
         seen.add(uid)
         permitted = allowed.get(int(status.parent.name), 0)
-        if effective & forbidden & ~permitted or effective & ~permitted and permitted:
-            raise SystemExit('A non-root process holds a root-equivalent capability.')
+        if retained & ~permitted or effective & forbidden & ~permitted:
+            raise SystemExit('A non-root process holds an undeclared capability.')
 if not seen:
     raise SystemExit('No non-root process context was observed.')
 PY
@@ -977,6 +1005,20 @@ for path in /usr/bin/sudo /usr/bin/sudoedit /usr/bin/su /bin/su /etc/sudoers /et
 done
 test ! -S "${SSH_AUTH_SOCK:-/nonexistent}"
 grep -qx 'AllowAgentForwarding no' /etc/ssh/sshd_config.d/00-lanrith.conf
+properties=$(systemctl show --property NoNewPrivileges --property ProtectSystem \
+  --property PrivateTmp --property MemoryDenyWriteExecute --property SystemCallFilter ssh.service)
+printf '%s\n' "$properties" | grep -qx 'NoNewPrivileges=yes'
+printf '%s\n' "$properties" | grep -qx 'ProtectSystem=strict'
+printf '%s\n' "$properties" | grep -qx 'PrivateTmp=yes'
+printf '%s\n' "$properties" | grep -qx 'MemoryDenyWriteExecute=yes'
+printf '%s\n' "$properties" | grep -q '^SystemCallFilter=.'
+pid=$(systemctl show --property MainPID --value ssh.service)
+grep -qx 'NoNewPrivs:[[:space:]]*1' "/proc/$pid/status"
+grep -qx 'Seccomp:[[:space:]]*2' "/proc/$pid/status"
+for unit in cron.service systemd-hostnamed.service ssh.socket sshd@.service; do
+  test "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked
+  ! systemctl is-active --quiet "$unit"
+done
 ! find /usr /bin /sbin -xdev -type f -perm /6000 -print -quit | grep -q .
 python3 - <<'PY'
 import os

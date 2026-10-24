@@ -367,6 +367,23 @@ def render(value, *, target_facts=None, retained_allocations=None):
              'etc/sysctl.d/90-lanrith-routing.conf': firewall.sysctls(),
              'etc/ssh/sshd_config.d/00-lanrith.conf': ssh_policy,
              f'home/{user}/.ssh/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n'}
+    if root_access == 'disabled':
+        # The SSH master still needs a small capability set to authenticate and
+        # enter the unprivileged operator account. NoNewPrivileges then follows
+        # the session and makes the absence of sudo/su a kernel-enforced rule.
+        files['etc/systemd/system/ssh.service.d/60-lanrith-rootless.conf'] = (
+            '[Service]\nNoNewPrivileges=yes\n'
+            'CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH '
+            'CAP_FOWNER CAP_KILL CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID CAP_SYS_CHROOT\n'
+            'AmbientCapabilities=\nUMask=0077\nPrivateTmp=yes\nPrivateDevices=yes\n'
+            'ProtectSystem=strict\nReadWritePaths=/var/tmp/lanrith-update\nProtectHome=read-only\n'
+            'InaccessiblePaths=-/var/lib/lanrith/secrets -/var/lib/lanrith/update-inbox\n'
+            'ProtectHostname=yes\nProtectClock=yes\nProtectKernelTunables=yes\n'
+            'ProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n'
+            'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
+            'MemoryDenyWriteExecute=yes\nSystemCallArchitectures=native\n'
+            'SystemCallFilter=~@cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap\n')
     if root_access == 'enabled':
         files['etc/security/authorized_keys'] = '\n'.join(value['administration']['authorized_keys']) + '\n'
         files['etc/sudoers.d/60-lanrith'] = (
