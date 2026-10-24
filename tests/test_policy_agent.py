@@ -93,6 +93,11 @@ class PolicyAgentContractTests(unittest.TestCase):
                          'net.core.wmem_max = 16777216\nnet.core.rmem_max = 16777216\n')
         self.assertIn('After=nftables.service systemd-networkd.service systemd-sysctl.service',
                       files['usr/lib/systemd/system/lanrith-policy-guards.service'])
+        for name, budget in {
+                'bindings': 'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n',
+                'helper': 'MemoryMax=512M\nMemorySwapMax=0\nTasksMax=64\nLimitNOFILE=4096\n',
+                'reader': 'MemoryMax=256M\nMemorySwapMax=0\nTasksMax=64\nLimitNOFILE=1024\n'}.items():
+            self.assertIn(budget, files['usr/lib/systemd/system/lanrith-policy-'+name+'.service'])
 
     def test_core_contract_tracks_service_ranges_families_and_network_switches(self):
         raw = declaration()

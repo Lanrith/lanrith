@@ -296,6 +296,7 @@ def render(value):
             '[Service]\nUser=lanrith-nat46\nGroup=lanrith-nat46\n'
             'ExecStart=/usr/sbin/tayga --nodetach --config /etc/tayga-nat46.conf\n'
             'Restart=on-failure\nRestartSec=2s\nNoNewPrivileges=yes\n'
+            'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=16\nLimitNOFILE=256\n'
             'CapabilityBoundingSet=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
             'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n'
             'DevicePolicy=closed\nDeviceAllow=/dev/net/tun rw\n'

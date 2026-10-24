@@ -28,6 +28,9 @@ def command(arguments, timeout=30):
     try:
         result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True,
                                 text=True, timeout=timeout, env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+    except subprocess.TimeoutExpired as error:
+        from .release import ReleaseError
+        raise ReleaseError('Update command timed out: '+Path(arguments[0]).name) from error
     except OSError as error:
         from .release import ReleaseError
         raise ReleaseError('Update command could not start: '+Path(arguments[0]).name) from error

@@ -127,6 +127,8 @@ class Nat46Tests(unittest.TestCase):
         self.assertNotIn('dynamic-pool', files['etc/tayga-nat46.conf'])
         self.assertIn('User=lanrith-nat46', files['usr/lib/systemd/system/lanrith-nat46.service'])
         self.assertIn('CapabilityBoundingSet=\n', files['usr/lib/systemd/system/lanrith-nat46.service'])
+        self.assertIn('MemoryMax=128M\nMemorySwapMax=0\nTasksMax=16\nLimitNOFILE=256\n',
+                      files['usr/lib/systemd/system/lanrith-nat46.service'])
         changed = copy.deepcopy(raw)
         changed['translation']['nat64'] = {'enabled': True}
         self.assertEqual(files, nat46.render(config.normalize(changed)))

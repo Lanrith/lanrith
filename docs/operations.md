@@ -94,6 +94,19 @@ inboxes, executable content, service-manager overrides, old enrollment markers
 or a complete `/var` snapshot from the compromised system. Private extension
 state needs an owner-specific migration and withdrawal test.
 
+The signed image places hard memory, process and descriptor ceilings on its
+DNS, DHCP, NTP, directory-policy and translation services. Exhausting a ceiling
+is an availability event, never an authorization fallback: firewall defaults
+and directory terminal-deny behavior remain installed while the affected
+service restarts or stays failed. Update subprocesses also have bounded
+deadlines and report only the public tool name. Durable policy and translation
+writers flush a complete temporary file before replacement, so an exhausted
+filesystem retains the last complete record or no new record. These controls
+do not qualify storage exhaustion by themselves. Before production, run the
+candidate-specific resource, malformed-state and clock campaign in
+`qualification.md` and retain its external alarms in the signed evidence
+bundle.
+
 Initial factory installation verifies media against the certificate embedded
 in the booted verified root, checks matching root identities, excludes the boot
 disk and mounted/in-use devices, and requires the full stable target identity

@@ -585,22 +585,27 @@ if 'NoNewPrivileges=yes' not in properties or not any(line.startswith('SystemCal
     raise SystemExit('The network-control TCB lost its execution restrictions.')
 networkd_allowed = sum(1 << bit for bit in (10, 11, 12, 13, 21, 39))
 allowed = {networkd: networkd_allowed}
-for unit, names, mask in (
+for unit, names, mask, resources in (
         ('unbound.service', set('cap_chown cap_dac_override cap_setgid cap_setuid '
-                                'cap_net_bind_service'.split()), 0),
+                                'cap_net_bind_service'.split()), 0, ('536870912', '64', '4096')),
         ('kea-dhcp4-server.service', {'cap_net_bind_service', 'cap_net_raw'},
-         sum(1 << bit for bit in (10, 13))),
+         sum(1 << bit for bit in (10, 13)), ('268435456', '64', '4096')),
         ('chrony.service', {'cap_net_bind_service', 'cap_sys_time'},
-         sum(1 << bit for bit in (10, 25)))):
+         sum(1 << bit for bit in (10, 25)), ('134217728', '32', '1024'))):
     rows = subprocess.check_output(['systemctl', 'show', '--property', 'MainPID',
         '--property', 'NoNewPrivileges', '--property', 'ProtectSystem', '--property', 'PrivateTmp',
         '--property', 'MemoryDenyWriteExecute', '--property', 'SystemCallFilter',
-        '--property', 'CapabilityBoundingSet', unit], text=True).splitlines()
+        '--property', 'CapabilityBoundingSet', '--property', 'MemoryMax',
+        '--property', 'MemorySwapMax', '--property', 'TasksMax', '--property', 'LimitNOFILE',
+        unit], text=True).splitlines()
     fields = dict(row.split('=', 1) for row in rows)
     if fields.get('NoNewPrivileges') != 'yes' or fields.get('ProtectSystem') != 'strict' or \
             fields.get('PrivateTmp') != 'yes' or fields.get('MemoryDenyWriteExecute') != 'yes' or \
             not fields.get('SystemCallFilter'):
         raise SystemExit(unit+' lost its execution or filesystem restrictions.')
+    if (fields.get('MemoryMax'), fields.get('TasksMax'), fields.get('LimitNOFILE')) != resources or \
+            fields.get('MemorySwapMax') != '0':
+        raise SystemExit(unit+' lost its memory, task or descriptor budget.')
     observed = set(fields.get('CapabilityBoundingSet', '').split())
     if not observed or not observed <= names:
         raise SystemExit(unit+' has an undeclared capability bound: '+str(sorted(observed-names)))

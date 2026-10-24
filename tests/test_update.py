@@ -163,6 +163,13 @@ class UpdatePlanTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseError, '^Update command could not start: systemd-sysupdate$'):
                 update.command(['/usr/lib/systemd/systemd-sysupdate', 'update', '10'])
 
+    def test_timed_out_command_reports_only_the_tool_name(self):
+        with patch.object(update.subprocess, 'run', side_effect=subprocess.TimeoutExpired(
+                ['/usr/lib/systemd/systemd-sysupdate', 'update', '/private/example-secret'], 30,
+                output='sensitive stdout', stderr='sensitive stderr')):
+            with self.assertRaisesRegex(ReleaseError, '^Update command timed out: systemd-sysupdate$'):
+                update.command(['/usr/lib/systemd/systemd-sysupdate', 'update', '/private/example-secret'])
+
     def test_inactive_partition_is_busy_when_a_child_mapping_is_mounted(self):
         device = {'name': '/dev/lanrith-test-disk2', 'type': 'part', 'pkname': '/dev/lanrith-test-disk',
                   'partn': 2, 'parttype': update.GUIDS['root'], 'partlabel': '_empty',

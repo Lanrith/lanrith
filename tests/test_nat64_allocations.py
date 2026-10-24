@@ -7,7 +7,9 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from lanrith import config, nat64, nat64_allocations as allocations, translation
 from lanrith.release import ReleaseError
@@ -105,6 +107,20 @@ class AllocationTests(unittest.TestCase):
         self.assertNotEqual(left[source[0]], right[source[0]])
         with self.assertRaises(ReleaseError):
             allocations.validate(second, left)
+
+    def test_exhausted_state_write_preserves_the_last_complete_mapping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            target = directory/'dynamic.map'
+            target.write_bytes(b'last complete mapping\n')
+            target.chmod(0o600)
+            metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_uid=0)
+            with patch.object(Path, 'lstat', return_value=metadata), \
+                    patch.object(allocations.os, 'fsync', side_effect=OSError(28, 'no space left')):
+                with self.assertRaises(OSError):
+                    allocations.atomic_write(target, b'partial replacement\n')
+            self.assertEqual(target.read_bytes(), b'last complete mapping\n')
+            self.assertEqual([path.name for path in directory.iterdir()], ['dynamic.map'])
 
 
 if __name__ == '__main__':

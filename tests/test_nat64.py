@@ -78,6 +78,8 @@ class Nat64Tests(unittest.TestCase):
             name = manifest['interface']
             self.assertIn('ReadWritePaths='+manifest['state_directory'],
                           files['usr/lib/systemd/system/lanrith-'+name+'.service'])
+            self.assertIn('MemoryMax=256M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n',
+                          files['usr/lib/systemd/system/lanrith-'+name+'.service'])
             self.assertIn('u lanrith-'+name, files['usr/lib/sysusers.d/80-lanrith-'+name+'.conf'])
         runtime = json.loads(files['etc/router-policy-agent/nat64-runtime/runtime.json'])
         self.assertEqual(runtime, {'schema_version': 1, 'components': [

@@ -19,6 +19,7 @@ package inventory, artifacts and profile.
 | Updates | Valid upgrade, inactive-slot protection, tamper/replay rejection, interrupted staging and UKI-last publication |
 | Acceptance | Fresh counted boot, health, stable entry, explicit default promotion and automatic failed-candidate fallback |
 | State | Existing leases, journals, credentials, enrollment, SSH identity and owner-specific state survive upgrade and rollback |
+| Resource and fault handling | Full blocks and inodes, bounded memory/tasks/descriptors and network-state tables, malformed state, service restarts, and backward/forward clock changes |
 | Provenance | Verified file/OCI subjects, exact identities and requirement-by-requirement SLSA v1.2 Build L3 assessment |
 | Automation | Reviewed input proposal, merged build, retained rescan, signing failure and watchdog failure exercised |
 
@@ -102,6 +103,21 @@ TSIG, BGP, RADIUS, log, SNMP and extension/console credential is rejected after
 external rotation. Expired grants and unused automation identities remain
 denied. Populated-state upgrade and rollback still pass for the non-compromise
 path; recovery deliberately does not promise to retain exposed authority.
+
+Resource and fault qualification is a candidate test, not a source-inspection
+claim. Run it on an isolated clone with representative leases, DNS journals,
+policy grants, translation allocations, log queues and an admitted update.
+Exhaust blocks and inodes independently for state, update, journal and telemetry
+paths; drive each enabled daemon to its signed `MemoryMax`, `TasksMax` and
+`LimitNOFILE`; fill bounded nftables/conntrack/neighbour/DHCP/policy structures;
+then inject truncated, oversized and malformed durable records. Move the wall
+clock both behind and ahead of directory observations and release evidence,
+including across a reboot that resets the monotonic clock. A fault may reduce
+availability, but must not create a permit, revive an expired grant, replace a
+retained translation identity, admit an old sequence, select an unauthenticated
+boot entry or publish a partial state file. Record recovery time, dropped work,
+queue eviction and externally observed alarms as limits. The campaign remains
+open if any path was skipped because its positive control did not work.
 
 The final campaign is staged as one directory containing `campaign.json`,
 `report.md`, `harness/` and `evidence/`. The campaign binding names the exact

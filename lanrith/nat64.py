@@ -226,6 +226,7 @@ def render(value, retained=None):
             f'ExecStartPost=/usr/bin/python3 -m lanrith.nat64_runtime wait {name}\nTimeoutStartSec=40s\n'
             f'RuntimeDirectory=lanrith-{name}\nRuntimeDirectoryMode=0755\n'
             'Restart=on-failure\nRestartSec=2s\nNoNewPrivileges=yes\n'
+            'MemoryMax=256M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n'
             'CapabilityBoundingSet=CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_KILL\n'
             'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
             f'ReadWritePaths={state}\nRestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6\n'

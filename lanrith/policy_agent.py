@@ -263,7 +263,7 @@ def render(value):
         'ReadWritePaths=/run/lanrith-policy/bindings /run/lanrith-policy/collector\n'
         'RestrictAddressFamilies='+binding_families+'\n'
         'RestrictNamespaces=yes\nRestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
-        'MemoryMax=128M\nTasksMax=32\n')
+        'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n')
     helper = (
         '[Unit]\nDescription=Enforce image-bounded directory policy\n'
         'Wants=lanrith-policy-reader.service\n'
@@ -282,7 +282,8 @@ def render(value):
         'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'
         'ReadWritePaths=/run/lanrith-policy /var/lib/lanrith/policy-agent\n'
         'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\nRestrictRealtime=yes\n'
-        'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=512M\nTasksMax=64\n')
+        'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=512M\nMemorySwapMax=0\n'
+        'TasksMax=64\nLimitNOFILE=4096\n')
     reader = (
         '[Unit]\nDescription=Read fresh directory policy over verified TLS\n'
         'Requires=lanrith-policy-helper.service\nAfter=lanrith-policy-helper.service systemd-networkd.service\n\n'
@@ -292,7 +293,8 @@ def render(value):
         'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nRestrictNamespaces=yes\nRestrictRealtime=yes\n'
-        'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=256M\nTasksMax=64\n')
+        'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=256M\nMemorySwapMax=0\n'
+        'TasksMax=64\nLimitNOFILE=1024\n')
     return {
         'etc/router-policy-agent/runtime/runtime.json': canonical(contract).decode(),
         # nft sends the complete immutable schema as one atomic transaction and
