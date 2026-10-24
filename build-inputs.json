@@ -15,17 +15,17 @@
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "641a0f164e6e09b74c507db9d166d8ad58e3189f737803b307145c2b739e4683",
-        "router-policy-collector_0.1.3_amd64.deb": "98e49d1af771ae5dc58632265c1c18c9d9dfcfc67f665fec9a2fee31f82a9428",
-        "router-policy-helper_0.1.3_amd64.deb": "10aa67585b0b7e93bf59e47fe32a5b2b88a52d88fabbff36bffc27d98771a110",
-        "router-policy-reader_0.1.3_amd64.deb": "60b5919f3ba89c1e0857eabfc809873e77c12a7e7d0044d9761670028ca21640",
-        "security.txt": "4dda556990083e2e842a06ae6278f207d3147baf4d6c5bd9c2b71b85a8d4abdf",
-        "update-record.json": "4be5ad0d4cb043395cd2612a78df58094a9bcbf5c75e7b91bbcd3ad2e7efe8ed"
+        "component-release.json": "9c29d2334a794df9908966f6165b86a3ced93b06e2144f24c47ba9bdce7dfc02",
+        "router-policy-collector_0.1.4_amd64.deb": "0d77279d9005cdee1be0be836eb9d10ee304f51ae17cf3dd293a8f6380accc10",
+        "router-policy-helper_0.1.4_amd64.deb": "f5ef58913a4c12219a0e541adb5f6fbe9a64be8ed832416f89e16d2618b0a8c7",
+        "router-policy-reader_0.1.4_amd64.deb": "13b57c1f5bb6999440609ae52d134095e751db82d8fcda00cccbb7ea5de3e640",
+        "security.txt": "4bd0f31353151bf5fc8ca2258622c28e655ca40c280ced542d3381dfdc746ed4",
+        "update-record.json": "1e784434873c865d8bd5ca8fb1a4b84f1e01950e68391d05cd42fb494b2b26db"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "7f7aac51abd1f99fe0f27b9b500adf1fdb9b2d55",
-      "tag": "v0.1.3",
-      "workflow_commit": "7f7aac51abd1f99fe0f27b9b500adf1fdb9b2d55"
+      "source_commit": "d2a664e0be82087a7e35046880d9a611579c5e31",
+      "tag": "v0.1.4",
+      "workflow_commit": "d2a664e0be82087a7e35046880d9a611579c5e31"
     }
   },
   "custom_package_inputs": {
@@ -38,7 +38,7 @@
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
     "builders/alloy/source.json": "a0cb9fe1a379376e2914dd4478fbcf26347acf003d2c894c021d0d25d1397282",
     "builders/alloy/ui-dependencies.patch": "b4e4b9c13b0f496fee061a6a1341b7e93dd73ba8e823cf648f5058f68f8dc9c7",
-    "builders/build-inputs.lock": "c4470b621a24b4555af56bb7fe917f8382ecbc77972c21cb37fa3275410e2089",
+    "builders/build-inputs.lock": "27c6ed35b9e9cfd7a22a20bc1a21fb5049a47fee1d52dc8c12b701d3d3d5e9b2",
     "builders/mkosi/Containerfile": "55e4e902a27db01837d7f88a69d4ad8e53887c4f93c08b0de0982e2795a40736",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18",
@@ -53,10 +53,10 @@
     "builders/vpp/Containerfile": "8e83ccd74bd7c747a3429e7fd76f685f3f15218bbd48ebab55fca270957b25fa"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261023T140000Z",
+  "debian_snapshot": "20261024T160000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "d3277a45cd24aa00846e73436d2f86e2d829a150181b9e3258ad3df0d7785e66",
-  "security_snapshot": "20261023T140000Z"
+  "security_release_sha256": "099b79e16db940d5c68647a9e9c665de443627124fbfa35c6fa762e04a62b3b9",
+  "security_snapshot": "20261024T160000Z"
 }
