@@ -52,7 +52,7 @@
   ],
   "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
   "node_version": "24.22.1",
-  "package_version": "1.20.1-1+lanrith3",
+  "package_version": "1.20.1-1+lanrith4",
   "schema": 1,
   "supplemental_notices": {
     "github.com/dennwc/ioctl@v1.0.0": {

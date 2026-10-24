@@ -3,7 +3,16 @@
 The updater proposes authenticated security fixes. A separate App approves only
 changes that satisfy the policy on protected `main`, fresh advisory checks and
 the exact required validation runs. Native source upgrades, workflow changes and changes to approval or security rules
-require human review. Signed Unbound security-source updates can be proposed
+require human review. An existing npm dependency with an authenticated security fix
+can also get a PR when its name is outside the automatic patch set or its fix
+crosses a minor version within the same major. The reviewer derives the human
+review requirement from the actual manifest and lockfile changes; it does not
+trust the candidate's flag. These proposals cannot receive App approval or an
+automatic merge request. New dependencies, major migrations, installation hooks,
+script changes and dependency graph changes still stop resolution and raise an
+attention issue. Exact transitive fixes must satisfy their existing parents.
+
+Signed Unbound security-source updates can be proposed
 automatically, but carry an explicit human-review requirement. The public Debian
 source signing key is bundled with the reviewed tooling; the source lock still
 requires its previously pinned fingerprint and the separate upstream signature.
@@ -82,7 +91,9 @@ policy hash, trusted resolver commit and every changed input's before/after hash
 An unchanged candidate does not rewrite its open PR. The remediation issue links
 the candidate, PR and audit run; opening a PR does not mean the issue is fixed.
 
-Public upstream responses, including advisory and package metadata, are retained
+Advisory reasons hash canonical JSON so upstream object key ordering cannot
+invalidate an unchanged finding. Any advisory content change still requires a
+fresh candidate. Public upstream responses, including advisory and package metadata, are retained
 in `input-evidence.tar.gz` with their origin, retrieval time and digest. Registry
 authentication responses, request headers and credentials are excluded.
 

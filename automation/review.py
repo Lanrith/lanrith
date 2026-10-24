@@ -137,15 +137,14 @@ def inspect(repo, number, reviewer_source, output):
             require(digest(before[path]) == change['before_sha256'] and digest(after[path]) == change['after_sha256'],
                     'PR source bytes differ from the recorded update: '+path)
         validate_reasons(record['reasons'])
-        inputs.validate_changes(before, after, record['reasons'], policy, old, new)
+        manual_findings = inputs.validate_changes(before, after, record['reasons'], policy, old, new)
         inspected = [{'path': path, **record['changes'][path], 'result': 'pass',
                       'method': 'Authenticated advisory, permitted semantic change and upstream input validation'}
                      for path in sorted(record['changes'])]
-        requires_human = 'builders/unbound-source.lock' in record['changes']
-        require(record['requires_human'] is requires_human, 'Candidate misclassified a source upgrade as an automatic change.')
+        require(record['requires_human'] is bool(manual_findings),
+                'Candidate misclassified a dependency update as an automatic change.')
         checks = validation_runs(repo, pr, policy)
-        if requires_human:
-            findings.append('Native source upgrade requires independent human review.')
+        findings.extend(manual_findings)
     except (MaintenanceError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError) as error:
         findings.append(str(error))
     decision = evidence.decision(record, head=head, base=base, policy=policy_raw, checks=checks,
@@ -255,8 +254,8 @@ def admission(repo, number, decision_path, reviewer_source, app_id):
     """Publish qualification status for manual PRs without granting them App approval."""
     record, policy = inspect(repo, number, reviewer_source, decision_path)
     pr = api('repos/'+repo+'/pulls/'+str(number))
-    qualified_manual = record.get('candidate', {}).get('requires_human') is True and record['findings'] == [
-        'Native source upgrade requires independent human review.']
+    qualified_manual = (record.get('candidate', {}).get('requires_human') is True and bool(record['findings']) and
+                        set(record['findings']) <= inputs.HUMAN_REVIEW_FINDINGS)
     automatic = pr['head']['ref'] == policy['proposal_branch'] and pr['head']['repo']['full_name'] == repo and not qualified_manual
     error = None
     if not automatic:

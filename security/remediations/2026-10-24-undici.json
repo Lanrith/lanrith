@@ -1,0 +1,93 @@
+{
+  "approval": "Pending independent human GitHub review of the exact PR head. Release update-record.json will bind the approval and required qualification runs.",
+  "base_sha": "f64b9a1973eeb2fab0da2d4f24520d93cbf63977",
+  "input_changes": {
+    "build-inputs.json": {
+      "after_sha256": "127e136e8ed6c0a97ab3a76ba14f7dd0d72b31958f103a68f3dd5183a76eba96",
+      "before_sha256": "626e2d36e5522787a3f009666746b0c79f50f0d6d4ac5254140ad91f720a5962"
+    },
+    "builders/alloy/source.json": {
+      "after_sha256": "3652dbeab2d9389ecba86133c979a4d5ab756c97d1691c8d9a2189536ba0fd31",
+      "before_sha256": "a0cb9fe1a379376e2914dd4478fbcf26347acf003d2c894c021d0d25d1397282"
+    },
+    "builders/alloy/ui-dependencies.patch": {
+      "after_sha256": "b95bc5f6b00b5c45c32eb68f7cdd5d3d9a4c4fb85cf21fa1661dbacf04ffad67",
+      "before_sha256": "54b5eed98bcbad0398db27edd21c82c8474929a921b2ce3e8aa5baa402304927"
+    },
+    "security/policy.json": {
+      "after_sha256": "7e49c4e8391aa36fbbfa6b9a878a82a6d4aa66a1fcca789731d003012dd49dd6",
+      "before_sha256": "9ef985414ccb2578d6523f5e5298ef94c50b0c70ec6d1bff2aa849d24ad2bea4"
+    }
+  },
+  "kind": "human-reviewed-security-remediation",
+  "package_version": "1.20.1-1+lanrith4",
+  "reason": "Undici 7.29.1 is affected by three authenticated advisories; 7.30.1 is the smallest verified fixed version in the existing major and satisfies jsdom ^7.25.0. The minor migration is outside automatic approval policy.",
+  "reasons": [
+    {
+      "ecosystem": "npm",
+      "evidence_sha256": "715a0c57ee4b46dd6c94a107d3b60c92d623ca5fadf48e341da829eac468da2e",
+      "fixed": "7.30.1",
+      "id": "GHSA-4qv8-2p9j-2685",
+      "installed": "7.29.1",
+      "package": "undici",
+      "source": "https://api.osv.dev/v1/vulns/GHSA-4qv8-2p9j-2685",
+      "type": "security-fix"
+    },
+    {
+      "ecosystem": "npm",
+      "evidence_sha256": "f37e20d92263b5e992b64db40eb427e860378eff431de5a33bbb6f65313c9b9a",
+      "fixed": "7.30.1",
+      "id": "GHSA-f72v-6w45-q472",
+      "installed": "7.29.1",
+      "package": "undici",
+      "source": "https://api.osv.dev/v1/vulns/GHSA-f72v-6w45-q472",
+      "type": "security-fix"
+    },
+    {
+      "ecosystem": "npm",
+      "evidence_sha256": "d71cfd272d569fd2e454c2e6087b9c02c3a7982726ad3eddbdc30a7138f26634",
+      "fixed": "7.30.1",
+      "id": "GHSA-xjj6-f33q-929c",
+      "installed": "7.29.1",
+      "package": "undici",
+      "source": "https://api.osv.dev/v1/vulns/GHSA-xjj6-f33q-929c",
+      "type": "security-fix"
+    }
+  ],
+  "repository": "Lanrith/lanrith",
+  "requires_human": true,
+  "schema": 1,
+  "trigger": {
+    "result": "blocked-before-publication",
+    "run_id": 40070204084,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40070204084",
+    "workflow": "Release"
+  },
+  "validation": {
+    "advisory_evidence": "Canonical JSON SHA256, independently refetched and revalidated; exact response bytes archived separately.",
+    "direct_dependency_changes": [],
+    "evidence_sha256": {
+      "npm-audit.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "npm-audit.stdout": "f4b0105b5abdc1a1b37b1e1f16fecf56bb8c2819ba2bf0976182b4c9050afcec",
+      "npm-ci.stderr": "eb57253956438681ee2304cf16b790ff8f00c203f793c371a1d68f2be0ff44ab",
+      "npm-ci.stdout": "d66f5b129116b9a3f4c69fb6522a2c051ae21bf8777e008cb935b4d5b473caa6",
+      "npm-signing-keys.json": "faf23d8753d5bb79df250f10391ac89b63ecf7743e48487a544a99c847f9c8df",
+      "undici-registry.json": "1bdb8d9221dd4a6b72723d8c8144823b682015c31b4d3e91437d53ade3f8730c"
+    },
+    "installation": "npm ci --ignore-scripts --no-audit --no-fund: exit 0",
+    "locked_changes": [
+      "node_modules/undici"
+    ],
+    "npm_audit": {
+      "critical": 0,
+      "high": 0,
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "total": 0
+    },
+    "registry_signature": "Verified ECDSA SHA256 signature against the matching npm registry signing key",
+    "runtime": "Node 24.22.1 from checksum-verified official archive",
+    "tarball_integrity": "Verified SHA512 against the locked registry SRI"
+  }
+}

@@ -7,7 +7,7 @@ from .common import api, canonical, digest, now, repository, require, timestamp
 
 
 TEMPORARY = re.compile(r'^(?:unsigned-package-(?:qualification|stage)|qualified-base|attested-base|package-stage|'
-                       r'unsigned-build-cache|verified-build-cache|synthetic-inline-cache|'
+                       r'unsigned-build-cache|untrusted-build-cache|verified-build-cache|synthetic-inline-cache|'
                        r'qualified-release|attested-release|qualified-(?:amd64|arm64)|'
                        r'assessed-inventories|signed-assessments|security-proposal|security-decision|'
                        r'publication-verification|attested-publication|security-proposal-audit|security-proposal-result|'

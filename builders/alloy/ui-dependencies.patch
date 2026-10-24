@@ -1,5 +1,5 @@
 diff --git a/internal/web/ui/package-lock.json b/internal/web/ui/package-lock.json
-index 46ec505..1ffa622 100644
+index 46ec505..e84a7a6 100644
 --- a/internal/web/ui/package-lock.json
 +++ b/internal/web/ui/package-lock.json
 @@ -35,8 +35,8 @@
@@ -173,6 +173,19 @@ index 46ec505..1ffa622 100644
 +      "integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==",
        "dev": true,
        "license": "BSD-3-Clause",
+       "engines": {
+@@ -4836,9 +4836,9 @@
+       }
+     },
+     "node_modules/undici": {
+-      "version": "7.29.1",
+-      "resolved": "https://registry.npmjs.org/undici/-/undici-7.29.1.tgz",
+-      "integrity": "sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==",
++      "version": "7.30.1",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.1.tgz",
++      "integrity": "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==",
+       "dev": true,
+       "license": "MIT",
        "engines": {
 @@ -4903,13 +4903,13 @@
        }
