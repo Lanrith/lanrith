@@ -119,6 +119,7 @@ class Guest:
         self.console = None
         self.buffer = b''
         self.last_diagnostic = None
+        self.service_state = None
         self.qmp_events = []
         self.observed_diagnostics = {}
         self.environment = {key: value for key, value in os.environ.items()
@@ -148,6 +149,7 @@ class Guest:
         release.require(self.process is None or self.process.poll() is not None, 'Guest is already running.')
         self.qmp_events = []
         self.observed_diagnostics = {}
+        self.service_state = None
         for name in ('qmp.sock', 'serial.sock', 'tpm.sock'):
             (self.work/name).unlink(missing_ok=True)
         arguments = ['qemu-system-x86_64', '-machine', 'q35,smm=on,accel=tcg', '-cpu', 'max',
@@ -288,7 +290,23 @@ class Guest:
         self.observed_diagnostics = {'flags': flags, 'literal_errors': sorted(literals)[:32],
                                      'failed_units': sorted(units)[:32]}
         return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
+            'service_state':getattr(self, 'service_state', None),
             'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(buffer).hexdigest()},sort_keys=True)
+
+    def service_diagnostic(self):
+        """Keep complete public unit identifiers, never SSH stderr or journal text."""
+        try:
+            result = self.ssh('systemctl list-units --failed --all --full --plain --no-legend --no-pager',
+                              success=False, timeout=10, agent=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return {'query_succeeded': False, 'failed_units': []}
+        names = set()
+        if result.returncode == 0 and len(result.stdout) <= 65536:
+            for line in result.stdout.decode(errors='replace').splitlines():
+                fields = line.split()
+                if fields and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', fields[0]):
+                    names.add(fields[0])
+        return {'query_succeeded': result.returncode == 0, 'failed_units': sorted(names)[:32]}
 
     def ssh_arguments(self, command, *, agent=True, user='admin'):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -340,6 +358,7 @@ class Guest:
                 # PAM are ready. Retry within the overall bounded boot window.
                 pass
             time.sleep(2)
+        self.service_state = self.service_diagnostic()
         raise release.ReleaseError('Guest did not pass its native health check over SSH: '+self.diagnostic())
 
     def close(self):

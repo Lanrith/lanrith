@@ -2,6 +2,7 @@
 
 import json
 import socket
+import subprocess
 import threading
 from types import SimpleNamespace
 import unittest
@@ -12,6 +13,25 @@ from lanrith.release import ReleaseError
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_failed_unit_diagnostic_keeps_complete_names_and_excludes_private_text(self):
+        guest = Guest.__new__(Guest)
+        guest.ssh = Mock(return_value=SimpleNamespace(returncode=0, stdout=(
+            b'systemd-hostnamed.socket loaded failed failed Hostname Service Socket\n'
+            b'boot-complete.target loaded failed failed Boot Complete\n'
+            b'disposable-recovery-key-never-log-this\n'), stderr=b'disposable-private-ssh-diagnostic'))
+        value = guest.service_diagnostic()
+        self.assertEqual(value, {'query_succeeded': True, 'failed_units': [
+            'boot-complete.target', 'systemd-hostnamed.socket']})
+        self.assertNotIn('disposable-', json.dumps(value))
+        guest.ssh.assert_called_once_with(
+            'systemctl list-units --failed --all --full --plain --no-legend --no-pager',
+            success=False, timeout=10, agent=False)
+
+    def test_unavailable_ssh_diagnostic_does_not_replace_the_original_boot_failure(self):
+        guest = Guest.__new__(Guest)
+        guest.ssh = Mock(side_effect=subprocess.TimeoutExpired('ssh', 10))
+        self.assertEqual(guest.service_diagnostic(), {'query_succeeded': False, 'failed_units': []})
+
     def test_emergency_mode_stops_boot_before_sending_credentials_or_attempting_ssh(self):
         for manual, first in ((False, True), (True, True), (True, False)):
             with self.subTest(manual=manual, first=first):

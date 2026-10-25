@@ -22,6 +22,12 @@ for path in (root/'.github/workflows').glob('*.yml'):
         assert handoff['with']['artifact-ids'] == '${{ needs.packages.outputs.cache-artifact-id }}', path.name
         assert "needs.build.outputs.production-qualified == 'true'" in handoff['if'], path.name
     if path.name == 'package-check.yml':
+        jobs = value['jobs']
+        assert jobs['preflight']['uses'] == './.github/workflows/check.yml', path.name
+        assert jobs['cache']['needs'] == 'preflight', 'Cache handoffs must wait for source qualification'
+        assert set(jobs['packages']['needs']) == {'preflight', 'cache'} and \
+            "needs.preflight.result == 'success'" in jobs['packages']['if'], \
+            'Expensive package compilation must wait for successful source qualification'
         report = next(s for s in value['jobs']['build']['steps']
                       if s.get('name') == 'Retain small qualification reports, including on failure')
         # The privileged VM/storage work tree contains private authorities and

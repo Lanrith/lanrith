@@ -15,13 +15,16 @@ concurrency:
   group: package-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 jobs:
+  preflight:
+    uses: ./.github/workflows/check.yml
   cache:
+    needs: preflight
     if: ${{ !inputs.cold_build }}
     cache-mode: read
     uses: ./.github/workflows/restore-cache.yml
   packages:
-    needs: cache
-    if: ${{ !cancelled() }}
+    needs: [preflight, cache]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     name: Unsigned package compilation
     outputs:
       artifact-id: ${{ steps.stage.outputs.artifact-id }}

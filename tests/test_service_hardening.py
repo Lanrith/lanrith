@@ -45,7 +45,8 @@ class ServiceHardeningTests(unittest.TestCase):
         self.assertIn('require_service_resources unbound.service 536870912 64 4096', health)
         self.assertIn('require_service_resources chrony.service 134217728 32 1024', health)
         self.assertIn('require_service_resources kea-dhcp4-server.service 268435456 64 4096', health)
-        self.assertIn('cron.service systemd-hostnamed.service ssh.socket sshd@.service', health)
+        self.assertIn('cron.service systemd-hostnamed.service systemd-hostnamed.socket '
+                      'ssh.socket sshd@.service', health)
 
 
 if __name__ == '__main__':

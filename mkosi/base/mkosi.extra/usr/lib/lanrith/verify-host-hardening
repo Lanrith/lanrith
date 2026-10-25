@@ -22,9 +22,9 @@ for unit in lanrith-policy-helper-shadow.service; do
   [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
   require_inactive_service "$unit"
 done
-# No appliance feature uses cron or the mutable hostname D-Bus API. Only the
+# No appliance feature uses cron or the mutable hostname API. Only the
 # drop-in-constrained SSH service may accept connections.
-for unit in cron.service systemd-hostnamed.service ssh.socket sshd@.service; do
+for unit in cron.service systemd-hostnamed.service systemd-hostnamed.socket ssh.socket sshd@.service; do
   [ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked ]
   require_inactive_service "$unit"
 done
