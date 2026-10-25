@@ -82,6 +82,9 @@ class AssemblyTests(unittest.TestCase):
             blessing = workspace/'mkosi.extra/etc/systemd/system/systemd-bless-boot.service.d/10-lanrith-esp.conf'
             self.assertEqual(blessing.read_text(),
                              '[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime bless\n')
+            seed = workspace/'mkosi.extra/etc/systemd/system/systemd-boot-random-seed.service.d/10-lanrith-esp.conf'
+            self.assertEqual(seed.read_text(),
+                             '[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime refresh-boot-seed\n')
 
     @unittest.skipUnless(shutil.which('mkosi'), 'Run in the matching mkosi builder for native configuration checks.')
     def test_pinned_mkosi_accepts_root_and_initrd_configuration(self):
