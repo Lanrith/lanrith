@@ -128,6 +128,14 @@ def bless(value=None):
     return accepted_boot(current, expected, esp)
 
 
+def refresh_boot_seed():
+    """Refresh the boot seed without leaving the verified ESP writable."""
+    value = installed()
+    esp = boot_esp(value)
+    with writable_esp(value, esp=esp):
+        command(['bootctl', '--esp-path='+str(esp), '--graceful', 'random-seed'])
+
+
 def publish():
     value = health()
     stable = bless(value)
@@ -165,6 +173,7 @@ def main(arguments=None):
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('health')
     commands.add_parser('bless')
+    commands.add_parser('refresh-boot-seed')
     commands.add_parser('telemetry')
     commands.add_parser('publish')
     commands.add_parser('status')
@@ -182,6 +191,9 @@ def main(arguments=None):
             print('Local boot health checks passed.')
         elif args.command == 'bless':
             print(bless().name)
+        elif args.command == 'refresh-boot-seed':
+            refresh_boot_seed()
+            print('Boot loader random seed refreshed.')
         elif args.command == 'telemetry':
             print(json.dumps(telemetry(), sort_keys=True, separators=(',', ':')))
         elif args.command == 'publish':

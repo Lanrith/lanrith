@@ -11,6 +11,22 @@ import subprocess
 import tempfile
 
 
+def enabled_socket_units(root):
+    """Verify vendor boot sockets explicitly, including their service pairing."""
+    names = set()
+    for prefix in ('etc/systemd/system', 'run/systemd/system', 'usr/lib/systemd/system'):
+        for activation in ('sockets.target.wants', 'sockets.target.requires'):
+            names.update(path.name for path in (root/prefix/activation).glob('*.socket'))
+    result = []
+    for name in sorted(names):
+        overrides = [root/prefix/name for prefix in ('etc/systemd/system', 'run/systemd/system')]
+        override = next((path for path in overrides if path.exists() or path.is_symlink()), None)
+        if override is not None and override.is_symlink() and override.readlink() == Path('/dev/null'):
+            continue
+        result.append(name)
+    return result
+
+
 def finalize_policy(root):
     """Compile and consume the policy baseline inside an isolated netns."""
     source = root/'usr/lib/lanrith-build/policy-baseline.json'
@@ -165,6 +181,9 @@ for parent, unit in (('boot-complete.target.requires', 'lanrith-health.service')
 required = ['default.target', 'multi-user.target', 'boot-complete.target',
             'systemd-boot-check-no-failures.service', 'lanrith-health.service', 'lanrith-observation.service']
 required.extend(json.loads((root/'usr/share/lanrith/installed.json').read_text())['integration_health_units'])
+# Verifying a target alone can miss a broken socket's implicit service link.
+# Include each unmasked boot socket so that pairing errors fail before VM boot.
+required.extend(enabled_socket_units(root))
 with tempfile.TemporaryDirectory(prefix='boot-transaction.', dir=root/'run') as temporary:
     fixture = Path(temporary)
     fixture.chmod(0o755)

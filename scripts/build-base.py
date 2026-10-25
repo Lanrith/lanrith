@@ -17,7 +17,7 @@ import gzip
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require, unsigned_manifest
-from lanrith import build_cache, package_stage
+from lanrith import build_cache, package_stage, components as component_contract
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -96,6 +96,7 @@ def components(selection, destination):
                 '--source-digest', pin['source_commit'], '--signer-digest', pin['workflow_commit'],
                 '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners')
         require(any(path.suffix == '.deb' for path in directory.iterdir()), 'Component selection contains no packages.')
+        component_contract.validate_binaries(component, sorted(directory.glob('*.deb')))
         for path in directory.glob('*.deb'):
             shutil.copyfile(path, destination / path.name)
 

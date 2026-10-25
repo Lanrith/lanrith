@@ -8,10 +8,57 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lanrith import runtime
+from lanrith import runtime, update
+from lanrith.release import ReleaseError
 
 
 class RuntimeDiagnosticTests(unittest.TestCase):
+    def test_seed_refresh_uses_only_the_verified_esp_and_restores_its_protection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            esp = Path(temporary)
+            value = {'esp': str(esp)}
+            for failure in (False, True):
+                commands = []
+
+                def command(arguments, **_):
+                    commands.append(arguments)
+                    if arguments[0] == 'bootctl' and failure:
+                        raise ReleaseError('synthetic seed failure')
+                    return ''
+
+                with self.subTest(failure=failure), patch.object(runtime, 'installed', return_value=value), \
+                        patch.object(runtime, 'boot_esp', return_value=esp) as verified, \
+                        patch.object(runtime, 'command', side_effect=command), \
+                        patch.object(update, 'command', side_effect=command), \
+                        patch.object(Path, 'is_mount', return_value=True):
+                    if failure:
+                        with self.assertRaisesRegex(ReleaseError, 'synthetic seed failure'):
+                            runtime.refresh_boot_seed()
+                    else:
+                        runtime.refresh_boot_seed()
+                    verified.assert_called_once_with(value)
+                    self.assertEqual(commands, [
+                        ['mount', '--options', 'remount,rw,nodev,nosuid,noexec', '--', str(esp)],
+                        ['bootctl', '--esp-path='+str(esp), '--graceful', 'random-seed'],
+                        ['mount', '--options', 'remount,ro,nodev,nosuid,noexec', '--', str(esp)]])
+
+    def test_seed_refresh_refuses_unprivileged_callers_and_unverified_esp(self):
+        with patch.object(runtime.os, 'geteuid', return_value=1000), \
+                patch.object(runtime, 'command') as command, \
+                patch.object(runtime, 'writable_esp') as writable:
+            with self.assertRaisesRegex(ReleaseError, 'requires root'):
+                runtime.refresh_boot_seed()
+            command.assert_not_called()
+            writable.assert_not_called()
+        with patch.object(runtime, 'installed', return_value={}), \
+                patch.object(runtime, 'boot_esp', side_effect=ReleaseError('foreign ESP')), \
+                patch.object(runtime, 'command') as command, \
+                patch.object(runtime, 'writable_esp') as writable:
+            with self.assertRaisesRegex(ReleaseError, 'foreign ESP'):
+                runtime.refresh_boot_seed()
+            command.assert_not_called()
+            writable.assert_not_called()
+
     def test_telemetry_binds_heartbeat_to_accepted_boot_and_signed_configuration(self):
         value = {'image_id': 'lanrith', 'platform_version': '0.2.0', 'deployment_sequence': 14,
                  'configuration_sha256': 'a'*64, 'boot': {'schema': 1, 'accepted': True,

@@ -106,7 +106,8 @@ def main():
                 # The appliance has no scheduled local jobs or mutable hostname
                 # API. SSH service activation is explicit; its alternate socket
                 # and per-connection unit must not bypass the service drop-ins.
-                'cron.service','systemd-hostnamed.service','ssh.socket','sshd@.service',
+                'cron.service','systemd-hostnamed.service','systemd-hostnamed.socket',
+                'ssh.socket','sshd@.service',
                 # Only the authenticated staging helper owns image updates and
                 # reboot selection. Package presets must not schedule either.
                 'systemd-sysupdate.service','systemd-sysupdate.timer',

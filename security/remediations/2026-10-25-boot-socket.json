@@ -1,0 +1,185 @@
+{
+  "approval": {
+    "new_source": "A fresh independent exact-head human GitHub review and full hosted qualification are required. The prior approval covers only the parent source.",
+    "prior_review_actor": "mikenorgate",
+    "prior_review_commit": "a2d4cc5bae14c88f88db87023b2b9a5ead3dd54c",
+    "prior_review_id": 5642287414
+  },
+  "automatic_approval_enabled": false,
+  "base_head": "a2d4cc5bae14c88f88db87023b2b9a5ead3dd54c",
+  "correction": [
+    "Mask systemd-hostnamed.socket with its already masked service and enforce both masks during runtime health checks.",
+    "Pass each unmasked boot socket explicitly to the native final assembly verifier so a masked or missing paired service fails before VM startup. Preserve /etc precedence over runtime masks.",
+    "When SSH boot health times out, query complete failed unit identifiers without forwarding the agent or retaining SSH stderr, journal text or raw console secrets.",
+    "Require reusable source checks before the PR cache handoff and package compilation, preserving the complete filesystem and native qualification gates."
+  ],
+  "created_at": "2026-10-25T11:17:50.666891+00:00",
+  "evidence_archive": "https://github.com/Lanrith/lanrith/releases/tag/audit-boot-socket-resolution-20261025T111750Z",
+  "failed_qualification": {
+    "artifact_id": 12594908677,
+    "artifact_sha256": "6868b13bab4adca175ce56681e97c80b34ffbe9cb9b4861cbd57ec8aca7f6e29",
+    "attempt": 1,
+    "diagnostic_limit": "The original serial diagnostic retained only d.socket as the socket identifier. It does not preserve the complete console. Exact matching-package native reproduction demonstrates the hostname socket defect; complete fresh hosted VM qualification is still required.",
+    "failed_native_job": 121134798424,
+    "failed_native_report": {
+      "assessed_at": "2026-10-25T10:12:44.066396+00:00",
+      "filesystem_sha256": "a801ca7cceba471fd50ba44befac08aec37cb774aefe2a6e7a91943c780b7e73",
+      "initrd_sha256": "42ae5afac7f238120269fc671207901932e3b2ca18b8c2bfc7cf37ec00191fc0",
+      "profiles": [],
+      "result": "fail",
+      "schema": 1,
+      "source_sha256": "9d2efeda14ef0b023e846787d798cec96fe1c003e2dc271e6bf296628f53acf5",
+      "test": "x86-64-uefi-factory-ab"
+    },
+    "id": 40176131481,
+    "native_job_log_sha256": "a426707364980e64b50a7148d17a4379bfb2c7cea91120e2f2603eb996b13098",
+    "successful_package_job": 121117619753,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40176131481"
+  },
+  "input_changes": {
+    ".github/workflows/package-check.yml": {
+      "after_sha256": "c3a548332d169fb666c33cda86d819a6167a0aabef81091f79573f906ef33ea0",
+      "before_sha256": "7a521d683f36e73bfe15fb625bf6c84ddc9ae8e21910e8de80641928de7df356"
+    },
+    "mkosi/base/mkosi.extra/usr/lib/lanrith/verify-host-hardening": {
+      "after_sha256": "12192d5513c59528c607babd749fe80158058e697c87701d707665f5fcafc839",
+      "before_sha256": "34a6c371b8334b625582edb269715acb7c27c9d1ac47b4f175eec6a3afd94fb5"
+    },
+    "mkosi/base/mkosi.finalize": {
+      "after_sha256": "ddc02e3f499c453fb908fa0e5231125d952215c292a328a02de41f203e9adea6",
+      "before_sha256": "19465904515af48ad9afd0f872415f2cd300baf2cee7e3842fe323aca8101e7f"
+    },
+    "scripts/check-workflows.py": {
+      "after_sha256": "93d81e5caf139a6039caef7e6cc5e814ed6da3a20ba500b174747f48437f192b",
+      "before_sha256": "9236f43ec592f77eb462424c56570e4a9594d07fe3f5691276aa1db5cd0d397e"
+    },
+    "scripts/finalize-image.py": {
+      "after_sha256": "2f8ad6d6987dfd931bd14951b60f926bc80c986dcae844e17880376290533316",
+      "before_sha256": "7c01b2bd412b67f7aa87a77878eeddcf10807bea9a2e70d71fc1b62a3685b519"
+    },
+    "tests/test_activation.py": {
+      "after_sha256": "04173919c648b8ca91687ec25fdc0bdf41a6e98f066441369482300e9037daf6",
+      "before_sha256": "31580d8c40e3600c75e95d478da86b45f4f6e222c61e0877942fe04e6164e6a6"
+    },
+    "tests/test_service_hardening.py": {
+      "after_sha256": "7fc6163ed5c37213e828f206f923ade865f28585e813b7b26f85b427ed8a1637",
+      "before_sha256": "9784e3431a96a9e8216a0120ebc2a57165312ebfbc7f7b9e088fa3d8d1a08cc9"
+    },
+    "tests/test_vm_console.py": {
+      "after_sha256": "060235f8611543d500d68a33680bda0a64b8cc974a2becbfecc2baf9e8b5c32c",
+      "before_sha256": "80f3235d22b84d3e625d357079e675b012568b9f5083e0acef90e9b865462988"
+    },
+    "tests/vm.py": {
+      "after_sha256": "4683430eb02023c44fd2f3344bd28f7728483424934ebb97d8166643dfa77846",
+      "before_sha256": "9d2efeda14ef0b023e846787d798cec96fe1c003e2dc271e6bf296628f53acf5"
+    }
+  },
+  "kind": "boot-socket-activation-remediation",
+  "production_qualified": false,
+  "reason": "Package compilation, package and vulnerability admission, native storage expansion and signed factory installation passed. The installed TPM2 profile then failed its first boot health check. The service-only systemd-hostnamed mask leaves a vendor-enabled socket whose paired service cannot load; this failure is independently reproduced with the exact installed systemd implementation.",
+  "reference": "https://www.freedesktop.org/software/systemd/man/latest/systemd.socket",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "successful_security_admission": {
+    "custom_result": "pass",
+    "debian_report": "schema_version=2\nresult=pass\nsuite=trixie\npolicy=available-fix-or-high-medium-eol\nactionable_findings=0\nscanner=lanrith-debian-tracker\nscanner_version=3\nscanner_sha256=609c4dfd178e4f5e5a247ee848e4a3464abc28b33d3768b9c03c348046e25612\nmanifest_sha256=8169ba27527879e22af27c4a6e2157b9ed28b2dc1022591f4c44a53e3eb26cfb\npolicy_sha256=2ae5389c906add94ea7781740a11964428fd0140c1b03f38e6fd8fa6f877f88d\nbinary_package_count=339\nsource_package_count=199\nadvisory_source_package_count=200\nkernel_advisory_mapping=authenticated-linux-payload-version\ntracked_source_package_count=126\ncves_evaluated=24225\nunresolved_tracker_records=1192\nunresolved_high_urgency=0\nunresolved_medium_urgency=0\nunresolved_low_urgency=1\nunresolved_unimportant=143\nunresolved_unassigned=1048\nunresolved_end_of_life=0\nundetermined_records=4\nfeed_url=https://security-tracker.debian.org/tracker/data/json\nfeed_compression=gzip\nfeed_bytes=14124409\nfeed_sha256=748fd786b39da567bb8a07ea1f8985e1bc2adcdf0c4837b9da3d9fb0dd4211da\nsource_map_sha256=0aa06d29db8b1b430ffb32c5a981d1a43c23742f42e91a4ab029dda25b602adb\n",
+    "inventory_sha256": "8169ba27527879e22af27c4a6e2157b9ed28b2dc1022591f4c44a53e3eb26cfb",
+    "package_count": 339,
+    "package_policy": "pass",
+    "production_qualified": false
+  },
+  "validation": {
+    "hosted_native": "Required on the new source; no full local VM boot or production release is claimed.",
+    "native_package_authentication": {
+      "index_sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+      "local_reproduction_image": "a25539869d1322eff41d7619ccef58d3df0f804f704f6d5c993a92589e2b8984",
+      "packages": [
+        {
+          "name": "systemd",
+          "sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+          "url": "https://snapshot.debian.org/archive/debian/20261024T080000Z/pool/main/s/systemd/systemd_257.13-1~deb13u1_amd64.deb",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libsystemd-shared",
+          "sha256": "2d349824e57f88507e2a33360610d8afc143a4ad5e80ee4bf8f37b826d6f37f9",
+          "url": "https://snapshot.debian.org/archive/debian/20261024T080000Z/pool/main/s/systemd/libsystemd-shared_257.13-1~deb13u1_amd64.deb",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "result": "pass",
+      "reviewed_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
+      "schema": 1,
+      "scope": "Exact native checker, shared implementation library and hostnamed service/socket definitions; not a full platform or VM qualification.",
+      "verified_installed_files": {
+        "usr/bin/systemd-analyze": "d89a879c2c87c4465e3a09588e18f27a14dd9228898679bbdbbc978802f64dce",
+        "usr/lib/systemd/system/systemd-hostnamed.service": "e717824d38cbccd038a480e24d1023faf1f52e39b1d39503a3187c19b81158b9",
+        "usr/lib/systemd/system/systemd-hostnamed.socket": "99c77e3edcb595685bba0158f8dee49876443be09886ce094c567ed5ff16212a",
+        "usr/lib/systemd/systemd": "799fd89964a716fb5f26c4506047190b6e842ac2745b473bd45351c4d8cbd929",
+        "usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared-257.so": "9f6f06ff4883d23eee5e628c625878e8bc7f60613e945e04ead7793ae969f37c"
+      },
+      "version": "257.13-1~deb13u1"
+    },
+    "native_reproduction": {
+      "after": {
+        "diagnostic": "",
+        "exit_code": 0,
+        "masked_service": "/dev/null",
+        "masked_socket": "/dev/null",
+        "units": [
+          "dbus.socket",
+          "systemd-bootctl.socket",
+          "systemd-creds.socket",
+          "systemd-initctl.socket",
+          "systemd-journald-audit.socket",
+          "systemd-journald-dev-log.socket",
+          "systemd-journald.socket",
+          "systemd-networkd.socket",
+          "systemd-pcrextend.socket",
+          "systemd-pcrlock.socket",
+          "systemd-sysext.socket",
+          "systemd-udevd-control.socket",
+          "systemd-udevd-kernel.socket"
+        ]
+      },
+      "before": {
+        "diagnostic": "systemd-hostnamed.socket: service systemd-hostnamed.service not loaded, socket cannot be started.",
+        "exit_code": 1,
+        "units": [
+          "dbus.socket",
+          "systemd-bootctl.socket",
+          "systemd-creds.socket",
+          "systemd-hostnamed.socket",
+          "systemd-initctl.socket",
+          "systemd-journald-audit.socket",
+          "systemd-journald-dev-log.socket",
+          "systemd-journald.socket",
+          "systemd-networkd.socket",
+          "systemd-pcrextend.socket",
+          "systemd-pcrlock.socket",
+          "systemd-sysext.socket",
+          "systemd-udevd-control.socket",
+          "systemd-udevd-kernel.socket"
+        ]
+      },
+      "kind": "local-native-socket-mask-reproduction",
+      "limits": "No guest VM boot or production attestation. Local base image matches the failed inventory systemd version; package pruning and APT were synthetic, and the container-owned resolver mount was preserved for this focused activation fixture.",
+      "production_qualified": false,
+      "schema": 1,
+      "systemd": "systemd 257 (257.13-1~deb13u1)"
+    },
+    "pinned_actionlint": "pass",
+    "production_workflow_assessment": "All eight existing SLSA-reviewed production workflow hashes still match. The source-first change is confined to unsigned PR package qualification.",
+    "python_syntax": "pass",
+    "regression_after_sha256": "5894d0b68ffa642463436633ce36d467a512cfd0672d84311db78eae348272e5",
+    "regression_before_sha256": "631eb2ffca8afea52d7a05da96b2a15d6a7d820db07e06141b31f5804feddc07",
+    "shell_syntax": "pass",
+    "source_boundary": "pass",
+    "test_log_sha256": "7fc5fe69e58545820c5abdc8bbee375d5471f309878f92d4c6fe45299a4d8c06",
+    "tests_passed": 433,
+    "tests_run": 445,
+    "tests_skipped": 12,
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  }
+}

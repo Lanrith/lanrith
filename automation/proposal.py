@@ -78,11 +78,11 @@ def npm_updates(pin, patch, policy):
                 for interval in affected.get('ranges', []):
                     for event in interval.get('events', []):
                         value = event.get('fixed')
-                        if value and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', value) and version(value)[:2] == version(installed)[:2] and version(value) > version(installed):
+                        if value and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', value) and version(value)[0] == version(installed)[0] and version(value) > version(installed):
                             choices.append(value)
-            require(choices and name in policy['npm_packages'],
-                    'UI advisory needs a reviewed compatibility/source change: '+name+' '+vulnerability['id'])
-            fixed = min(choices, key=version)
+            require(choices, 'UI advisory needs a major-version or source migration: '+name+' '+vulnerability['id'])
+            patch_choices = [v for v in choices if version(v)[:2] == version(installed)[:2]]
+            fixed = min(patch_choices or choices, key=version)
             fixes[name] = max((fixed, fixes.get(name, fixed)), key=version)
             reasons.append(inputs.reason(vulnerability['id'], 'npm', name, installed, fixed))
     if not fixes:
@@ -92,7 +92,7 @@ def npm_updates(pin, patch, policy):
     for name, fixed in fixes.items():
         if name.startswith('@vitest/'):
             direct['vitest'] = max((fixed, direct.get('vitest', fixed)), key=version)
-    require(direct, 'Transitive UI fix has no reviewed parent update.')
+    targets = {**fixes, **direct}
     with tempfile.TemporaryDirectory(prefix='lanrith-ui-proposal.') as temporary:
         root = Path(temporary)
         ui = root/'internal/web/ui'
@@ -105,15 +105,31 @@ def npm_updates(pin, patch, policy):
         patch_path.write_bytes(patch)
         run('git', 'apply', str(patch_path), cwd=root, capture_output=True)
         run('npm', 'install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact',
-            *(name+'@'+value for name, value in sorted(direct.items())), cwd=ui,
+            *(name+'@'+value for name, value in sorted(targets.items())), cwd=ui,
             env={**os.environ, 'npm_config_cache': str(root/'npm-cache')}, capture_output=True, timeout=300)
-        # npm may opportunistically refresh unrelated caret dependencies. Preserve their
-        # reviewed versions and let npm verify that they still satisfy the fixed parents.
+        # Temporarily request exact transitive fixes so npm supplies their registry
+        # metadata. Restore the original direct dependency set before reconciliation;
+        # a fix must still satisfy its existing parents without adding dependencies.
+        package_path = ui/'package.json'
+        selected_package = document(package_path.read_bytes())
+        final_package = document(before[0])
+        for group in ('dependencies', 'devDependencies'):
+            for name in direct:
+                if name in final_package.get(group, {}):
+                    final_package[group][name] = selected_package[group][name]
+        package_path.write_text(json.dumps(final_package, indent=2)+'\n')
+        # Preserve every unrelated locked package, including other approved packages.
+        # npm then verifies compatibility with the selected direct and transitive fixes.
         lock_path = ui/'package-lock.json'
         resolved = document(lock_path.read_bytes())
+        root_record = document(before[1])['packages']['']
+        for group in ('dependencies', 'devDependencies'):
+            if group in root_record:
+                root_record[group] = final_package[group]
+        resolved['packages'][''] = root_record
         for name, record in lock['packages'].items():
             package_name = name.rsplit('node_modules/', 1)[-1]
-            if name and package_name not in policy['npm_packages'] and name in resolved['packages']:
+            if name and package_name not in targets and not ('vitest' in direct and package_name.startswith('@vitest/')) and name in resolved['packages']:
                 resolved['packages'][name] = record
         lock_path.write_text(json.dumps(resolved, indent=2)+'\n')
         run('npm', 'install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', cwd=ui,
@@ -121,9 +137,13 @@ def npm_updates(pin, patch, policy):
         after = tuple((ui/name).read_bytes() for name in ('package.json', 'package-lock.json'))
         # Resolve all findings against the actual final graph, not intermediate requested versions.
         new_lock = document(after[1])['packages']
-        reasons = [inputs.reason(r['id'], 'npm', r['package'], r['installed'],
-                    next(v['version'] for p, v in new_lock.items() if p.rsplit('node_modules/', 1)[-1] == r['package']))
-                   for r in reasons]
+        final_reasons = []
+        for r in reasons:
+            matching = [new_lock[p]['version'] for p, v in lock['packages'].items()
+                        if p.rsplit('node_modules/', 1)[-1] == r['package'] and v.get('version') == r['installed']]
+            require(matching and len(set(matching)) == 1, 'UI fix did not resolve every affected instance consistently.')
+            final_reasons.append(inputs.reason(r['id'], 'npm', r['package'], r['installed'], matching[0]))
+        reasons = final_reasons
         inputs.validate_npm_manifests(before, after, reasons, policy)
         result = run('git', 'diff', '--no-ext-diff', '--', 'internal/web/ui/package.json',
                      'internal/web/ui/package-lock.json', cwd=root, capture_output=True).stdout
@@ -300,11 +320,11 @@ def propose(root, tools, repo, producer):
     require(reasons, 'Input bytes changed without a security or qualified-component reason.')
     reasons = sorted({canonical(r): r for r in reasons}.values(),
                      key=lambda r: (r['type'], r['package'], r['installed'], r['fixed'], r['id']))
-    inputs.validate_changes({n: before[n] for n in changed}, {n: after[n] for n in changed},
+    manual_findings = inputs.validate_changes({n: before[n] for n in changed}, {n: after[n] for n in changed},
                             reasons, policy, before.__getitem__, after.__getitem__)
     record = evidence.candidate(repo, base, policy_raw, {n: before[n] for n in changed},
                                 {n: after[n] for n in changed}, reasons, producer,
-                                requires_human='builders/unbound-source.lock' in changed)
+                                requires_human=bool(manual_findings))
     evidence.write(root/evidence.CANDIDATE, record)
     print('Prepared '+record['candidate_id']+' for '+record['remediation_id'])
     return record

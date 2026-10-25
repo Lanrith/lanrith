@@ -154,11 +154,19 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
     wants.mkdir(parents=True, exist_ok=True)
+    # Core confinement must also reach owners assembling on an older admitted
+    # base. Keep one source for both the neutral base and every owner overlay.
+    policies = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/etc/systemd/system'
+    for unit in ('unbound.service', 'kea-dhcp4-server.service', 'chrony.service', 'dbus.service'):
+        name = unit+'.d/30-lanrith-hardening.conf'
+        target = wants/name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(policies/name, target)
     state_mount = wants/'var.mount.d/10-lanrith-state.conf'
     state_mount.parent.mkdir(parents=True, exist_ok=True)
     state_mount.write_text('[Mount]\nOptions=nodev,nosuid,noexec\n')
     # systemd-gpt-auto-generator creates the ESP mount dynamically. Keep it
-    # read-only and non-executable outside the admitted update/blessing helper.
+    # read-only and non-executable outside admitted boot and update mutations.
     # Supply both conventional mount names; only the generated unit is used.
     for mount in ('efi', 'boot'):
         dropin = wants/f'{mount}.mount.d/10-lanrith-read-only.conf'
@@ -167,6 +175,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     blessing = wants/'systemd-bless-boot.service.d/10-lanrith-esp.conf'
     blessing.parent.mkdir(parents=True, exist_ok=True)
     blessing.write_text('[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime bless\n')
+    # Retain the vendor unit's early-boot dependencies and conditions. Its
+    # native bootctl command needs the same bounded write window as blessing.
+    seed = wants/'systemd-boot-random-seed.service.d/10-lanrith-esp.conf'
+    seed.parent.mkdir(parents=True, exist_ok=True)
+    seed.write_text('[Service]\nExecStart=\nExecStart=/usr/bin/lanrith-runtime refresh-boot-seed\n')
     # Factory provisioning owns repartitioning and always supplies the observed
     # disk. Do not let an automatic service select a disk from global labels.
     (wants/'systemd-repart.service').symlink_to('/dev/null')

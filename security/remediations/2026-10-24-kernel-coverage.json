@@ -1,0 +1,101 @@
+{
+  "base_head": "77d45f440e56becd880e87131bf269308b77023a",
+  "input_changes": {
+    "docs/security-maintenance.md": {
+      "after_sha256": "8f0237f3a7a372d8fe3d73e853d1c69046dca48136031fa4fdcf7381b2cce8b9",
+      "before_sha256": "2b055e39c5b224624667225229e90304c1c7d6e831e53a96dd931a10053f9421"
+    },
+    "security/audit-debian-vulnerabilities.py": {
+      "after_sha256": "609c4dfd178e4f5e5a247ee848e4a3464abc28b33d3768b9c03c348046e25612",
+      "before_sha256": "fbbfef9e3fa1ff5c920fd8257e812870316379f8627a9da2994991423df48cdf"
+    },
+    "tests/test_security.py": {
+      "after_sha256": "06de0984f529a7df34246c7085a7427caab4854ce9a9cc74c00a201eb10e4314",
+      "before_sha256": "0b7351d905a4732c45c062537a6742fd8eb4f3642d05d9a963b871facb4e9b20"
+    }
+  },
+  "kernel": {
+    "advisory_identity": [
+      "linux",
+      "6.12.113-1"
+    ],
+    "binary_version": "6.12.113-1",
+    "built_using": "linux (= 6.12.113-1)",
+    "index_sha256": "c7fc2c6a79fa6288ed4389753dddee83cab791b3b9535ef21d9cfebde1aba2fb",
+    "package": "linux-image-6.12.113+deb13-amd64",
+    "wrapper_source": "linux-signed-amd64 (6.12.113+1)"
+  },
+  "kind": "security-scanner-coverage-correction",
+  "qualification": "A fresh complete CI run and independent exact-head human approval are required before merge and publication.",
+  "reason": "The installed signed kernel payload was mapped to linux-signed-amd64, which has no tracker entries. Its underlying linux source has 20,628 advisory records. Evaluate the authenticated payload package version as linux, and require matching Built-Using metadata during fresh source-map assembly. Retained maps keep their original authenticated bytes.",
+  "repository": "Lanrith/lanrith",
+  "requires_human": true,
+  "scanner_version": {
+    "after": "3",
+    "before": "2"
+  },
+  "schema": 1,
+  "superseded_qualification": {
+    "action": "cancelled to qualify the corrected scanner instead of spending Actions on the superseded commit",
+    "head": "77d45f440e56becd880e87131bf269308b77023a",
+    "id": 40081707985
+  },
+  "validation": {
+    "live_preflight": {
+      "after": {
+        "actionable": [],
+        "cves_evaluated": 24224,
+        "tracked_sources": 126,
+        "undetermined": 4,
+        "unresolved": {
+          "low": 1,
+          "not yet assigned": 1048,
+          "unimportant": 142
+        }
+      },
+      "assessed_at": "2026-10-24T10:02:31.952096+00:00",
+      "before": {
+        "actionable": [],
+        "cves_evaluated": 3596,
+        "tracked_sources": 125
+      },
+      "before_scanner_sha256": "fbbfef9e3fa1ff5c920fd8257e812870316379f8627a9da2994991423df48cdf",
+      "kernel": {
+        "advisory_identity": [
+          "linux",
+          "6.12.113-1"
+        ],
+        "binary_version": "6.12.113-1",
+        "built_using": "linux (= 6.12.113-1)",
+        "index_sha256": "c7fc2c6a79fa6288ed4389753dddee83cab791b3b9535ef21d9cfebde1aba2fb",
+        "package": "linux-image-6.12.113+deb13-amd64",
+        "wrapper_source": "linux-signed-amd64 (6.12.113+1)"
+      },
+      "kind": "signed-kernel-advisory-coverage-preflight",
+      "method": "Re-evaluate the same previously captured source inventory with the authenticated Brotli fix substituted. Validate the unchanged kernel payload version against the signed current APT Built-Using metadata. This is not final native image qualification.",
+      "result": "pass",
+      "scanner_sha256": "609c4dfd178e4f5e5a247ee848e4a3464abc28b33d3768b9c03c348046e25612",
+      "scanner_version": "3",
+      "schema": 1,
+      "signed_metadata_records_checked": 83,
+      "tracker_sha256": "5b33e7e894c13aafcf3bd01af83fd4f36cf709c8970c5dd644780dde394e98dd"
+    },
+    "regressions": [
+      "Fresh signed APT Built-Using validation",
+      "Retained-map kernel coverage without input mutation",
+      "Metapackage/payload distinction",
+      "Binary-only rebuild version normalization",
+      "Missing/conflicting Built-Using rejection",
+      "Missing kernel feed rejection",
+      "Folded and duplicate control fields",
+      "Unknown kernel source rejection"
+    ],
+    "signed_kernel_metadata_records_checked": 83,
+    "unit_tests": {
+      "log_sha256": "d65627c0f329595f860b556475a8a648d8918fbbc3c7d2b7d81919138848465d",
+      "result": "pass",
+      "run": 240,
+      "skipped_native_environment": 8
+    }
+  }
+}

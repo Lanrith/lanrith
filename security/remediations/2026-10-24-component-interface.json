@@ -1,0 +1,124 @@
+{
+  "actual_attested_packages": {
+    "discovery-bridge_0.1.1_amd64.deb": "3f250028cdd91bc6387b4f320792980596b2be48250f4757a9d7e4caf173b844",
+    "router-policy-collector_0.1.4_amd64.deb": "0d77279d9005cdee1be0be836eb9d10ee304f51ae17cf3dd293a8f6380accc10",
+    "router-policy-helper_0.1.4_amd64.deb": "f5ef58913a4c12219a0e541adb5f6fbe9a64be8ed832416f89e16d2618b0a8c7",
+    "router-policy-reader_0.1.4_amd64.deb": "13b57c1f5bb6999440609ae52d134095e751db82d8fcda00cccbb7ea5de3e640"
+  },
+  "approval": "The component has actual exact-head human review 5638566065. This platform source change requires a new independent exact-head human GitHub review after complete hosted qualification. Earlier platform approvals cannot authorize this new head.",
+  "automatic_approval_enabled": false,
+  "base_head": "6eb8200ba49edb6a190a3a9af39c0fe5182864c3",
+  "component_verification": {
+    "component_selection": {
+      "files": {
+        "component-release.json": "9c29d2334a794df9908966f6165b86a3ced93b06e2144f24c47ba9bdce7dfc02",
+        "router-policy-collector_0.1.4_amd64.deb": "0d77279d9005cdee1be0be836eb9d10ee304f51ae17cf3dd293a8f6380accc10",
+        "router-policy-helper_0.1.4_amd64.deb": "f5ef58913a4c12219a0e541adb5f6fbe9a64be8ed832416f89e16d2618b0a8c7",
+        "router-policy-reader_0.1.4_amd64.deb": "13b57c1f5bb6999440609ae52d134095e751db82d8fcda00cccbb7ea5de3e640",
+        "security.txt": "4bd0f31353151bf5fc8ca2258622c28e655ca40c280ced542d3381dfdc746ed4",
+        "update-record.json": "1e784434873c865d8bd5ca8fb1a4b84f1e01950e68391d05cd42fb494b2b26db"
+      },
+      "repository": "Lanrith/router-policy-agent",
+      "source_commit": "d2a664e0be82087a7e35046880d9a611579c5e31",
+      "tag": "v0.1.4",
+      "workflow_commit": "d2a664e0be82087a7e35046880d9a611579c5e31"
+    },
+    "human_reviews": [
+      {
+        "actor": "mikenorgate",
+        "actor_id": 2479870,
+        "commit_id": "67aafbe89ee1f809d2d6ce47332ad93b792bfd54",
+        "id": 5638566065,
+        "submitted_at": "2026-10-24T14:17:28Z",
+        "url": "https://github.com/Lanrith/router-policy-agent/pull/5#pullrequestreview-5638566065"
+      }
+    ],
+    "immutable": true,
+    "publication_audit": "https://github.com/Lanrith/router-policy-agent/releases/tag/audit-publication-40101865934-1",
+    "publication_audit_id": 422781569,
+    "pull_request": "https://github.com/Lanrith/router-policy-agent/pull/5",
+    "qualification": [
+      {
+        "attempt": 1,
+        "conclusion": "success",
+        "head_sha": "67aafbe89ee1f809d2d6ce47332ad93b792bfd54",
+        "id": 40098004639,
+        "url": "https://github.com/Lanrith/router-policy-agent/actions/runs/40098004639",
+        "workflow": ".github/workflows/check.yml"
+      }
+    ],
+    "release_id": 422781288,
+    "release_run": {
+      "attempt": "1",
+      "id": "40101865934",
+      "url": "https://github.com/Lanrith/router-policy-agent/actions/runs/40101865934"
+    },
+    "schema": 1,
+    "update_record_sha256": "1e784434873c865d8bd5ca8fb1a4b84f1e01950e68391d05cd42fb494b2b26db"
+  },
+  "correction": "Select reviewed, qualified immutable component v0.1.4. Check the complete required executable interface after package digest and attestation verification, before allocating source builders. Reuse the same required-command set for fresh filesystem scan coverage. Tests retain a minimum qualified component version and matching package policy instead of blocking future verified patches.",
+  "created_at": "2026-10-25T08:17:22.180711+00:00",
+  "evidence_archive": "https://github.com/Lanrith/lanrith/releases/tag/audit-component-interface-resolution-20261025T081722Z",
+  "failed_qualification": {
+    "attempt": 1,
+    "failed_filesystem_job": 120870889764,
+    "id": 40087621769,
+    "immutable_evidence": "https://github.com/Lanrith/lanrith/releases/tag/audit-component-interface-failure-20261024T124439Z",
+    "qualification_artifact_sha256": "4b4ca6397e4a92b942a024cfd7b60e1ac85285380c70e9c6d4130ef44614fae0",
+    "successful_package_job": 120854156907,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40087621769"
+  },
+  "input_changes": {
+    "build-inputs.json": {
+      "after_sha256": "87d62f3d9980768e3683caf0532077fa1131320ec03abe21498fe476ea05510e",
+      "before_sha256": "ece481f5fd20198c9bf893a511cfcd6fa446628d993fd996743bb4d785efa7e7"
+    },
+    "lanrith/components.py": {
+      "after_sha256": "67f8981485fad7f577e31e41e69886d0d5685aae9074fc7f0c5d66970da85fa7",
+      "before_sha256": null
+    },
+    "scripts/base-evidence.py": {
+      "after_sha256": "f0088da1e366463e1e695a1cc3c46f440a021bdfea76ff97c9d3b4e519fa733a",
+      "before_sha256": "c957156f4bea6371ab9b4dae38d80b5e00dd5f61786ea50b1b081e087b373c43"
+    },
+    "scripts/build-base.py": {
+      "after_sha256": "dd1a207ad0c13765b9844daecf4446d9bfc04d148f8a2a70cfb0b201dd893a7e",
+      "before_sha256": "c5884d13cbdca330a5db1c36672ea7a281848d1a3b87156befa7656b403992b0"
+    },
+    "security/policy.json": {
+      "after_sha256": "2ae5389c906add94ea7781740a11964428fd0140c1b03f38e6fd8fa6f877f88d",
+      "before_sha256": "bf0f5028e94db843d17995f9280f9f3f6697e29468b617378310b9735db1d567"
+    },
+    "tests/test_component_interface.py": {
+      "after_sha256": "48da95775ecb2a51fd461aefc7205addf41ffe7a59d652933435fea8888c779b",
+      "before_sha256": null
+    },
+    "tests/test_refresh_inputs.py": {
+      "after_sha256": "5930df5b343f97c86175844adfd7ba6eb1370bd07fd2a86d6b753b2f8a31e5fc",
+      "before_sha256": "2bd74a7221838f5f24a26afb032dc4e5c6ac3119e516155218a529b215671e00"
+    }
+  },
+  "kind": "component-interface-remediation",
+  "production_qualified": false,
+  "reason": "Phase B requires router-policy-profile, but the previously selected immutable router-policy-agent v0.1.3 predates that command. Package compilation passed, then fresh filesystem scan coverage correctly rejected the incomplete interface.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "validation": {
+    "legacy_attested_packages": {
+      "diagnostic": "Component router-policy-agent executables differ from the platform contract; missing: router-policy-profile; unexpected: ",
+      "result": "rejected-before-build"
+    },
+    "narrow_input_validation": "pass",
+    "native_checks": "Fresh complete hosted source, package, filesystem and native qualification are required; local skips cover the matching Debian/root environment and unavailable native Go wrapper.",
+    "new_attested_interface": "pass",
+    "pinned_actionlint": "pass",
+    "preflight_sha256": "7746e97d9ec1e458aa74c30d811d6e12e8d9f75f82d64e434908b8f4c55d83ab",
+    "source_boundary": "pass",
+    "test_log_sha256": "6ffa71c0fd42269384442263a84f3e05d771c1b5f2d0969882f91c92fdd0ce3f",
+    "tests_passed": 430,
+    "tests_run": 442,
+    "tests_skipped": 12,
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  }
+}

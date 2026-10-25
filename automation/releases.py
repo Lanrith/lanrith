@@ -121,6 +121,7 @@ def proposal_state(repo, candidate_path, body_path):
         'Policy: `'+record['policy_sha256']+'`', '', 'Reasons:', '']
     for r in record['reasons']:
         lines.append('- '+r['id']+': '+r['package']+' '+r['installed']+' → '+r['fixed']+' ('+r['source']+').')
+    lines += ['', 'Approval: **'+('independent human review required' if record['requires_human'] else 'eligible for independent App review after qualification')+'**.']
     lines += ['', 'This proposal needs full qualification and independent approval. The candidate record binds the reasons to every changed file digest.']
     body_path.write_text('\n'.join(lines)+'\n')
     return True

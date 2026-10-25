@@ -1,0 +1,127 @@
+{
+  "input_changes": {
+    "build-inputs.json": {
+      "after_sha256": "57e8329773a242e83f2aa72e3d3d843e7dad52496f32e8ff758c537017816f44",
+      "before_sha256": "127e136e8ed6c0a97ab3a76ba14f7dd0d72b31958f103a68f3dd5183a76eba96"
+    },
+    "builders/build-inputs.lock": {
+      "after_sha256": "353e3430cffb30a78a6482968dc8daf044ad73bc571f861df584c7dc55e49a34",
+      "before_sha256": "c4470b621a24b4555af56bb7fe917f8382ecbc77972c21cb37fa3275410e2089"
+    }
+  },
+  "kind": "human-review-required-security-remediation",
+  "prior_head": "2eb7d0fc459ce5967687ede0d60849d857c9e118",
+  "prior_human_review": {
+    "actor": "mikenorgate",
+    "commit_id": "2eb7d0fc459ce5967687ede0d60849d857c9e118",
+    "id": 5637343501
+  },
+  "qualification": "Fresh CI qualification and a new exact-head human GitHub approval are required. The prior package success and approval apply to the prior head; its native qualification was blocked by Brotli.",
+  "reason": "The pinned Debian snapshots predate the stable Brotli security backport. Refresh signed stable snapshots to include the fixed library without changing reviewed compiler, application or approval-policy code.",
+  "reasons": [
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "46cd8ed0502c6af6f22264615b2cbc06b895bd1c646cde6ef0a5b5df4350ad2a",
+      "fixed": "1.1.0-2+deb13u1",
+      "id": "CVE-2026-111497",
+      "installed": "1.1.0-2",
+      "package": "brotli",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    }
+  ],
+  "repository": "Lanrith/lanrith",
+  "requires_human": true,
+  "schema": 1,
+  "snapshot": "20261024T080000Z",
+  "trigger": {
+    "advisory": "CVE-2026-111497",
+    "failed_reports_artifact": 12554153678,
+    "native_job": 120827811633,
+    "native_result": "failed-before-boot-qualification",
+    "package_job": 120810451934,
+    "package_result": "pass",
+    "workflow_run": 40072863483
+  },
+  "validation": {
+    "archives_verified": [
+      {
+        "release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
+        "suite": "trixie",
+        "verified_signers": [
+          "4CB50190207B4758A3F73A796ED0E7B82643E131",
+          "B8E5F13176D2A7A75220028078DBA3BC47EF2265",
+          "41587F7DB8C774BCCF131416762F67A0B2C39DE4"
+        ]
+      },
+      {
+        "fixed_package": {
+          "Architecture": "amd64",
+          "Filename": "pool/updates/main/b/brotli/libbrotli1_1.1.0-2+deb13u1_amd64.deb",
+          "Package": "libbrotli1",
+          "SHA256": "db46824c60fee46aff3cc0be3e5f736bc606cae669b1fb17516a41e8073251a9",
+          "Size": "303640",
+          "Source": "brotli",
+          "Version": "1.1.0-2+deb13u1"
+        },
+        "release_sha256": "64686a820745e0732f2bcdad5fc6538835750977ec209b52916924df27dce59a",
+        "suite": "trixie-security",
+        "verified_signers": [
+          "B0CAB9266E8C3929798B3EEEBDE6D2B9216EC7A8",
+          "89C87ACEA5DD6B8E6A7068808E9F831205B4BA95"
+        ]
+      },
+      {
+        "release_sha256": "abcf5882746e0f68171f41adbb4ac01b74b49d62d203379befb9265804311a4f",
+        "suite": "bookworm",
+        "verified_signers": [
+          "4CB50190207B4758A3F73A796ED0E7B82643E131",
+          "B8E5F13176D2A7A75220028078DBA3BC47EF2265",
+          "4D64FEC119C2029067D6E791F8D2585B8783D481"
+        ]
+      },
+      {
+        "fixed_package": {
+          "Architecture": "amd64",
+          "Filename": "pool/updates/main/b/brotli/libbrotli1_1.0.9-2+deb12u1_amd64.deb",
+          "Package": "libbrotli1",
+          "SHA256": "e27b3d655fa6fadd7a56f706687e94573c0af68b7d6df394a32a381a3a6c6d8b",
+          "Size": "274704",
+          "Source": "brotli",
+          "Version": "1.0.9-2+deb12u1"
+        },
+        "release_sha256": "96c6d8e9e48228443067c377d518cd4d28b5654ab1a50400220b9bd6e517a399",
+        "suite": "bookworm-security",
+        "verified_signers": [
+          "ED541312A33F1128F10B1C6C54404762BBB6E853",
+          "B0CAB9266E8C3929798B3EEEBDE6D2B9216EC7A8"
+        ]
+      }
+    ],
+    "conservative_debian_preflight": {
+      "actionable_findings": [],
+      "assessed_at": "2026-10-24T09:14:14.498236+00:00",
+      "cves_evaluated": 3596,
+      "kind": "conservative-source-version-preflight",
+      "method": "Replay the existing Debian source inventory with only the authenticated Brotli fix substituted; keep every other installed source version unchanged. This is not a native image qualification or a prediction of every APT dependency resolution.",
+      "result": "pass",
+      "schema": 1,
+      "source_records": 339,
+      "tracked_sources": 125,
+      "tracker_gzip_sha256": "25618006ba59b273d7c7e0a59083abce80e100ec39d977c9a3a9e0ded142cd49",
+      "tracker_sha256": "b8693de831ad0c8f4a7e82effa02a767e2765952f17c97ade76215ce429140ac",
+      "undetermined": 3,
+      "unresolved_tracker_records": {
+        "not yet assigned": 258,
+        "unimportant": 83
+      }
+    },
+    "node": {
+      "already_selected": true,
+      "basis": "Official release explicitly backports CVE-2026-111497; process.versions.brotli alone does not identify the applied security backport.",
+      "source": "https://nodejs.org/en/blog/release/v24.22.1",
+      "version": "24.22.1"
+    },
+    "signed_snapshot_proof_sha256": "569d6b9445b075f0c1a899476f41cb2f1f9bf183e44cc42df0c0db588f24189a"
+  }
+}

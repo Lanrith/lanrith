@@ -56,7 +56,7 @@ def reason(identity, ecosystem, package, installed, fixed):
             'The recorded version change does not resolve this advisory.')
     return {'id': identity, 'type': 'security-fix', 'ecosystem': ecosystem, 'package': package,
             'installed': installed, 'fixed': fixed, 'source': 'https://api.osv.dev/v1/vulns/'+identity,
-            'evidence_sha256': digest(raw)}
+            'evidence_sha256': digest(canonical(advisory))}
 
 
 def go_security_update(current, branches):
@@ -124,16 +124,30 @@ def lock_values(raw):
     return result
 
 
+HUMAN_NATIVE_REVIEW = 'Native source upgrade requires independent human review.'
+HUMAN_NPM_REVIEW = 'UI dependency change outside the approved patch set requires independent human review.'
+HUMAN_REVIEW_FINDINGS = frozenset((HUMAN_NATIVE_REVIEW, HUMAN_NPM_REVIEW))
+
+
+def npm_requires_human(name, before, after, policy):
+    old, new = version(before), version(after)
+    require(old[0] == new[0] and old < new,
+            'UI security fix must advance an existing stable major version.')
+    return name not in policy['npm_packages'] or old[:2] != new[:2]
+
+
 def validate_npm_manifests(before, after, reasons, policy):
     old_package, old_lock = (document(v) for v in before)
     new_package, new_lock = (document(v) for v in after)
+    manual = False
     fields = changed_fields(old_package, new_package)
     require(fields <= {'dependencies', 'devDependencies'}, 'UI manifest changed commands, overrides or metadata.')
     for group in ('dependencies', 'devDependencies'):
         old, new = old_package.get(group, {}), new_package.get(group, {})
         for name in changed_fields(old, new):
-            require(name in policy['npm_packages'], 'UI update contains an unreviewed direct dependency.')
-            stable_patch(old[name], new[name], ['.'.join(map(str, version(old[name])[:2]))])
+            if npm_requires_human(name, old[name], new[name], policy):
+                has_reason(reasons, 'npm', name, old[name], new[name])
+                manual = True
     require(changed_fields(old_lock, new_lock) <= {'packages'} and new_lock.get('lockfileVersion') == 3,
             'UI lockfile changed its format or unrelated metadata.')
     old, new = old_lock['packages'], new_lock['packages']
@@ -152,9 +166,9 @@ def validate_npm_manifests(before, after, reasons, policy):
         require(fields <= {'version', 'resolved', 'integrity', 'dependencies', 'peerDependencies'},
                 'UI dependency changed installation hooks, executables or unrelated metadata.')
         name = path.rsplit('node_modules/', 1)[-1]
-        require(name in policy['npm_packages'], 'UI update changes an unreviewed transitive dependency: '+name)
-        stable_patch(old[path]['version'], new[path]['version'],
-                     ['.'.join(map(str, version(old[path]['version'])[:2]))])
+        if npm_requires_human(name, old[path]['version'], new[path]['version'], policy):
+            has_reason(reasons, 'npm', name, old[path]['version'], new[path]['version'])
+            manual = True
         metadata = fetch_json('https://registry.npmjs.org/'+urllib.parse.quote(name, safe='')+'/'+new[path]['version'])
         dist = metadata['dist']
         require(new[path]['resolved'] == dist['tarball'] and new[path]['integrity'] == dist['integrity'] and
@@ -169,6 +183,7 @@ def validate_npm_manifests(before, after, reasons, policy):
                         v.get('version') == r['installed']]
             require(matching and all(new[p]['version'] == r['fixed'] for p, _ in matching),
                     'UI patch did not apply the recorded fix to all affected instances.')
+    return manual
 
 
 def ui_manifests(pin, patch):
@@ -201,6 +216,7 @@ def ui_manifests(pin, patch):
 
 
 def validate_changes(before, after, reasons, policy, read_before, read_after):
+    manual_findings = []
     require(set(before) == set(after) and len(before) <= policy['maximum_changes'], 'Unexpected update file coverage.')
     if {'go.mod', 'go.sum'} & set(before):
         from .go_dependencies import validate
@@ -245,10 +261,12 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
                         'builders/alloy/ui-dependencies.patch' in after, 'Unexpected local package revision.')
         elif path == 'builders/alloy/ui-dependencies.patch':
             pin = document(read_before('builders/alloy/source.json'))
-            validate_npm_manifests(ui_manifests(pin, old_raw), ui_manifests(pin, new_raw), reasons, policy)
+            if validate_npm_manifests(ui_manifests(pin, old_raw), ui_manifests(pin, new_raw), reasons, policy):
+                manual_findings.append(HUMAN_NPM_REVIEW)
         elif path == 'builders/unbound-source.lock':
             from .native_sources import validate_unbound
             validate_unbound(old_raw, new_raw, reasons)
+            manual_findings.append(HUMAN_NATIVE_REVIEW)
         elif path == 'build-inputs.json':
             old, new = document(old_raw), document(new_raw)
             require(changed_fields(old, new) <= {'custom_package_inputs', 'debian_snapshot', 'security_snapshot',
@@ -304,3 +322,4 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
                         'Local source policy changed more than its selected package version.')
         else:
             require(False, 'This path needs human review: '+path)
+    return manual_findings

@@ -50,8 +50,14 @@ class SnapshotSelectionTests(unittest.TestCase):
         self.assertEqual(policy['required_exact_packages']['prometheus-node-exporter'],
                          exporter['package_version'])
         self.assertEqual(policy['required_exact_packages']['unbound'], '1.26.2-0+deb13u1')
-        self.assertEqual(selection['component_releases']['discovery-bridge']['tag'], 'v0.1.1')
-        self.assertEqual(selection['component_releases']['router-policy-agent']['tag'], 'v0.1.3')
+        for component, minimum in (('discovery-bridge', (0, 1, 1)), ('router-policy-agent', (0, 1, 4))):
+            pin = selection['component_releases'][component]
+            self.assertGreaterEqual(tuple(map(int, pin['tag'].removeprefix('v').split('.'))), minimum)
+            names = ['discovery-bridge'] if component == 'discovery-bridge' else [
+                'router-policy-reader', 'router-policy-helper', 'router-policy-collector']
+            for name in names:
+                self.assertEqual(policy['required_exact_packages'][name], pin['tag'][1:])
+                self.assertEqual(policy['local_package_sources'][name]['version'], pin['tag'][1:])
         ui_patch = (root/'builders/alloy/ui-dependencies.patch').read_text()
         for dependency, vulnerable, fixed in (('@vitest/mocker', '4.1.11', '4.1.12'),
                                               ('undici', '7.29.1', '7.30.1'),

@@ -107,6 +107,11 @@ class ConfigTests(unittest.TestCase):
         self.assertIn('NoNewPrivileges=yes', ssh)
         self.assertIn('ProtectSystem=strict', ssh)
         self.assertIn('ReadWritePaths=/var/tmp/lanrith-update', ssh)
+        self.assertEqual([line for line in ssh.splitlines() if line.startswith('BindPaths=')],
+                         ['BindPaths=/var/tmp/lanrith-update'])
+        self.assertEqual([line for line in ssh.splitlines() if line.startswith('SystemCallFilter=')], [
+            'SystemCallFilter=~@cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap',
+            'SystemCallFilter=chroot'])
         self.assertNotIn('etc/systemd/system/ssh.service.d/60-lanrith-rootless.conf',
                          enabled)
         manifest = json.loads(disabled['usr/share/lanrith/administration.json'])

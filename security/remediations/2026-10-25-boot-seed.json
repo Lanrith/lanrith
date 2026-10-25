@@ -1,0 +1,155 @@
+{
+  "approval": {
+    "new_source": "A fresh independent exact-head human GitHub approval is required by stale-review and last-push protections. The prior review covers only the parent source.",
+    "prior_review_actor": "mikenorgate",
+    "prior_review_commit": "d21ef059779c39d2c2815e6922eb0a07015c132d",
+    "prior_review_id": 5643043844
+  },
+  "automatic_approval_enabled": false,
+  "base_head": "d21ef059779c39d2c2815e6922eb0a07015c132d",
+  "correction": [
+    "Add a root-only boot-seed operation that validates the mounted FAT ESP against the running root disk before opening the existing bounded write window.",
+    "Invoke the unchanged native bootctl seed algorithm with its existing graceful firmware behavior and an explicit verified ESP path. Restore the protected read-only mount on success or failure.",
+    "Override only the vendor seed service ExecStart. Preserve its boot ordering and EFI/initrd/container conditions. Keep the global failed-unit health gate and mandatory full hosted native qualification."
+  ],
+  "created_at": "2026-10-25T15:01:04.869943+00:00",
+  "evidence_archive": "https://github.com/Lanrith/lanrith/releases/tag/audit-boot-seed-resolution-20261025T150104Z",
+  "failed_qualification": {
+    "artifact_id": 12600561539,
+    "artifact_sha256": "7796efb50cfb7a597c1a1547309613c3be1822be99083556c6ddd995577d28dd",
+    "attempt": 1,
+    "diagnostic_limits": "The hosted diagnostic identifies complete failed units without retaining journal text or raw console/recovery credentials. The focused native VM reproduces the read-only write conflict independently; full hosted UEFI/TPM qualification remains required.",
+    "failed_native_job": 121172986861,
+    "id": 40188489873,
+    "native_job_log_sha256": "846289c5698c52769a9b567586f16cf11aa23d48877cdcebb72dc0c03754ee02",
+    "native_report": {
+      "assessed_at": "2026-10-25T13:15:04.988981+00:00",
+      "filesystem_sha256": "1585c9d73986cbe57f47b441269c223fc7cd616a2a1e3b3de259aa3f6eeea411",
+      "initrd_sha256": "89b57eb708216bad6ebf45ddb9756e0974095f0d558b79202dde78655eff4e76",
+      "profiles": [],
+      "result": "fail",
+      "schema": 1,
+      "source_sha256": "4683430eb02023c44fd2f3344bd28f7728483424934ebb97d8166643dfa77846",
+      "test": "x86-64-uefi-factory-ab"
+    },
+    "ssh_diagnostic": {
+      "failed_units": [
+        "systemd-boot-check-no-failures.service",
+        "systemd-boot-random-seed.service"
+      ],
+      "query_succeeded": true
+    },
+    "successful_package_job": 121155095412,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40188489873"
+  },
+  "input_changes": {
+    "lanrith/build.py": {
+      "after_sha256": "c270b10431e7b853a30a5b6089e89261a7024e77ed3173dac102aa74c6ea0283",
+      "before_sha256": "c3b5da6ce475df3e7b0a0e26b21d1429edcecc631fa4bc527f8e91ca9aa025c9"
+    },
+    "lanrith/runtime.py": {
+      "after_sha256": "54053ce9bdca396a252f846cbd51d5e82a15d26a5d7c8a786d29a6a6e1f47d2e",
+      "before_sha256": "d30bce212927460ef93718b21c4cac74ec0901fc4f0da158947ff3c400d15605"
+    },
+    "tests/test_build.py": {
+      "after_sha256": "8812ff586d48621fad0c47643f31f9084570f8699b256ae6db1147f7f4770871",
+      "before_sha256": "744aeef8f0f3ebb97ad066220da5ace0fb1b841f4c5832717ad055b2889cb46f"
+    },
+    "tests/test_runtime.py": {
+      "after_sha256": "e89905850e0325e912fb551a9885add84b1bdb91bd8af6b14a37420eec4fdf1c",
+      "before_sha256": "c4d2ead898f929f1222f806ef893b752285cb1289bcf2ca4007bc3b58f275f95"
+    }
+  },
+  "kind": "boot-seed-read-only-esp-remediation",
+  "production_qualified": false,
+  "reason": "The corrected hostname socket passed native assembly. Package compilation, vulnerability admission, storage expansion and factory installation passed. Installed boot then failed systemd-boot-random-seed.service and the global boot failure check. The mandatory seed refresh writes to the ESP while the generated appliance mount policy keeps that filesystem read-only; the matching native bootctl reproduces the write failure.",
+  "reference": "https://github.com/systemd/systemd/blob/v257.13/src/bootctl/bootctl-random-seed.c",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "successful_security_admission": {
+    "custom_result": "pass",
+    "debian_report": "schema_version=2\nresult=pass\nsuite=trixie\npolicy=available-fix-or-high-medium-eol\nactionable_findings=0\nscanner=lanrith-debian-tracker\nscanner_version=3\nscanner_sha256=609c4dfd178e4f5e5a247ee848e4a3464abc28b33d3768b9c03c348046e25612\nmanifest_sha256=8169ba27527879e22af27c4a6e2157b9ed28b2dc1022591f4c44a53e3eb26cfb\npolicy_sha256=2ae5389c906add94ea7781740a11964428fd0140c1b03f38e6fd8fa6f877f88d\nbinary_package_count=339\nsource_package_count=199\nadvisory_source_package_count=200\nkernel_advisory_mapping=authenticated-linux-payload-version\ntracked_source_package_count=126\ncves_evaluated=24225\nunresolved_tracker_records=1192\nunresolved_high_urgency=0\nunresolved_medium_urgency=0\nunresolved_low_urgency=1\nunresolved_unimportant=143\nunresolved_unassigned=1048\nunresolved_end_of_life=0\nundetermined_records=4\nfeed_url=https://security-tracker.debian.org/tracker/data/json\nfeed_compression=gzip\nfeed_bytes=14124409\nfeed_sha256=748fd786b39da567bb8a07ea1f8985e1bc2adcdf0c4837b9da3d9fb0dd4211da\nsource_map_sha256=0aa06d29db8b1b430ffb32c5a981d1a43c23742f42e91a4ab029dda25b602adb\n",
+    "inventory_sha256": "8169ba27527879e22af27c4a6e2157b9ed28b2dc1022591f4c44a53e3eb26cfb",
+    "package_count": 339,
+    "package_policy": "pass",
+    "production_qualified": false
+  },
+  "validation": {
+    "assembly_regression_before_sha256": "fdfad48368f037e0f3d66f408f4082aeb03ec7c904ad2934682713b2b6008b27",
+    "denied_paths": [
+      "Non-root callers cannot invoke seed refresh.",
+      "Unverified or foreign ESP selection cannot open a write window.",
+      "A native invalid-seed read failure closes the real FAT filesystem read-only and permits a subsequent valid retry."
+    ],
+    "hosted_native": "The focused VM is a direct-kernel storage/seed reproduction, not complete platform UEFI/TPM qualification. Fresh complete hosted qualification is required.",
+    "native_package_authentication": {
+      "index_sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+      "local_reproduction_image": "a25539869d1322eff41d7619ccef58d3df0f804f704f6d5c993a92589e2b8984",
+      "packages": [
+        {
+          "name": "systemd-boot",
+          "sha256": "e8ebf9c51e141b89deda2aacc08332b35f9ef00722a5e187191e08b881ed04ed",
+          "url": "https://snapshot.debian.org/archive/debian/20261024T080000Z/pool/main/s/systemd/systemd-boot_257.13-1~deb13u1_amd64.deb",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "systemd-boot-tools",
+          "sha256": "8ea810011e878796fb2fef4e8cd1d51d33e98fe74e44b8657d129e0a4d2ecab1",
+          "url": "https://snapshot.debian.org/archive/debian/20261024T080000Z/pool/main/s/systemd/systemd-boot-tools_257.13-1~deb13u1_amd64.deb",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libsystemd-shared",
+          "sha256": "2d349824e57f88507e2a33360610d8afc143a4ad5e80ee4bf8f37b826d6f37f9",
+          "url": "https://snapshot.debian.org/archive/debian/20261024T080000Z/pool/main/s/systemd/libsystemd-shared_257.13-1~deb13u1_amd64.deb",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "result": "pass",
+      "reviewed_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
+      "schema": 1,
+      "scope": "Exact native bootctl, shared implementation library and vendor boot random-seed service; not a complete platform qualification.",
+      "verified_installed_files": {
+        "usr/bin/bootctl": "c690bca68e0dc5a4b45c664f7c7ef9440ae306fef772f1180542d78ae1371768",
+        "usr/lib/systemd/system/systemd-boot-random-seed.service": "a3fc62425342926bcd0097b2eb4d096ae3ccbda2d242031fc25b17568ea04621",
+        "usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared-257.so": "9f6f06ff4883d23eee5e628c625878e8bc7f60613e945e04ead7793ae969f37c"
+      },
+      "version": "257.13-1~deb13u1"
+    },
+    "native_reproduction": {
+      "after_mount_options": "ro,nosuid,nodev,noexec,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro",
+      "after_seed_changed": true,
+      "after_seed_size": 32,
+      "before_diagnostic": "Failed to open random seed file for writing: Operation not permitted",
+      "before_exit_code": 1,
+      "failure_mount_options": "ro,nosuid,nodev,noexec,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro",
+      "fixture": {
+        "guest_script_sha256": "fc9d7d9de173e300767230dd1a418c2e87a8948c28c6ae841589bf98b45b3d18",
+        "kernel_sha256": "6d8a7f745280cc06a6d2877c932f4dfa9079b694eb4227b61b27232642340794",
+        "vm_script_sha256": "e590c16153b5580c9b1955294a76a3e06d7e921068a8834dc348c615efae3a1c"
+      },
+      "kernel": "6.12.111+deb13-amd64",
+      "kind": "direct-kernel-vm-boot-seed-reproduction",
+      "limits": "Focused disposable direct-kernel VM, not the platform UEFI/TPM qualification. Verified-root disk authority is synthetic. Actual GPT ESP, FAT filesystem, parent-device/ownership checks, native bootctl and mount syscalls are exercised. EFI firmware token provisioning is not exercised. No seed bytes are retained.",
+      "native_failure_closed_read_only": true,
+      "production_qualified": false,
+      "protected_efi_files_unchanged": true,
+      "result": "pass",
+      "retry_after_failure_passed": true,
+      "schema": 1,
+      "systemd": "systemd 257 (257.13-1~deb13u1)"
+    },
+    "pinned_actionlint": "pass",
+    "production_workflow_assessment": "All eight reviewed production workflow hashes remain unchanged and match their SLSA assessment.",
+    "python_syntax": "pass",
+    "regression_after_sha256": "e2608479ea3565a34def36ba0e18f95b20d094a09783ffd1fecabcfe74fabeec",
+    "regression_before_sha256": "603db8bfc0b49474554fac30e3483ada91280c0a732eb80f7b0b0cc1dfbcfaee",
+    "source_boundary": "pass",
+    "test_log_sha256": "794a83dd93f54bb7f336bb9fb00bc06e0f07d99065c1a7e71454922344db93bb",
+    "tests_passed": 435,
+    "tests_run": 447,
+    "tests_skipped": 12,
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  }
+}

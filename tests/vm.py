@@ -28,6 +28,17 @@ from lanrith import build, config, media, release
 PROJECT = Path(__file__).resolve().parents[1]
 OWNER = '4d953754-9f66-43ac-b649-e576c951c8cb'
 PASSPHRASE = 'disposable-qualification-state-passphrase'
+FIREWALL_LISTENERS = ('ssh.service', 'unbound.service', 'kea-dhcp4-server.service', 'chrony.service')
+INACTIVE_OPTIONAL_UNITS = (
+    'frr.service', 'freeradius.service', 'suricata.service', 'snmpd.service', 'alloy.service',
+    'chronyd-restricted.service', 'chrony-wait.service',
+    'discovery-bridge.service', 'discovery-bridge-collector.service', 'discovery-bridge-publisher.service',
+    'discovery-bridge-dns.service', 'dpdk.service', 'lanrith-policy-reader.service', 'lanrith-policy-helper.service',
+    'systemd-sysupdate.service', 'systemd-sysupdate.timer', 'systemd-sysupdate-reboot.service',
+    'systemd-sysupdate-reboot.timer', 'lanrith-policy-helper-requests.socket',
+    'lanrith-policy-helper-status.socket', 'lanrith-radius-runtime.service',
+    'lanrith-vpp-service-attachment.service', 'lanrith-nat64.service', 'lanrith-nat64-internal.service',
+    'lanrith-nat46.service')
 
 
 def run(*arguments, timeout=180, **kwargs):
@@ -119,6 +130,7 @@ class Guest:
         self.console = None
         self.buffer = b''
         self.last_diagnostic = None
+        self.service_state = None
         self.qmp_events = []
         self.observed_diagnostics = {}
         self.environment = {key: value for key, value in os.environ.items()
@@ -148,6 +160,7 @@ class Guest:
         release.require(self.process is None or self.process.poll() is not None, 'Guest is already running.')
         self.qmp_events = []
         self.observed_diagnostics = {}
+        self.service_state = None
         for name in ('qmp.sock', 'serial.sock', 'tpm.sock'):
             (self.work/name).unlink(missing_ok=True)
         arguments = ['qemu-system-x86_64', '-machine', 'q35,smm=on,accel=tcg', '-cpu', 'max',
@@ -288,7 +301,23 @@ class Guest:
         self.observed_diagnostics = {'flags': flags, 'literal_errors': sorted(literals)[:32],
                                      'failed_units': sorted(units)[:32]}
         return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
+            'service_state':getattr(self, 'service_state', None),
             'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(buffer).hexdigest()},sort_keys=True)
+
+    def service_diagnostic(self):
+        """Keep complete public unit identifiers, never SSH stderr or journal text."""
+        try:
+            result = self.ssh('systemctl list-units --failed --all --full --plain --no-legend --no-pager',
+                              success=False, timeout=10, agent=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return {'query_succeeded': False, 'failed_units': []}
+        names = set()
+        if result.returncode == 0 and len(result.stdout) <= 65536:
+            for line in result.stdout.decode(errors='replace').splitlines():
+                fields = line.split()
+                if fields and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', fields[0]):
+                    names.add(fields[0])
+        return {'query_succeeded': result.returncode == 0, 'failed_units': sorted(names)[:32]}
 
     def ssh_arguments(self, command, *, agent=True, user='admin'):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -340,6 +369,7 @@ class Guest:
                 # PAM are ready. Retry within the overall bounded boot window.
                 pass
             time.sleep(2)
+        self.service_state = self.service_diagnostic()
         raise release.ReleaseError('Guest did not pass its native health check over SSH: '+self.diagnostic())
 
     def close(self):
@@ -526,6 +556,93 @@ deny kill -TERM 1
 '''
 
 
+def check_process_capabilities(services, *, proc=Path('/proc')):
+    """Bind each declared capability role to its service cgroup and Unix UID."""
+    def status(path):
+        try:
+            fields = dict(line.split(':', 1) for line in path.read_text().splitlines() if ':' in line)
+            uid = int(fields['Uid'].split()[1])
+            retained = 0
+            for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'):
+                retained |= int(fields[key], 16)
+            return uid, retained
+        except (FileNotFoundError, ProcessLookupError):
+            return None
+        except (OSError, KeyError, ValueError, IndexError):
+            raise SystemExit('A live process capability record could not be verified.')
+
+    def group(path):
+        try:
+            rows = path.read_text().splitlines()
+        except (FileNotFoundError, ProcessLookupError):
+            if path.parent.exists():
+                raise SystemExit('A live process cgroup could not be verified.')
+            return None
+        except OSError:
+            raise SystemExit('A live process cgroup could not be verified.')
+        if len(rows) != 1 or not rows[0].startswith('0::/'):
+            raise SystemExit('A live process cgroup could not be verified.')
+        return rows[0][3:]
+
+    roles = {}
+    for unit, policy in services.items():
+        expected = '/system.slice/'+unit
+        if policy['group'] != expected or type(policy['uid']) is not int or policy['uid'] <= 0 or \
+                type(policy['pid']) is not int or policy['pid'] <= 0 or type(policy['mask']) is not int or \
+                not 0 <= policy['mask'] < 1 << 64:
+            raise SystemExit('A declared service capability identity is invalid.')
+        main = proc/str(policy['pid'])
+        observed = status(main/'status')
+        if observed is None or observed[0] != policy['uid'] or group(main/'cgroup') != expected:
+            raise SystemExit('A declared service capability identity is invalid.')
+        roles[(expected, policy['uid'])] = policy['mask']
+    seen = False
+    for path in proc.glob('[0-9]*/status'):
+        observed = status(path)
+        if observed is None:
+            continue
+        uid, retained = observed
+        if uid != 0:
+            seen = True
+            if retained:
+                # A daemon's resolver workers share its systemd cgroup. A
+                # matching UID alone must never authorize an unrelated process.
+                identity = group(path.parent/'cgroup')
+                if identity is None:
+                    continue
+                permitted = roles.get((identity, uid), 0)
+                if retained & ~permitted:
+                    raise SystemExit('A non-root process holds an undeclared capability.')
+    if not seen:
+        raise SystemExit('No non-root process context was observed.')
+
+
+class PrivilegeBoundaryError(release.ReleaseError):
+    """Retain public failure categories without remote command output."""
+
+    def __init__(self, results):
+        categories = {
+            'network-control-absent': b'The declared network-control TCB process is absent.',
+            'network-control-confinement': b'The network-control TCB lost its execution restrictions.',
+            'service-confinement': b' lost its execution or filesystem restrictions.',
+            'service-resource-limit': b' lost its memory, task or descriptor budget.',
+            'service-capability-bound': b' has an undeclared capability bound:',
+            'service-not-running': b' has no live service process.',
+            'service-capability-identity': b'A declared service capability identity is invalid.',
+            'unreadable-process-capabilities': b'A live process capability record could not be verified.',
+            'unreadable-process-cgroup': b'A live process cgroup could not be verified.',
+            'message-bus-audit-confinement': b'The message-bus audit role lost its confinement.',
+            'undeclared-process-capability': b'A non-root process holds an undeclared capability.',
+            'no-unprivileged-processes': b'No non-root process context was observed.'}
+        self.diagnostic = {}
+        for name in ('administrator', 'services', 'postconditions'):
+            result = results[name]
+            errors = [category for category, literal in categories.items()
+                      if result.returncode != 0 and len(result.stderr) <= 65536 and literal in result.stderr]
+            self.diagnostic[name] = {'exit_code': result.returncode, 'categories': errors}
+        super().__init__('Privilege boundary check failed: '+json.dumps(self.diagnostic, sort_keys=True))
+
+
 def unprivileged_control_boundary(guest):
     """Prove root-only control paths stay unavailable before elevation.
 
@@ -565,43 +682,48 @@ for unit in cron.service systemd-hostnamed.service ssh.socket sshd@.service; do
 done
 python3 - <<'PY'
 from pathlib import Path
+import pwd
 import subprocess
-
+''' + inspect.getsource(check_process_capabilities) + '''
 # A compromised non-root process must not already hold capabilities that can
 # administer policy, mount filesystems, bypass discretionary access, ptrace
 # peers, change identity, load code into the kernel, or use privileged BPF.
 # systemd-networkd is a declared network-control TCB identity rather than an
 # unprivileged daemon. Its constrained process may hold only the capabilities
 # required by the packaged unit, and must retain no-new-privileges and seccomp.
-forbidden = sum(1 << bit for bit in (1, 2, 3, 6, 7, 12, 16, 17, 19, 21, 38, 39, 40))
 networkd = int(subprocess.check_output(
     ['systemctl', 'show', '--property', 'MainPID', '--value', 'systemd-networkd.service'], text=True))
 if networkd <= 0:
     raise SystemExit('The declared network-control TCB process is absent.')
 properties = subprocess.check_output(['systemctl', 'show', '--property', 'NoNewPrivileges',
-    '--property', 'SystemCallFilter', 'systemd-networkd.service'], text=True).splitlines()
+    '--property', 'SystemCallFilter', '--property', 'ProtectControlGroups', '--property', 'ControlGroup',
+    'systemd-networkd.service'], text=True).splitlines()
 if 'NoNewPrivileges=yes' not in properties or not any(line.startswith('SystemCallFilter=') and
-                                                       line != 'SystemCallFilter=' for line in properties):
+                                                       line != 'SystemCallFilter=' for line in properties) or \
+        'ProtectControlGroups=yes' not in properties:
     raise SystemExit('The network-control TCB lost its execution restrictions.')
 networkd_allowed = sum(1 << bit for bit in (10, 11, 12, 13, 21, 39))
-allowed = {networkd: networkd_allowed}
-for unit, names, mask, resources in (
-        ('unbound.service', set('cap_chown cap_dac_override cap_setgid cap_setuid '
+services = {'systemd-networkd.service': {'pid': networkd,
+    'uid': pwd.getpwnam('systemd-network').pw_uid, 'mask': networkd_allowed,
+    'group': dict(line.split('=', 1) for line in properties)['ControlGroup']}}
+for unit, account, names, mask, resources in (
+        ('unbound.service', 'unbound', set('cap_chown cap_dac_override cap_setgid cap_setuid '
                                 'cap_net_bind_service'.split()), 0, ('536870912', '64', '4096')),
-        ('kea-dhcp4-server.service', {'cap_net_bind_service', 'cap_net_raw'},
+        ('kea-dhcp4-server.service', '_kea', {'cap_net_bind_service', 'cap_net_raw'},
          sum(1 << bit for bit in (10, 13)), ('268435456', '64', '4096')),
-        ('chrony.service', {'cap_net_bind_service', 'cap_sys_time'},
+        ('chrony.service', '_chrony', {'cap_net_bind_service', 'cap_sys_time'},
          sum(1 << bit for bit in (10, 25)), ('134217728', '32', '1024'))):
     rows = subprocess.check_output(['systemctl', 'show', '--property', 'MainPID',
         '--property', 'NoNewPrivileges', '--property', 'ProtectSystem', '--property', 'PrivateTmp',
         '--property', 'MemoryDenyWriteExecute', '--property', 'SystemCallFilter',
+        '--property', 'ControlGroup', '--property', 'ProtectControlGroups',
         '--property', 'CapabilityBoundingSet', '--property', 'MemoryMax',
         '--property', 'MemorySwapMax', '--property', 'TasksMax', '--property', 'LimitNOFILE',
         unit], text=True).splitlines()
     fields = dict(row.split('=', 1) for row in rows)
     if fields.get('NoNewPrivileges') != 'yes' or fields.get('ProtectSystem') != 'strict' or \
             fields.get('PrivateTmp') != 'yes' or fields.get('MemoryDenyWriteExecute') != 'yes' or \
-            not fields.get('SystemCallFilter'):
+            not fields.get('SystemCallFilter') or fields.get('ProtectControlGroups') != 'yes':
         raise SystemExit(unit+' lost its execution or filesystem restrictions.')
     if (fields.get('MemoryMax'), fields.get('TasksMax'), fields.get('LimitNOFILE')) != resources or \
             fields.get('MemorySwapMax') != '0':
@@ -612,28 +734,26 @@ for unit, names, mask, resources in (
     pid = int(fields['MainPID'])
     if pid <= 0:
         raise SystemExit(unit+' has no live service process.')
-    allowed[pid] = mask
-seen = set()
-for status in Path('/proc').glob('[0-9]*/status'):
-    try:
-        fields = {line.split(':', 1)[0]: line.split(':', 1)[1].strip()
-                  for line in status.read_text().splitlines() if ':' in line}
-        uid = int(fields['Uid'].split()[1])
-        effective = int(fields['CapEff'], 16)
-        retained = effective | int(fields['CapPrm'], 16) | int(fields['CapInh'], 16) | int(fields['CapAmb'], 16)
-    except (FileNotFoundError, KeyError, ValueError, PermissionError):
-        continue
-    if uid != 0:
-        seen.add(uid)
-        permitted = allowed.get(int(status.parent.name), 0)
-        if retained & ~permitted or effective & forbidden & ~permitted:
-            raise SystemExit('A non-root process holds an undeclared capability.')
-if not seen:
-    raise SystemExit('No non-root process context was observed.')
+    services[unit] = {'pid': pid, 'uid': pwd.getpwnam(account).pw_uid,
+                      'mask': mask, 'group': fields['ControlGroup']}
+# Debian's non-root message bus writes audit events. It has no other capability
+# role, may not gain privileges through exec, and cannot migrate its cgroup.
+rows = subprocess.check_output(['systemctl', 'show', '--property', 'MainPID', '--property', 'User',
+    '--property', 'ControlGroup', '--property', 'NoNewPrivileges', '--property', 'ProtectControlGroups',
+    '--property', 'CapabilityBoundingSet', '--property', 'AmbientCapabilities', 'dbus.service'], text=True)
+fields = dict(line.split('=', 1) for line in rows.splitlines())
+if fields['User'] != 'messagebus' or fields['NoNewPrivileges'] != 'yes' or \
+        fields['ProtectControlGroups'] != 'yes' or fields['CapabilityBoundingSet'] != 'cap_audit_write' or \
+        fields['AmbientCapabilities'] != 'cap_audit_write':
+    raise SystemExit('The message-bus audit role lost its confinement.')
+services['dbus.service'] = {'pid': int(fields['MainPID']), 'uid': pwd.getpwnam('messagebus').pw_uid,
+                          'mask': 1 << 29, 'group': fields['ControlGroup']}
+check_process_capabilities(services)
 PY
 ''', success=False)
-    release.require(administrator.returncode == 0 and services.returncode == 0 and postconditions.returncode == 0,
-                    'A non-root identity reached a root-only control path or changed its postcondition.')
+    results = {'administrator': administrator, 'services': services, 'postconditions': postconditions}
+    if any(result.returncode != 0 for result in results.values()):
+        raise PrivilegeBoundaryError(results)
 
 
 def check_state(guest, expected, message):
@@ -698,13 +818,12 @@ def firewall_failure(guest):
     """Core listeners stop with nftables and cannot start if its activation fails."""
     # A transient unit survives the SSH listener it deliberately stops. Every
     # write is under /run in this disposable guest; restore before reconnecting.
-    script = inspect.getsource(network_hardening)+'\n'+inspect.cleandoc('''
+    script = inspect.getsource(network_hardening)+'\nlisteners='+repr(FIREWALL_LISTENERS)+'\n'+inspect.cleandoc('''
         import json
         from pathlib import Path
         import subprocess
         import time
 
-        listeners = ['ssh.service', 'unbound.service', 'kea-dhcp4-server.service']
         override = Path('/run/systemd/system/nftables.service.d/90-qualification-failure.conf')
         receipt = Path('/run/lanrith/firewall-failure-qualification.json')
 
@@ -852,6 +971,7 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
                         'Root administration succeeded without the forwarded test agent.')
         guest.ssh('sudo lanrith-runtime accept 9')
         unprivileged_control_boundary(guest)
+        print('Native VM: unprivileged control boundaries passed.', flush=True)
         root(guest, '''set -eu
 mkdir -p /var/lib/lanrith/qualification-state /var/lib/kea
 systemctl stop kea-dhcp4-server.service
@@ -873,13 +993,7 @@ systemctl start kea-dhcp4-server.service
             'user_context': '', 'pool_id': '0'}},
             'Qualification did not seed the expected persistent DHCP lease.')
         print('Native VM: installed boot accepted and populated state verified.', flush=True)
-        root(guest, '''for unit in frr.service freeradius.service suricata.service snmpd.service alloy.service \
-chrony.service chronyd-restricted.service chrony-wait.service \
-discovery-bridge.service discovery-bridge-collector.service discovery-bridge-publisher.service \
-discovery-bridge-dns.service dpdk.service lanrith-policy-reader.service lanrith-policy-helper.service \
-systemd-sysupdate.service systemd-sysupdate.timer systemd-sysupdate-reboot.service systemd-sysupdate-reboot.timer \
-lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket lanrith-radius-runtime.service \
-lanrith-vpp-service-attachment.service lanrith-nat64.service lanrith-nat64-internal.service lanrith-nat46.service; do
+        root(guest, 'for unit in '+' '.join(INACTIVE_OPTIONAL_UNITS)+'''; do
 ! systemctl is-active --quiet "$unit" || exit 1
 done''')
         if manual:
@@ -1116,6 +1230,9 @@ def main():
             print('Native VM profile rootless passed.', flush=True)
             shutil.rmtree(profile)
         report['result'] = 'pass'
+    except PrivilegeBoundaryError as error:
+        report['failure'] = {'kind': 'unprivileged-control-boundary', 'diagnostic': error.diagnostic}
+        raise
     finally:
         report['assessed_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         args.result.write_bytes(release.canonical(report))
