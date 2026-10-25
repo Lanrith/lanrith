@@ -16,7 +16,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
-from lanrith import sbom, embedded
+from lanrith import sbom, embedded, components
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,9 +140,7 @@ def main():
         require('usr/share/lanrith/apt-metadata' not in names and
                 'usr/share/doc/alloy/security/beyla' not in names,
                 'Scan-only evidence must not be deployed in the router filesystem.')
-        scan_names = {'alloy', 'prometheus-node-exporter', 'discovery-bridge', 'router-policy-helper',
-                      'router-policy-reader', 'router-policy-collector', 'router-policy-check',
-                      'router-policy-status', 'router-policy-recover', 'router-policy-profile'}
+        scan_names = {'alloy', 'prometheus-node-exporter'}.union(*components.REQUIRED_BINARIES.values())
         require(set(subjects) == scan_names | {'alloy-beyla'}, 'Custom binary scan coverage is incomplete.')
         with tarfile.open(directory/'go-binaries.tar.gz', 'w:gz') as binaries, \
                 tempfile.TemporaryDirectory(prefix='embedded-subject.', dir=directory) as temporary:
