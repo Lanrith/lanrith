@@ -33,10 +33,18 @@ class ServiceHardeningTests(unittest.TestCase):
         self.assertIn('MemoryMax=256M\nMemorySwapMax=0\nTasksMax=64\nLimitNOFILE=4096\n', unit)
 
     def test_chrony_has_a_bounded_clock_service_budget(self):
-        unit = (ROOT/'mkosi/base/mkosi.extra/usr/share/lanrith/profiles/etc/systemd/system/'
-                'chrony.service.d/20-lanrith-runtime.conf').read_text()
+        unit = (ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/'
+                'chrony.service.d/30-lanrith-hardening.conf').read_text()
         self.assertIn('NoNewPrivileges=yes\n', unit)
         self.assertIn('MemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n', unit)
+        self.assertIn('ExecStart=/usr/sbin/chronyd -n -U -u _chrony -f /etc/chrony/chrony.conf\n', unit)
+
+    def test_message_bus_keeps_only_its_audit_role_and_cannot_change_cgroups(self):
+        unit = (ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/'
+                'dbus.service.d/30-lanrith-hardening.conf').read_text()
+        self.assertIn('CapabilityBoundingSet=\nCapabilityBoundingSet=CAP_AUDIT_WRITE\n', unit)
+        self.assertIn('AmbientCapabilities=\nAmbientCapabilities=CAP_AUDIT_WRITE\n', unit)
+        self.assertIn('NoNewPrivileges=yes\nProtectControlGroups=yes\n', unit)
 
     def test_boot_health_rejects_missing_confinement_and_alternate_activation(self):
         health = (ROOT/'mkosi/base/mkosi.extra/usr/lib/lanrith/verify-host-hardening').read_text()

@@ -12,6 +12,19 @@ from lanrith.release import ReleaseError
 
 
 class AssemblyTests(unittest.TestCase):
+    def test_core_confinement_is_carried_into_assembly_from_any_admitted_base(self):
+        project = Path(__file__).resolve().parents[1]
+        value = config.load(project/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'older-admitted-base-placeholder')
+            build.assembly(value, base, root/'work', version='0.1.0', sequence=9)
+            for unit in ('chrony.service', 'dbus.service', 'unbound.service', 'kea-dhcp4-server.service'):
+                name = 'etc/systemd/system/'+unit+'.d/30-lanrith-hardening.conf'
+                self.assertEqual((root/'work/mkosi.extra'/name).read_bytes(),
+                                 (project/'mkosi/base/mkosi.extra'/name).read_bytes())
+
     def test_watchdog_policy_survives_initrd_handover_and_explicit_disable(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
         with tempfile.TemporaryDirectory() as temporary:

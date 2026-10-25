@@ -1,0 +1,500 @@
+{
+  "approval": {
+    "new_source": "Fresh independent exact-head human GitHub approval is required by stale-review and last-push protections.",
+    "prior_review_actor": "mikenorgate",
+    "prior_review_commit": "f84c4a789d5cf235e18dddcb93b9c1d45925ee19",
+    "prior_review_id": 5643785208
+  },
+  "automatic_approval_enabled": false,
+  "base_head": "f84c4a789d5cf235e18dddcb93b9c1d45925ee19",
+  "correction": [
+    "Install the Chrony policy as an active core drop-in: foreground execution as _chrony, only clock/bind capabilities, no-new-privileges and bounded resources. Remove the inactive duplicate.",
+    "Bound the existing D-Bus audit role to CAP_AUDIT_WRITE, require no-new-privileges and protect its cgroup. No root-control capability is added.",
+    "Copy the same canonical core policies into owner assemblies so an older admitted neutral base cannot omit them.",
+    "Bind each permitted capability role to the declared service cgroup, expected Unix UID and verified live leader. Check every retained capability set, including workers. Reject extra capabilities, another cgroup or UID, and unreadable live records.",
+    "Keep mandatory NTP active while checking unselected alternate Chrony services remain inactive. Preserve every negative privilege probe and native profile requirement.",
+    "Derive firewall failure/recovery coverage from the complete core listener contract, including NTP. Stop, deny and restore all selected listeners.",
+    "Retain only fixed public failure categories and return codes in failed native reports; never remote command output or recovery credentials.",
+    "Bind only the existing upload staging directory into rootless SSH PrivateTmp. Remove only chroot from its mount syscall deny set for OpenSSH privilege separation. Keep all other mount operations blocked, existing capability bounds, no-new-privileges and the original rootless negative probes."
+  ],
+  "created_at": "2026-10-25T20:27:19.344910+00:00",
+  "evidence_archive": "https://github.com/Lanrith/lanrith/releases/tag/audit-core-confinement-resolution-20261025T202719Z",
+  "failed_qualification": {
+    "artifact_id": 12605518635,
+    "artifact_sha256": "b8948e8fe1aba09500c4c790130cd3acc74f76bb2fb47fa239eda54284293487",
+    "attempt": 1,
+    "failed_native_job": 121221036983,
+    "id": 40204961134,
+    "native_job_log_sha256": "f0f9ba87584e38bd731685ad93cd7cad1b92227d9e2c323cbd1d2b740f93aa63",
+    "native_report": {
+      "assessed_at": "2026-10-25T16:29:17.723173+00:00",
+      "filesystem_sha256": "5763b4cd7758ea4268c6cbd3a27ad625ca39616bca7ebce4125a870b06127347",
+      "initrd_sha256": "372a33e8bb5eaa9368f2cb1965561b71585c3ff8248bb6a92329d67f7ab07ecb",
+      "profiles": [],
+      "result": "fail",
+      "schema": 1,
+      "source_sha256": "4683430eb02023c44fd2f3344bd28f7728483424934ebb97d8166643dfa77846",
+      "test": "x86-64-uefi-factory-ab"
+    },
+    "successful_package_job": 121204902179,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40204961134"
+  },
+  "firewall_recovery_gap": {
+    "receipt": {
+      "blocked_on_firewall_failure": true,
+      "effective_kernel_hardening": true,
+      "result": "pass",
+      "stopped_with_firewall": true
+    },
+    "units": {
+      "chrony.service": "inactive",
+      "kea-dhcp4-server.service": "active",
+      "ssh.service": "active",
+      "unbound.service": "active"
+    }
+  },
+  "input_changes": {
+    "lanrith/build.py": {
+      "after_sha256": "461c4a42dbecabe3273bab268ecfa5053bad64b96bdc25628ec53efb2b0213ab",
+      "before_sha256": "c270b10431e7b853a30a5b6089e89261a7024e77ed3173dac102aa74c6ea0283"
+    },
+    "lanrith/config.py": {
+      "after_sha256": "d22b2c6884930ef515aac19f9873458daaa1fdc20e33d16cdcb384f15c82b80e",
+      "before_sha256": "244a097f808e2315cf5a8ca369cbf42699acedc067bf0c222d0475c594d18dc1"
+    },
+    "mkosi/base/mkosi.extra/etc/systemd/system/chrony.service.d/30-lanrith-hardening.conf": {
+      "after_sha256": "2c4d9232eb132b7112decffc60da61b27fb47ada4ca7891adb326c0cd0bca183",
+      "before_sha256": null
+    },
+    "mkosi/base/mkosi.extra/etc/systemd/system/dbus.service.d/30-lanrith-hardening.conf": {
+      "after_sha256": "31a5c14415e377690fdf798f76d0cb65d85cdc6ce25628d23c846f6f47b807b1",
+      "before_sha256": null
+    },
+    "mkosi/base/mkosi.extra/usr/share/lanrith/profiles/etc/systemd/system/chrony.service.d/20-lanrith-runtime.conf": {
+      "after_sha256": null,
+      "before_sha256": "c6776a4dab438239139f1bfbd36d14f79e6d9bccd9bb675d77631a9b806dadc3"
+    },
+    "tests/test_build.py": {
+      "after_sha256": "af194a596c402c335b8988b1bf30be6f1362b1e0bf5d029cf6173259a2cfaf64",
+      "before_sha256": "8812ff586d48621fad0c47643f31f9084570f8699b256ae6db1147f7f4770871"
+    },
+    "tests/test_config.py": {
+      "after_sha256": "1641f7262f4a9537bd1bfa20ec0a3cea8b551ca3c87032150059d6d06f698831",
+      "before_sha256": "8ed67451c186e2ec9603c4e79cce3c7745492a9bf0973955360abff2920cc3a0"
+    },
+    "tests/test_service_hardening.py": {
+      "after_sha256": "f3cb983145495bea634bdc0726b2cb0af4db708d43ae5d29fc621a568c94421c",
+      "before_sha256": "7fc6163ed5c37213e828f206f923ade865f28585e813b7b26f85b427ed8a1637"
+    },
+    "tests/test_vm_privilege.py": {
+      "after_sha256": "ce9959dada37d8f59874746e9d9c24a1f1879e871a4d8ea8a0260accbf32d092",
+      "before_sha256": null
+    },
+    "tests/vm.py": {
+      "after_sha256": "1f4bc960c96f029974301be83213c6dbea7669f9e12fb2ec96137d8b2648901e",
+      "before_sha256": "4683430eb02023c44fd2f3344bd28f7728483424934ebb97d8166643dfa77846"
+    }
+  },
+  "kind": "core-service-confinement-remediation",
+  "original_security_admission": {
+    "custom_result": "pass",
+    "debian_report": "schema_version=2\nresult=pass\nsuite=trixie\npolicy=available-fix-or-high-medium-eol\nactionable_findings=0\nscanner=lanrith-debian-tracker\nscanner_version=3\nscanner_sha256=609c4dfd178e4f5e5a247ee848e4a3464abc28b33d3768b9c03c348046e25612\nmanifest_sha256=8169ba27527879e22af27c4a6e2157b9ed28b2dc1022591f4c44a53e3eb26cfb\npolicy_sha256=2ae5389c906add94ea7781740a11964428fd0140c1b03f38e6fd8fa6f877f88d\nbinary_package_count=339\nsource_package_count=199\nadvisory_source_package_count=200\nkernel_advisory_mapping=authenticated-linux-payload-version\ntracked_source_package_count=126\ncves_evaluated=24225\nunresolved_tracker_records=1192\nunresolved_high_urgency=0\nunresolved_medium_urgency=0\nunresolved_low_urgency=1\nunresolved_unimportant=143\nunresolved_unassigned=1048\nunresolved_end_of_life=0\nundetermined_records=4\nfeed_url=https://security-tracker.debian.org/tracker/data/json\nfeed_compression=gzip\nfeed_bytes=14124519\nfeed_sha256=5cd6bc5ecba48da4cf5f9e33ff8b86ea8fcf156122897bf09e91e11c48a9b780\nsource_map_sha256=0aa06d29db8b1b430ffb32c5a981d1a43c23742f42e91a4ab029dda25b602adb\n",
+    "package_count": 339,
+    "package_policy": "pass",
+    "production_qualified": false
+  },
+  "production_qualified": false,
+  "reason": "Installed TPM2 boot health, boot acceptance and both administrator/service-user negative control probes passed. The independent postcondition failed because Chrony confinement was packaged in an inactive optional profile rather than the basic image. The original verifier also omitted the existing D-Bus audit role, bound daemon capabilities only to main PIDs, later contradicted mandatory NTP activation by requiring Chrony to be inactive, and omitted NTP from firewall failure/recovery coverage. The complete local replay then caught a rootless SSH mount-namespace failure and a pre-authentication syscall conflict before another source head was published.",
+  "references": [
+    "https://www.freedesktop.org/software/systemd/man/257/systemd.exec.html",
+    "https://github.com/openssh/openssh-portable/blob/V_10_0_P1/sshd-auth.c"
+  ],
+  "repository": "Lanrith/lanrith",
+  "reproduced_baseline": {
+    "checkpoint": {
+      "artifact_id": 12605905779,
+      "artifact_sha256": "de8eefe32389148724ab14bf87c3e26e759762893aef4a62f82d9a543fd1fadc",
+      "builder": "lanrith-mkosi:4d187598e3547fb477b19201a81babde3a72e38a28817a9a384adbac5d507cb0",
+      "origin_run": 40204961134,
+      "production_qualified": false,
+      "result": "pass",
+      "schema": 1,
+      "source_commit": "f84c4a789d5cf235e18dddcb93b9c1d45925ee19",
+      "tested_merge_commit": "6681055749417375eda9d7a8527f3f86b1d2d431",
+      "tree": "a8df3cba6216c351b4efebc2c9f30901434d8ca7"
+    },
+    "diagnostic": {
+      "administrator": {
+        "exit_code": 0,
+        "public_failure_categories": []
+      },
+      "postconditions": {
+        "exit_code": 1,
+        "public_failure_categories": [
+          " lost its execution or filesystem restrictions."
+        ]
+      },
+      "services": {
+        "exit_code": 0,
+        "public_failure_categories": []
+      }
+    },
+    "inventory_match": {
+      "exact_name_version_match": true,
+      "original_package_count": 339,
+      "production_qualified": false,
+      "replayed_package_count": 339,
+      "result": "pass",
+      "schema": 1
+    },
+    "scope": {
+      "instrumented_test_sha256": "bcdadf9faaddcc3acc13f1d929f5c153266ba337baab6848e8cc54f2caff32c3",
+      "original_test_sha256": "4683430eb02023c44fd2f3344bd28f7728483424934ebb97d8166643dfa77846",
+      "production_qualified": false,
+      "purpose": "Local diagnostic-only replay from an exact retained package checkpoint. Existing guest behavior and assertions remain; instrumentation reports only fixed public failure categories and declared service process metadata. This cannot authorize merge, release, or production qualification.",
+      "schema": 1,
+      "source_commit": "f84c4a789d5cf235e18dddcb93b9c1d45925ee19",
+      "source_tree": "a8df3cba6216c351b4efebc2c9f30901434d8ca7",
+      "tested_github_merge": "6681055749417375eda9d7a8527f3f86b1d2d431"
+    },
+    "service_metadata": {
+      "processes": [
+        {
+          "caps": {
+            "CapAmb": 15360,
+            "CapEff": 15360,
+            "CapInh": 15360,
+            "CapPrm": 15360
+          },
+          "executable": "systemd-networkd",
+          "pid": 588,
+          "uid": 998
+        },
+        {
+          "caps": {
+            "CapAmb": 536870912,
+            "CapEff": 536870912,
+            "CapInh": 536870912,
+            "CapPrm": 536870912
+          },
+          "executable": "dbus-daemon",
+          "pid": 593,
+          "uid": 994
+        },
+        {
+          "caps": {
+            "CapAmb": 9216,
+            "CapEff": 9216,
+            "CapInh": 9216,
+            "CapPrm": 9216
+          },
+          "executable": "kea-dhcp4",
+          "pid": 626,
+          "uid": 107
+        },
+        {
+          "caps": {
+            "CapAmb": 0,
+            "CapEff": 33555456,
+            "CapInh": 0,
+            "CapPrm": 33555456
+          },
+          "executable": "chronyd",
+          "pid": 693,
+          "uid": 105
+        },
+        {
+          "caps": {
+            "CapAmb": 0,
+            "CapEff": 33555456,
+            "CapInh": 0,
+            "CapPrm": 33555456
+          },
+          "executable": "chronyd",
+          "pid": 694,
+          "uid": 105
+        }
+      ],
+      "units": {
+        "chrony.service": {
+          "AmbientCapabilities": "",
+          "CapabilityBoundingSet": "cap_chown cap_dac_override cap_dac_read_search cap_fowner cap_fsetid cap_setgid cap_setuid cap_setpcap cap_net_bind_service cap_net_broadcast cap_net_admin cap_net_raw cap_ipc_lock cap_ipc_owner cap_sys_nice cap_sys_resource cap_sys_time cap_setfcap cap_perfmon cap_bpf cap_checkpoint_restore",
+          "ControlGroup": "/system.slice/chrony.service",
+          "Group": "",
+          "MainPID": "693",
+          "User": "_chrony"
+        },
+        "kea-dhcp4-server.service": {
+          "AmbientCapabilities": "cap_net_bind_service cap_net_raw",
+          "CapabilityBoundingSet": "cap_net_bind_service cap_net_raw",
+          "ControlGroup": "/system.slice/kea-dhcp4-server.service",
+          "Group": "",
+          "MainPID": "626",
+          "User": "_kea"
+        },
+        "systemd-networkd.service": {
+          "AmbientCapabilities": "cap_net_bind_service cap_net_broadcast cap_net_admin cap_net_raw cap_sys_admin cap_bpf",
+          "CapabilityBoundingSet": "cap_net_bind_service cap_net_broadcast cap_net_admin cap_net_raw cap_sys_admin cap_bpf",
+          "ControlGroup": "/system.slice/systemd-networkd.service",
+          "Group": "",
+          "MainPID": "588",
+          "User": "systemd-network"
+        },
+        "unbound.service": {
+          "AmbientCapabilities": "",
+          "CapabilityBoundingSet": "cap_chown cap_dac_override cap_setgid cap_setuid cap_net_bind_service",
+          "ControlGroup": "/system.slice/unbound.service",
+          "Group": "",
+          "MainPID": "704",
+          "User": ""
+        }
+      }
+    }
+  },
+  "rootless_namespace_failure": {
+    "kind": "owner-collected-rootless-startup-diagnostic",
+    "observation": {
+      "ActiveState": "activating",
+      "ExecMainCode": 0,
+      "ExecMainStatus": 0,
+      "NoNewPrivileges": "yes",
+      "PrivateTmp": "yes",
+      "ProtectSystem": "strict",
+      "Result": "success",
+      "SubState": "start-pre",
+      "categories": [
+        "mount-namespace-failed",
+        "namespace-exec-step",
+        "path-not-found",
+        "namespace-status"
+      ],
+      "journal_query_succeeded": true,
+      "known_paths_in_error_lines": [
+        "/var/tmp/lanrith-update",
+        "/usr/sbin/sshd"
+      ],
+      "path_presence": {
+        "/run/sshd": false,
+        "/var/lib/lanrith/secrets": false,
+        "/var/lib/lanrith/ssh-host-keys": true,
+        "/var/lib/lanrith/update-inbox": true,
+        "/var/tmp/lanrith-update": true
+      },
+      "upload_bind_configured": false
+    },
+    "production_qualified": false,
+    "schema": 1,
+    "scope": "Additional read-only journal observer in a disposable signed diagnostic image. Not an original-image qualification result."
+  },
+  "rootless_resolution": {
+    "bind_only_candidate": {
+      "log_sha256": "faf127e07859594596ea214c45a95d6d9be8b42ff275a4a9049c40f50135d9d7",
+      "report_sha256": "102c59457a61f8ec1a74971b080027466bf2cc181cade4fac81dc336384321b6",
+      "result": "fail"
+    },
+    "fresh_uninstrumented_profile": {
+      "assessed_at": "2026-10-25T20:22:02.335049+00:00",
+      "filesystem_sha256": "74e91660abad7c493d7944dccd0b9f0f089577598c33cea8ee2ff4a56500589e",
+      "initrd_sha256": "40dbf5f159c02ed376a2007267a4ac77a835d4ab67a154fe081912a5c2593048",
+      "inputs": {
+        "before_config_sha256": "244a097f808e2315cf5a8ca369cbf42699acedc067bf0c222d0475c594d18dc1",
+        "files": {
+          "lanrith/build.py": "461c4a42dbecabe3273bab268ecfa5053bad64b96bdc25628ec53efb2b0213ab",
+          "lanrith/config.py": "d22b2c6884930ef515aac19f9873458daaa1fdc20e33d16cdcb384f15c82b80e",
+          "mkosi/base/mkosi.extra/etc/systemd/system/chrony.service.d/30-lanrith-hardening.conf": "2c4d9232eb132b7112decffc60da61b27fb47ada4ca7891adb326c0cd0bca183",
+          "mkosi/base/mkosi.extra/etc/systemd/system/dbus.service.d/30-lanrith-hardening.conf": "31a5c14415e377690fdf798f76d0cb65d85cdc6ce25628d23c846f6f47b807b1",
+          "tests/test_config.py": "1641f7262f4a9537bd1bfa20ec0a3cea8b551ca3c87032150059d6d06f698831",
+          "tests/vm.py": "1f4bc960c96f029974301be83213c6dbea7669f9e12fb2ec96137d8b2648901e"
+        },
+        "kind": "rootless-upload-bind-and-chroot-candidate",
+        "production_qualified": false,
+        "reason": "Bind the upload directory under PrivateTmp and remove only chroot from the existing mount syscall deny set; original rootless native result pending.",
+        "schema": 1,
+        "test_source_unchanged": true
+      },
+      "kind": "local-native-rootless-profile",
+      "production_qualified": false,
+      "profiles": [
+        {
+          "checks": [
+            "secure-boot",
+            "dm-verity",
+            "tpm2-state-encryption",
+            "recovery-enrollment",
+            "automatic-boot-observation",
+            "unprivileged-ssh-administration",
+            "root-login-absent",
+            "elevation-tools-absent",
+            "privileged-file-paths-absent",
+            "source-configuration-absent",
+            "unprivileged-upload-staging"
+          ],
+          "profile": "rootless-administration",
+          "result": "pass"
+        }
+      ],
+      "result": "pass",
+      "schema": 1,
+      "scope": "Original unmodified qualify_rootless function, actual frozen corrected assembly/configuration, matching retained packages and rebuilt neutral filesystems. No diagnostic unit or policy override. Not a production attestation.",
+      "source_sha256": "1f4bc960c96f029974301be83213c6dbea7669f9e12fb2ec96137d8b2648901e"
+    },
+    "original_complete_local_run": {
+      "log_sha256": "23e16e958762a3be1e2139d0c2419ff1d83d0b2595e9b66ab5191b5a6ec86dba",
+      "passed_profiles": [
+        "tpm2-ab",
+        "manual-encryption"
+      ],
+      "report_sha256": "54b161ac5fb010ffc93f5ff92c244f5e2715ade53b9190898136be8c1b9ef28b",
+      "result": "fail"
+    },
+    "preauthentication_analysis": "A bind-only candidate progressed past the namespace failure but still closed SSH before the server banner. The existing @mount deny group contains chroot, which OpenSSH uses for privilege separation. Adding only a chroot exception produced a pass of the original rootless profile. The syscall cause is supported by the policy and before/after result; no captured SIGSYS trace is claimed.",
+    "unchanged_enabled_material_proof_sha256": "e4f09c0db3f9ceb65dd08127f33a3d99dafc7c6a143d0d3418653f55af6fbf84"
+  },
+  "schema": 1,
+  "validation": {
+    "denied_paths": [
+      "Every failed administrator/service/postcondition still blocks qualification.",
+      "A matching UID outside the exact declared service cgroup is denied.",
+      "A different UID, a similar or nested group, or an extra effective/permitted/inheritable/ambient capability is denied.",
+      "A wrong service leader identity, unreadable live record, or missing live cgroup is denied.",
+      "Private and oversized remote diagnostics are excluded from retained reports."
+    ],
+    "earlier_complete_native_log_sha256": "23e16e958762a3be1e2139d0c2419ff1d83d0b2595e9b66ab5191b5a6ec86dba",
+    "fresh_rootless_log_sha256": "588c445cc21827b20e0b5309ab55e1ddbbc3d3e08fc584564d38145b401b5d02",
+    "hosted_native": "Fresh complete hosted qualification and security assessment are mandatory. Local profile coverage spans two passing runs: the original complete run passed TPM2/manual and caught the rootless failure, then the original uninstrumented rootless profile passed after changes confined to its SSH policy. Runtime source and enabled-mode output identities are verified. The original failed report remains unchanged. No single final complete local run or production attestation is claimed.",
+    "native_completion": {
+      "exit_code": 0,
+      "production_qualified": false,
+      "report_copied": true,
+      "schema": 1
+    },
+    "native_local": {
+      "assessed_at": "2026-10-25T20:23:08.662906+00:00",
+      "filesystem_sha256": "74e91660abad7c493d7944dccd0b9f0f089577598c33cea8ee2ff4a56500589e",
+      "fresh_full_hosted_matrix_required": true,
+      "initrd_sha256": "40dbf5f159c02ed376a2007267a4ac77a835d4ab67a154fe081912a5c2593048",
+      "kind": "owner-collected-local-native-coverage",
+      "production_qualified": false,
+      "profiles": [
+        {
+          "checks": [
+            "factory-install-readback",
+            "secure-boot",
+            "dm-verity",
+            "tpm2-state-encryption",
+            "recovery-enrollment",
+            "ssh-pam-administration",
+            "automatic-boot-observation",
+            "optional-services-inactive",
+            "one-shot-upgrade",
+            "fallback-protection",
+            "unaccepted-reboot-fallback",
+            "explicit-acceptance",
+            "replay-rejection",
+            "tamper-rejection",
+            "interrupted-staging",
+            "failed-health-fallback",
+            "populated-state-upgrade-and-rollback",
+            "initrd-provisioning-failure-boundary",
+            "firewall-listener-failure-boundary",
+            "unprivileged-control-boundary"
+          ],
+          "profile": "tpm2-ab",
+          "result": "pass"
+        },
+        {
+          "checks": [
+            "secure-boot",
+            "dm-verity",
+            "manual-state-encryption",
+            "recovery-enrollment",
+            "ssh-pam-administration",
+            "automatic-boot-observation",
+            "persistent-state-reboot",
+            "optional-services-inactive",
+            "unprivileged-control-boundary"
+          ],
+          "profile": "manual-encryption",
+          "result": "pass"
+        },
+        {
+          "checks": [
+            "secure-boot",
+            "dm-verity",
+            "tpm2-state-encryption",
+            "recovery-enrollment",
+            "automatic-boot-observation",
+            "unprivileged-ssh-administration",
+            "root-login-absent",
+            "elevation-tools-absent",
+            "privileged-file-paths-absent",
+            "source-configuration-absent",
+            "unprivileged-upload-staging"
+          ],
+          "profile": "rootless-administration",
+          "result": "pass"
+        }
+      ],
+      "result": "pass",
+      "runs": {
+        "earlier_complete_run": {
+          "config_sha256": "244a097f808e2315cf5a8ca369cbf42699acedc067bf0c222d0475c594d18dc1",
+          "overall_result": "fail",
+          "passed_profiles": [
+            "tpm2-ab",
+            "manual-encryption"
+          ],
+          "report": "native-core-pass-rootless-failure.json",
+          "report_sha256": "54b161ac5fb010ffc93f5ff92c244f5e2715ade53b9190898136be8c1b9ef28b"
+        },
+        "fresh_rootless_run": {
+          "completion": {
+            "exit_code": 0,
+            "production_qualified": false,
+            "report_copied": true,
+            "schema": 1
+          },
+          "config_sha256": "d22b2c6884930ef515aac19f9873458daaa1fdc20e33d16cdcb384f15c82b80e",
+          "overall_result": "pass",
+          "passed_profiles": [
+            "rootless-administration"
+          ],
+          "report": "native-rootless-correction2.json",
+          "report_sha256": "ef14ba580b34bbe97186a6b2804d8060ce05071988a497854c95f53db9020254"
+        }
+      },
+      "schema": 1,
+      "scope": "Three original native profiles passed across two local validation runs. The complete first run passed TPM2 A/B and manual encryption, then caught the rootless SSH namespace failure. After adding only a rootless SSH bind directive and the required chroot syscall exception, the original rootless profile passed on an uninstrumented image. Native test/core sources and all rendered enabled-mode material are unchanged. The original failed report is preserved, never relabelled. This record cannot serve as the complete hosted native report or a production attestation.",
+      "single_complete_run_after_final_change": false,
+      "source_sha256": "1f4bc960c96f029974301be83213c6dbea7669f9e12fb2ec96137d8b2648901e",
+      "test": "x86-64-uefi-local-profile-coverage",
+      "unchanged_material_proof_sha256": "e4f09c0db3f9ceb65dd08127f33a3d99dafc7c6a143d0d3418653f55af6fbf84"
+    },
+    "native_scope": {
+      "files": {
+        "lanrith/build.py": "461c4a42dbecabe3273bab268ecfa5053bad64b96bdc25628ec53efb2b0213ab",
+        "mkosi/base/mkosi.extra/etc/systemd/system/chrony.service.d/30-lanrith-hardening.conf": "2c4d9232eb132b7112decffc60da61b27fb47ada4ca7891adb326c0cd0bca183",
+        "mkosi/base/mkosi.extra/etc/systemd/system/dbus.service.d/30-lanrith-hardening.conf": "31a5c14415e377690fdf798f76d0cb65d85cdc6ce25628d23c846f6f47b807b1",
+        "tests/test_build.py": "af194a596c402c335b8988b1bf30be6f1362b1e0bf5d029cf6173259a2cfaf64",
+        "tests/test_service_hardening.py": "f3cb983145495bea634bdc0726b2cb0af4db708d43ae5d29fc621a568c94421c",
+        "tests/test_vm_privilege.py": "ce9959dada37d8f59874746e9d9c24a1f1879e871a4d8ea8a0260accbf32d092",
+        "tests/vm.py": "1f4bc960c96f029974301be83213c6dbea7669f9e12fb2ec96137d8b2648901e"
+      },
+      "production_qualified": false,
+      "schema": 1,
+      "scope": "Actual corrected test and assembly source, using the original package checkpoint and its rebuilt neutral filesystems. Assembly refreshes every core service policy from corrected source. Complete hosted qualification and fresh security assessment remain required.",
+      "test_source_sha256": "1f4bc960c96f029974301be83213c6dbea7669f9e12fb2ec96137d8b2648901e"
+    },
+    "pinned_actionlint": "pass",
+    "python_syntax": "pass",
+    "reviewed_production_workflow_hashes": "all eight unchanged",
+    "source_boundary": "pass",
+    "static_checks_sha256": "2ded1559fc973cff20ba291680d07991e230681344f0b9b14603cfcbc9b02e36",
+    "test_log_sha256": "2b6070c984bd74868e0ec2b6f5644e82ebaebb70b47a2d8180696ce0e1272bfd",
+    "tests_passed": 446,
+    "tests_run": 458,
+    "tests_skipped": 12,
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  }
+}

@@ -382,14 +382,18 @@ def render(value, *, target_facts=None, retained_allocations=None):
             'CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH '
             'CAP_FOWNER CAP_KILL CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID CAP_SYS_CHROOT\n'
             'AmbientCapabilities=\nUMask=0077\nPrivateTmp=yes\nPrivateDevices=yes\n'
-            'ProtectSystem=strict\nReadWritePaths=/var/tmp/lanrith-update\nProtectHome=read-only\n'
+            'ProtectSystem=strict\nReadWritePaths=/var/tmp/lanrith-update\n'
+            'BindPaths=/var/tmp/lanrith-update\nProtectHome=read-only\n'
             'InaccessiblePaths=-/var/lib/lanrith/secrets -/var/lib/lanrith/update-inbox\n'
             'ProtectHostname=yes\nProtectClock=yes\nProtectKernelTunables=yes\n'
             'ProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
             'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n'
             'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
             'MemoryDenyWriteExecute=yes\nSystemCallArchitectures=native\n'
-            'SystemCallFilter=~@cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap\n')
+            'SystemCallFilter=~@cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap\n'
+            # OpenSSH uses chroot for privilege separation. Keep the remaining
+            # mount operations denied; the declared capabilities do not change.
+            'SystemCallFilter=chroot\n')
     if root_access == 'enabled':
         files['etc/security/authorized_keys'] = '\n'.join(value['administration']['authorized_keys']) + '\n'
         files['etc/sudoers.d/60-lanrith'] = (

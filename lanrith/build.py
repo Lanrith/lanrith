@@ -154,6 +154,14 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
     wants.mkdir(parents=True, exist_ok=True)
+    # Core confinement must also reach owners assembling on an older admitted
+    # base. Keep one source for both the neutral base and every owner overlay.
+    policies = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/etc/systemd/system'
+    for unit in ('unbound.service', 'kea-dhcp4-server.service', 'chrony.service', 'dbus.service'):
+        name = unit+'.d/30-lanrith-hardening.conf'
+        target = wants/name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(policies/name, target)
     state_mount = wants/'var.mount.d/10-lanrith-state.conf'
     state_mount.parent.mkdir(parents=True, exist_ok=True)
     state_mount.write_text('[Mount]\nOptions=nodev,nosuid,noexec\n')
