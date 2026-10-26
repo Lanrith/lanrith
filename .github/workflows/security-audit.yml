@@ -91,6 +91,38 @@ jobs:
           merge-multiple: true
       - name: Publish immutable freshness evidence
         run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib,re,stat,tarfile
+          reports=list(pathlib.Path('assessments').glob('*/security-assessment.json'))
+          assert reports, 'No retained assessment was received'
+          for path in reports:
+            assert re.fullmatch(r'[0-9a-f]{12}',path.parent.name)
+            assert not path.parent.is_symlink() and path.parent.resolve()==path.parent.absolute()
+            report=json.loads(path.read_text())
+            record=report['diagnostic_archive']
+            assert set(record)=={'name','size','sha256'} and record['name']=='diagnostics.tar.gz'
+            assert type(record['size']) is int and 0<record['size']<=64*1024*1024
+            assert re.fullmatch(r'[0-9a-f]{64}',record['sha256'])
+            archive=path.parent/record['name']
+            for asset in (path,path.with_name('security-assessment.json.intoto.jsonl'),archive):
+              info=asset.lstat()
+              assert stat.S_ISREG(info.st_mode) and info.st_nlink==1 and 0<info.st_size<=64*1024*1024
+            assert archive.stat().st_size==record['size']
+            assert hashlib.sha256(archive.read_bytes()).hexdigest()==record['sha256']
+            with tarfile.open(archive,'r|gz') as bundle:
+              total=0
+              seen=set()
+              for member in bundle:
+                assert len(seen)<64 and member.name not in seen
+                assert member.isfile() and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+-]{0,99}',member.name)
+                seen.add(member.name)
+                assert 0<=member.size<=16*1024*1024
+                total+=member.size
+                assert total<=64*1024*1024
+                raw=bundle.extractfile(member).read(16*1024*1024+1)
+                assert len(raw)==member.size and hashlib.sha256(raw).hexdigest()==report['diagnostics'][member.name]
+              assert seen and seen==set(report['diagnostics'])
+          PY
           stamp=$(date -u +%Y%m%dT%H%M%SZ)
           for directory in assessments/*; do
             inventory=${directory##*/}
@@ -98,8 +130,19 @@ jobs:
             tag="assessment-$stamp-$inventory"
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --draft --title "Security assessment $stamp" --prerelease --latest=false \
-              --notes "Retained inventory security assessment, diagnostics and explicit support decision." "$directory"/*
+              --notes "Retained inventory security assessment, diagnostics and explicit support decision." \
+              "$directory/security-assessment.json" "$directory/security-assessment.json.intoto.jsonl" \
+              "$directory/diagnostics.tar.gz"
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            DIRECTORY="$directory" TAG="$tag" python3 - <<'PYVERIFY'
+          import hashlib,json,os,pathlib,subprocess
+          directory=pathlib.Path(os.environ['DIRECTORY'])
+          names=('security-assessment.json','security-assessment.json.intoto.jsonl','diagnostics.tar.gz')
+          expected={name:'sha256:'+hashlib.sha256((directory/name).read_bytes()).hexdigest() for name in names}
+          published=json.loads(subprocess.check_output(['gh','api','repos/'+os.environ['GITHUB_REPOSITORY']+'/releases/tags/'+os.environ['TAG']]))
+          assert published['immutable'] is True and published['draft'] is False and published['prerelease'] is True
+          assert len(published['assets'])==len(expected) and {a['name']:a['digest'] for a in published['assets']}==expected
+          PYVERIFY
           done
       - name: Fail the watchdog signal when any retained release is unsafe
         run: |

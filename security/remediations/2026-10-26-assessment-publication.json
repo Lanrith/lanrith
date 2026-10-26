@@ -1,0 +1,275 @@
+{
+  "approval": {
+    "source": "Protected main requires independent approval of the last push, stale-review dismissal and App-bound required checks.",
+    "status": "fresh-exact-head-human-review-required"
+  },
+  "automatic_approvals_enabled": false,
+  "base_commit": "5622a92293f7449d985d968daab756f88415aef8",
+  "correction": [
+    "Preserve every raw diagnostic byte, including zero-length logs, in a deterministic diagnostics.tar.gz archive before attestation. Keep the existing per-file hashes and bind the archive name, size and digest in the signed report.",
+    "Upload only the nonempty assessment report, provenance bundle and diagnostic archive. Before upload, validate regular files, bounded sizes, archive member names, uniqueness, exact inventory and every member hash without extracting files or executing uploaded code.",
+    "After publication, require an immutable prerelease with exactly the three expected server-reported asset digests. Keep existing vulnerability, retirement and watchdog gates.",
+    "Document how to verify the signed report, archive and original raw diagnostic hashes."
+  ],
+  "created_at": "2026-10-26T08:44:24.736119+00:00",
+  "evidence_archive": "https://github.com/Lanrith/lanrith/releases/tag/audit-assessment-publication-resolution-20261026T084424Z",
+  "failed_run": {
+    "artifact_id": 12629336230,
+    "artifact_sha256": "4b27bc943bcc01d0f1ee0e53663d0170a9d30c217d8cf7589d252ec5387689d2",
+    "attempt": 1,
+    "id": 40273151448,
+    "jobs": [
+      {
+        "conclusion": "success",
+        "id": 121410161668,
+        "name": "assess",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "id": 121410748499,
+        "name": "attest",
+        "status": "completed"
+      },
+      {
+        "conclusion": "failure",
+        "id": 121410837690,
+        "name": "publish",
+        "status": "completed"
+      }
+    ],
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40273151448"
+  },
+  "input_changes": {
+    ".github/workflows/security-audit.yml": {
+      "after_sha256": "f5a473a877be68c6d5b3198f19845f33b778369ef21a6b9985d96ff359c80504",
+      "before_sha256": "c02b42300a13ce19ced9be1d25c85a59faff6eae6f4cea95b5e133b4df7b1141"
+    },
+    "docs/security-maintenance.md": {
+      "after_sha256": "9ecf6077fca981d8233254da0023a17a7c414e60b98b553830d0a8ff6966073e",
+      "before_sha256": "8f0237f3a7a372d8fe3d73e853d1c69046dca48136031fa4fdcf7381b2cce8b9"
+    },
+    "scripts/security-audit.py": {
+      "after_sha256": "55c3682883d4c7f998dda26beeec328333af8a6822b5fbac78a5d531112b35e0",
+      "before_sha256": "9477b9db7375a763b75b367094f3d3588488844a7c8c8c7356971e369b467134"
+    },
+    "tests/test_assessment_diagnostics.py": {
+      "after_sha256": "5f30b3259826922990313e87900582a2a239c7acd7b572d8c5ee5a67b46b7077",
+      "before_sha256": null
+    }
+  },
+  "kind": "retained-assessment-publication-remediation",
+  "original_assessment_and_packaging_replay": {
+    "artifact_id": 12629336230,
+    "artifact_sha256": "4b27bc943bcc01d0f1ee0e53663d0170a9d30c217d8cf7589d252ec5387689d2",
+    "kind": "original-assessment-evidence-and-packaging-replay",
+    "production_qualified": false,
+    "reports": [
+      {
+        "all_original_diagnostic_hashes_preserved": true,
+        "diagnostic_count": 19,
+        "original_provenance_verified": true,
+        "original_report_sha256": "6152328a190617a68ad6662d31b2a2430273184c6364fa74005f3bd461e64b82",
+        "packaging_replay_archive": {
+          "name": "diagnostics.tar.gz",
+          "sha256": "f623d517f84ce66ea888db521e45f4dc432b5ba8736ebe3d812156e2c1037699",
+          "size": 6248
+        },
+        "platform_version": "v0.1.5",
+        "result": "pass",
+        "scanner_errors": [],
+        "supported": true
+      },
+      {
+        "all_original_diagnostic_hashes_preserved": true,
+        "diagnostic_count": 18,
+        "original_provenance_verified": true,
+        "original_report_sha256": "c3fbd403cb779d5304b791fab03c8fd8c5c4afb4c2447f2c6c7939561018f99d",
+        "packaging_replay_archive": {
+          "name": "diagnostics.tar.gz",
+          "sha256": "3e611214eb2db3412f91df1e511a39127274e22ad804034632af1bc5ba4a644a",
+          "size": 14731
+        },
+        "platform_version": "v0.1.3",
+        "result": "fail",
+        "scanner_errors": [],
+        "supported": false
+      },
+      {
+        "all_original_diagnostic_hashes_preserved": true,
+        "diagnostic_count": 18,
+        "original_provenance_verified": true,
+        "original_report_sha256": "e1ea58def70325ead63360dee9947a3065b1c27875ea17474a8fa5ef4d63927a",
+        "packaging_replay_archive": {
+          "name": "diagnostics.tar.gz",
+          "sha256": "3b1856c9c4ae0a628bacbc7fbb34b3daeb107bbd657cde53cdde80001e729d6e",
+          "size": 14726
+        },
+        "platform_version": "v0.1.4",
+        "result": "fail",
+        "scanner_errors": [],
+        "supported": false
+      }
+    ],
+    "run_id": 40273151448,
+    "schema": 1,
+    "scope": "Original signed reports verified against their hosted main workflow. Local diagnostic archives reproduce packaging only and are not attested or published assessments.",
+    "source_commit": "5622a92293f7449d985d968daab756f88415aef8"
+  },
+  "production_qualified": false,
+  "qualified_baseline": {
+    "actual_human_approvals": [
+      {
+        "actor": "mikenorgate",
+        "commit_id": "1caf9b238bdf980415b0f8810338dc8c89ab1aed",
+        "html_url": "https://github.com/Lanrith/lanrith/pull/12#pullrequestreview-5645577565",
+        "id": 5645577565,
+        "state": "APPROVED",
+        "submitted_at": "2026-10-25T22:07:04Z"
+      }
+    ],
+    "immutable": true,
+    "package_qualification": {
+      "conclusion": "success",
+      "head_sha": "1caf9b238bdf980415b0f8810338dc8c89ab1aed",
+      "html_url": "https://github.com/Lanrith/lanrith/actions/runs/40230982623",
+      "id": 40230982623,
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    "release_id": 423782166,
+    "release_run": {
+      "conclusion": "success",
+      "head_sha": "5622a92293f7449d985d968daab756f88415aef8",
+      "html_url": "https://github.com/Lanrith/lanrith/actions/runs/40242836627",
+      "id": 40242836627,
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    "source_commit": "5622a92293f7449d985d968daab756f88415aef8",
+    "tag": "v0.1.5"
+  },
+  "reason": "Retained assessment and attestation jobs succeeded, but publication failed with HTTP 400 Bad Content-Length when gh release create expanded the zero-byte debian.stderr.txt as a separate asset. The current v0.1.5 report passed with no scanner errors; older vulnerable versions remained explicitly unsupported. The freshness watchdog correctly stayed blocked because no immutable assessment was published.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "validation": {
+    "denied_paths": [
+      "Symlinks, hardlinks, special files, reserved and unsafe names, oversized diagnostics.",
+      "Changed archive bytes or member hashes, duplicate or traversing archive names.",
+      "Missing or empty provenance, mutable releases and incorrect published asset digests."
+    ],
+    "empty_upload_reproduction": {
+      "corrected_result": {
+        "assets": [
+          {
+            "digest": "sha256:f021914fc25ccdc7f6b7947ef62c3d9dac78881f5aaffdd9c0b4b7378e1e9337",
+            "name": "security-assessment.json"
+          },
+          {
+            "digest": "sha256:b4c358362ff1f163c6e298e9ec0aaf86894c9a815567f531d64a734f94b7c2dc",
+            "name": "security-assessment.json.intoto.jsonl"
+          },
+          {
+            "digest": "sha256:1fd2d8f78172fb02fcfd17b31fd57cb0ace51a0be342e9ce580e543fef91e6ce",
+            "name": "diagnostics.tar.gz"
+          }
+        ],
+        "exit_code": 0,
+        "immutable": true
+      },
+      "kind": "local-empty-upload-reproduction",
+      "original_result": {
+        "exit_code": 1,
+        "failure": "HTTP 400: Bad Content-Length",
+        "release_created": false
+      },
+      "original_workflow_sha256": "c02b42300a13ce19ced9be1d25c85a59faff6eae6f4cea95b5e133b4df7b1141",
+      "production_qualified": false,
+      "schema": 1,
+      "scope": "Offline execution of the actual before/after workflow steps against a GitHub API transport fixture that rejects empty uploads. No network mutation or production attestation."
+    },
+    "hosted": "Fresh required hosted checks and independent exact-head human approval are mandatory. A new main release and verified immutable retained assessment must complete before enforcement activation.",
+    "local": {
+      "checks": [
+        {
+          "command": [
+            "python3",
+            "scripts/check-source.py"
+          ],
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "Public source boundary passed for 397 files.\n"
+        },
+        {
+          "command": [
+            "python3",
+            "scripts/check-workflows.py"
+          ],
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "Workflow trust boundaries verified.\n"
+        },
+        {
+          "command": [
+            "/tmp/lanrith-security-continuation/tools/bin/actionlint",
+            "-shellcheck=",
+            "-pyflakes=",
+            "-ignore",
+            "property \"workflow_(sha|repository)\" is not defined",
+            "-ignore",
+            "unexpected key \"cache-mode\"",
+            ".github/workflows/archive-evidence.yml",
+            ".github/workflows/build-base.yml",
+            ".github/workflows/check.yml",
+            ".github/workflows/cleanup-artifacts.yml",
+            ".github/workflows/consumer.yml",
+            ".github/workflows/package-check.yml",
+            ".github/workflows/publish-release.yml",
+            ".github/workflows/release.yml",
+            ".github/workflows/restore-cache.yml",
+            ".github/workflows/security-audit.yml",
+            ".github/workflows/security-proposal.yml",
+            ".github/workflows/security-review.yml",
+            ".github/workflows/update-inputs.yml",
+            ".github/workflows/watchdog.yml"
+          ],
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "command": [
+            "git",
+            "diff",
+            "--check"
+          ],
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      "full_suite": {
+        "passed": 455,
+        "run": 467,
+        "skipped": 12
+      },
+      "production_qualified": false,
+      "python_syntax": "pass",
+      "result": "pass",
+      "reviewed_production_workflows_unchanged": {
+        ".github/workflows/archive-evidence.yml": "8bdc430a9d279599fe952b69f09af0059e9fa6b48208cc755bd52b3bca867338",
+        ".github/workflows/build-base.yml": "defc0ab8feade4fbae8c82716d69309c7bdddd10067ed7bd8d2f886874dd6068",
+        ".github/workflows/check.yml": "d18d0ec6571e1972c4fe92374fcf23b98fe66bb5717b1263848e08ae7c833183",
+        ".github/workflows/publish-release.yml": "545dcd4a800dff6f273ad067638056e47aa7dfb80733d9b59b9016c0a68265ad",
+        ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
+        ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
+        ".github/workflows/security-proposal.yml": "3881f94562e100c115191792c9a374a6d72ac1030b629e104e7a886075530ab5",
+        ".github/workflows/security-review.yml": "53c3301ffa7d58604bd263d35ae896d4f88bb41053dbb8611c0fc0a83316e377"
+      },
+      "schema": 1,
+      "test_log_sha256": "9d8a6b4caab8bb03fb97bdf25e0c716e798f4e0e1238922715dc63661a4f0a53",
+      "workflow_shell_syntax": "pass"
+    },
+    "original_report_signatures": "All three original hosted report signatures verified at the actual main source and signer commit. Local packaging replays are not new signed assessments."
+  }
+}
