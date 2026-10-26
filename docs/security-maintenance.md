@@ -132,6 +132,14 @@ reviewed tool revision. A valid signature alone does not establish a correct
 policy decision. Do not infer runtime exploitability from a module-inventory
 finding; release source and binary scans remain mandatory.
 
+Each retained assessment release contains `security-assessment.json`,
+`security-assessment.json.intoto.jsonl` and `diagnostics.tar.gz`. The signed report
+binds the archive's size and SHA-256 in `diagnostic_archive`; its `diagnostics` map records each raw
+file's hash. The archive preserves empty stdout and stderr files, which can fail
+as individual release uploads. The publisher verifies every member before upload,
+then checks immutability and the three server-reported asset digests. Verify the
+report's provenance and archive hash before reading the diagnostics.
+
 ## Storage and failures
 
 Large Actions artifacts are temporary job handoffs with one-day expiry. PRs keep

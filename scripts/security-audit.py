@@ -6,12 +6,15 @@ import datetime
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
+import stat
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
 
@@ -45,6 +48,43 @@ def dependency_scan(queries, name, destination, failures, scanner_errors):
     except (ReleaseError, ValueError, OSError, KeyError):
         failures.append(name)
         scanner_errors.append(name)
+
+
+def archive_diagnostics(destination):
+    """Preserve raw bytes, including empty logs, in one digest-bound asset."""
+    require(destination.is_dir() and not destination.is_symlink() and
+            destination.resolve() == destination.absolute(), 'Diagnostic directory is unsafe.')
+    paths = sorted(destination.iterdir())
+    require(0 < len(paths) <= 64 and all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+-]{0,99}', p.name) and
+            p.name not in {'diagnostics.tar.gz', 'security-assessment.json',
+                           'security-assessment.json.intoto.jsonl'} for p in paths),
+            'Diagnostic file inventory is unsafe or already packaged.')
+    records, payloads, total = {}, {}, 0
+    for path in paths:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, 'rb') as stream:
+            before = os.fstat(stream.fileno())
+            require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                    0 <= before.st_size <= 16*1024*1024, 'Diagnostic file metadata is unsafe.')
+            data = stream.read(16*1024*1024+1)
+            after = os.fstat(stream.fileno())
+            require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                    (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) and
+                    len(data) == before.st_size, 'Diagnostic file changed during inspection.')
+        total += len(data)
+        require(total <= 64*1024*1024, 'Diagnostic inventory exceeds its size limit.')
+        records[path.name] = hashlib.sha256(data).hexdigest()
+        payloads[path.name] = data
+    archive = destination/'diagnostics.tar.gz'
+    with archive.open('xb') as target, gzip.GzipFile(fileobj=target, mode='wb', filename='', mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode='w', format=tarfile.USTAR_FORMAT) as bundle:
+            for name, data in payloads.items():
+                member = tarfile.TarInfo(name)
+                member.size, member.mode, member.mtime = len(data), 0o644, 0
+                member.uid = member.gid = 0
+                member.uname = member.gname = ''
+                bundle.addfile(member, io.BytesIO(data))
+    return records, file_record(archive)
 
 
 def support_decisions(completed):
@@ -159,6 +199,7 @@ def main():
                     advisories.source_coverage(feed, covered)
                 except (ReleaseError, ValueError, KeyError):
                     failures.append('alloy-embedded-source-advisory')
+            diagnostics, diagnostic_archive = archive_diagnostics(destination)
             report = {'schema': 1, 'result': 'fail' if failures else 'pass', 'inventory_sha256': inventory,
                       'platform_version': item['tag_name'], 'source_commit': os.environ['GITHUB_SHA'],
                       'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -166,7 +207,7 @@ def main():
                       'failures': sorted(set(failures)),
                       'scanner_errors': sorted(set(scanner_errors)),
                       'supported': True,
-                      'diagnostics': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in destination.iterdir() if p.is_file()},
+                      'diagnostics': diagnostics, 'diagnostic_archive': diagnostic_archive,
                       'revoked_sha256': json.loads((ROOT/'security/revocations.json').read_text())['revoked_sha256']}
             (destination/'security-assessment.json').write_bytes(canonical(report))
             completed.append((destination, report))
