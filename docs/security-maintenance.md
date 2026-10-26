@@ -24,6 +24,13 @@ approval decision is archived immutably and independently rechecked. Proposal
 inputs are also archived before a PR can be created. The policy must contain the independent reviewer's
 numeric App ID. Neither App has branch-protection bypass permission.
 
+`Security update admission` waits while a required workflow has not started or
+is queued or running. Its details link opens the prerequisite run, and the
+archived decision records that run's identity and status. Completion triggers
+another admission review, which finishes the waiting check. A failed,
+cancelled, skipped or stale validation still fails admission. Pending validation
+cannot grant an automated approval or permit a merge.
+
 ## Owner setup
 
 Create a private App at
@@ -83,6 +90,14 @@ validation, applies protection to administrators, and enables the repository
 approval flag. The admission check enforces full qualification for build changes
 and source checks for documentation-only PRs. Keep stale-review dismissal, last-push approval and up-to-date checks.
 Keep default workflow permissions read-only and shared Actions PR approval off.
+
+Merge the platform reviewer and enforcement-policy change first, with the
+repository approval flag still `false`. Verify its immutable `main` release
+before pinning the component workflows to that commit. Merge both component
+enforcement policies and verify all three repositories before activation. This
+keeps automatic approvals disabled while the repositories adopt the reviewed
+implementation. Activation binds each admission check to the reviewer App and
+applies branch protection to administrators.
 
 The Debian gate maps versioned signed kernel packages to the `linux` advisory
 source. Assembly requires matching `Built-Using` metadata for those payloads.

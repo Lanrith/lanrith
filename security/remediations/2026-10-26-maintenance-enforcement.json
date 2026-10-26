@@ -1,0 +1,103 @@
+{
+  "activation": {
+    "automatic_approvals_enabled": false,
+    "requirements": [
+      "Verified immutable base pilot v0.1.6 passed before publication of this policy PR.",
+      "Human-approved and qualified platform policy/reviewer PR, then verified immutable main release.",
+      "Both component workflow pins reference the verified protected platform main commit.",
+      "Human-approved component enforcement policies and complete all-repository preflight.",
+      "Bind independent App status checks, protect administrators, keep default workflow tokens read-only, then enable the approval flags."
+    ]
+  },
+  "approval": {
+    "automated_approval_permitted": false,
+    "status": "fresh-exact-head-human-GitHub-review-required-before-merge"
+  },
+  "base_commit": "4c9a4cd700db05e90d60f4fe8e63127110355315",
+  "created_at": "2026-10-26T15:19:21.123876+00:00",
+  "input_changes": {
+    "automation/review.py": {
+      "after_sha256": "4e061ff8fc2f190865321b321a4380eb3badbe08d95a35347c01243e3b2e5cff",
+      "before_sha256": "672df299dbf9822ba47300f55cedb98377b65acb6cc5cac629f6f1556a0df464"
+    },
+    "docs/security-maintenance.md": {
+      "after_sha256": "155aae606b0bc38b9d0d6aa03629e4e90fbd0a6a438bb4d48021c3c0c30a4d84",
+      "before_sha256": "9ecf6077fca981d8233254da0023a17a7c414e60b98b553830d0a8ff6966073e"
+    },
+    "security/remediations/2026-10-26-admission-pending.json": {
+      "after_sha256": "5e287de628d84edc492c4dd615155e32c4de269216b6897189bb25b751586b94",
+      "before_sha256": null
+    },
+    "security/update-policy.json": {
+      "after_sha256": "5604196bdfc31484592fcb7e92b8b4c37e806f9b7c5db0aa7c6327382ad0ebbe",
+      "before_sha256": "62b1a0bf5b411f23044ddd0118fa6d470582f391d119bc7ba348bd19ca39f437"
+    },
+    "tests/test_npm_review.py": {
+      "after_sha256": "46eed8052fc3adc88904281a1dab065bddc58150baa2343321692e0785aaac94",
+      "before_sha256": "6d43e8ace5e058cad8ffe78b7e719820e9e55a4e05fdd7b53d3a277c8ea5b28c"
+    },
+    "tests/test_review_pending.py": {
+      "after_sha256": "6264439f39012cd514d5f982294be71f875f35aed90150e9657ceac44defb5dd",
+      "before_sha256": null
+    }
+  },
+  "kind": "maintenance-enforcement-change",
+  "limits": [
+    "The base immutable v0.1.6 pilot passed independent metadata, signature, source, approval-history, full hosted native/storage and fresh assessment verification.",
+    "This candidate still requires its own exact-head human approval and successful hosted validation before merge.",
+    "The policy mode becomes enforce only after merge. Repository approval flags stay false until the platform release, component pins and policies, and final all-repository preflight pass.",
+    "No paid AI service is used. This change permits only the existing authenticated advisory and semantic-update policy."
+  ],
+  "pilot_gate": {
+    "actual_human_review_id": 5650174705,
+    "existing_assessment_fix_verified": true,
+    "existing_assessment_verification_sha256": "6de61e6a4740cd9618f53aac6f813fb34e9817ab646c49195e923e34de2617a7",
+    "existing_assessment_workflow": 40317327213,
+    "immutable": true,
+    "main_release_run": 40315367994,
+    "proof_sha256": "3b660a351d530aa7d5f3206afca7d7b54df074a7d5c159392a71b03563575ef6",
+    "publication_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-publication-40315367994-1",
+    "release_id": 424345133,
+    "required_source": "4c9a4cd700db05e90d60f4fe8e63127110355315",
+    "retained_assessment": "https://github.com/Lanrith/lanrith/releases/tag/assessment-20261026T142553Z-5ec65d3ba254",
+    "state": "pass",
+    "verification_script": "verify-platform-pilot.py",
+    "verified_tag": "v0.1.6"
+  },
+  "policy_change": {
+    "mode_after": "enforce",
+    "mode_before": "report-only",
+    "other_fields_changed": false,
+    "paid_ai": false,
+    "proposer_app_id": 5355607,
+    "reviewer_app_id": 5444158
+  },
+  "production_qualified": false,
+  "reason": "Complete the independent-App security update rollout after the real protected pilot; correct premature admission failures while keeping validation and independent-review gates.",
+  "repair_pr": {
+    "admission_app_id": 5444158,
+    "admission_check_id": 121546217560,
+    "admission_result": "success",
+    "head": "b4874df738b78ca5b84be69fc3f746b98ed3856e",
+    "human_review_id": 5650174705,
+    "merge": "4c9a4cd700db05e90d60f4fe8e63127110355315",
+    "merged_at": "2026-10-26T11:28:45Z",
+    "number": 16,
+    "package_qualification_result": "success",
+    "package_qualification_run": 40294840140
+  },
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "validation": {
+    "checks": [
+      "public source boundary",
+      "workflow trust boundaries",
+      "pinned actionlint",
+      "whitespace"
+    ],
+    "log_sha256": "56e67eeee3ec54932de86ffffab38b57d9e4ce6bfc4169e702cbcfb650ba342d",
+    "passed": 472,
+    "skipped": 12,
+    "tests_run": 484
+  }
+}

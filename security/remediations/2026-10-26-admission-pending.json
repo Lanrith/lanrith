@@ -1,0 +1,81 @@
+{
+  "approval": {
+    "current_pr16_approval_preserved": {
+      "commit_id": "b4874df738b78ca5b84be69fc3f746b98ed3856e",
+      "id": 5650174705
+    },
+    "status": "fresh-exact-head-human-review-required-before-this-correction-can-merge"
+  },
+  "automatic_approvals_enabled": false,
+  "base_commit": "4c9a4cd700db05e90d60f4fe8e63127110355315",
+  "correction": [
+    "Keep unfinished or not-started validation in a distinct pending state with exact workflow/run identities and prerequisite links.",
+    "Check every prerequisite so pending validation never hides a completed failure. Preserve source, repository, PR/base, freshness and mandatory-job checks.",
+    "Record pending prerequisites and already completed validations in the durable decision. Pending candidates remain ineligible for approval and merge.",
+    "Finish the existing App-owned waiting check when validation completes. Accept no waiting check from another App or source commit."
+  ],
+  "created_at": "2026-10-26T10:14:06.633431+00:00",
+  "deployment": "Included with the human-reviewed platform enforcement policy after the exact protected-main immutable v0.1.6 pilot passed. Automatic approval remains disabled pending the platform and component policy merges and final preflight.",
+  "evidence": {
+    "reproduction_file": "admission-pending-reproduction.json",
+    "reproduction_sha256": "cbae0d20592445f9f9020261a4e271246c16174c8c2c6673cffdfc94bc6f0b5d",
+    "tests_file": "admission-pending-tests.log",
+    "tests_sha256": "77d360dc5ee01bfeab41affd72d856267c840c1fbfb2ae47a66c547e8581dc5f"
+  },
+  "input_changes": {
+    "automation/review.py": {
+      "after_sha256": "4e061ff8fc2f190865321b321a4380eb3badbe08d95a35347c01243e3b2e5cff",
+      "before_sha256": "672df299dbf9822ba47300f55cedb98377b65acb6cc5cac629f6f1556a0df464"
+    },
+    "docs/security-maintenance.md": {
+      "after_sha256": "155aae606b0bc38b9d0d6aa03629e4e90fbd0a6a438bb4d48021c3c0c30a4d84",
+      "before_sha256": "9ecf6077fca981d8233254da0023a17a7c414e60b98b553830d0a8ff6966073e"
+    },
+    "tests/test_npm_review.py": {
+      "after_sha256": "46eed8052fc3adc88904281a1dab065bddc58150baa2343321692e0785aaac94",
+      "before_sha256": "6d43e8ace5e058cad8ffe78b7e719820e9e55a4e05fdd7b53d3a277c8ea5b28c"
+    },
+    "tests/test_review_pending.py": {
+      "after_sha256": "6264439f39012cd514d5f982294be71f875f35aed90150e9657ceac44defb5dd",
+      "before_sha256": null
+    }
+  },
+  "investigated_pr_head": "b4874df738b78ca5b84be69fc3f746b98ed3856e",
+  "kind": "admission-status-correction",
+  "limits": [
+    "Local unit/regression tests and read-only replay do not replace actual hosted validation, protected human review, immutable publication or pilot verification.",
+    "No live App check, branch protection, automatic-approval flag or workflow was modified by this investigation."
+  ],
+  "production_qualified": false,
+  "protected_main_at_investigation": "5622a92293f7449d985d968daab756f88415aef8",
+  "reason": {
+    "app_id": 5444158,
+    "cause": "A successful source-check completion starts admission while package qualification is still running. The reviewer requires completed success and reports every other state as a failure.",
+    "check_id": 121479620553,
+    "pr": "https://github.com/Lanrith/lanrith/pull/16#pullrequestreview-5650174705",
+    "prerequisite": {
+      "run_attempt": 1,
+      "run_id": 40294840140,
+      "status": "in_progress",
+      "url": "https://github.com/Lanrith/lanrith/actions/runs/40294840140",
+      "workflow": ".github/workflows/package-check.yml"
+    },
+    "summary": "Required validation did not succeed: .github/workflows/package-check.yml",
+    "title": "Qualification failure"
+  },
+  "schema": 1,
+  "validation": {
+    "checks": [
+      "public source boundary",
+      "workflow trust boundaries",
+      "pinned actionlint",
+      "reviewed workflow hashes unchanged"
+    ],
+    "full_tests_run": 484,
+    "new_security_regression_tests": 17,
+    "passed": 472,
+    "reproduction": "The original reviewer fails against captured real GitHub results; the correction reports pending for run 40294840140.",
+    "skipped": 12,
+    "skips": "Existing cases require the matching native Debian/mkosi builder, root-owned service/update metadata or a working native Go compiler."
+  }
+}
