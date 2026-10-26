@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "repository": "Lanrith/lanrith",
-  "mode": "report-only",
+  "mode": "enforce",
   "proposal_branch": "automation/security-updates",
   "proposer_login": "lanrith-dependency-updater[bot]",
   "proposer_app_id": 5355607,

@@ -10,6 +10,15 @@ from .common import (MaintenanceError, api, canonical, contents, digest, documen
                      now, pages, repository, require, sha, timestamp)
 
 
+class ValidationPending(MaintenanceError):
+    """Required runs are unfinished; none of these observations grants approval."""
+
+    def __init__(self, workflows, completed):
+        self.workflows = workflows
+        self.completed = completed
+        super().__init__('Waiting for required validation: '+', '.join(w['workflow'] for w in workflows))
+
+
 def policy_document(raw, repo):
     policy = document(raw)
     require(set(policy) == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
@@ -27,16 +36,19 @@ def policy_document(raw, repo):
 
 def validation_runs(repo, pr, policy, *, get=api, clock=None, manual=False):
     clock = clock or datetime.datetime.now(datetime.timezone.utc)
-    results = []
+    results, pending = [], []
     for path, required_jobs in policy['required_workflows'].items():
         filename = path.rsplit('/', 1)[-1]
         value = get('repos/'+repo+'/actions/workflows/'+filename+'/runs?event=pull_request&head_sha='+pr['head']['sha']+'&per_page=100')
         runs = [r for r in value['workflow_runs'] if r['head_sha'] == pr['head']['sha'] and r['event'] == 'pull_request' and
                 r['path'] == path and r.get('head_repository', {}).get('full_name') ==
                 (pr['head']['repo']['full_name'] if manual else repo)]
-        require(runs, 'Required validation has not run: '+path)
+        if not value['workflow_runs']:
+            pending.append({'workflow': path, 'status': 'not_started',
+                            'url': 'https://github.com/'+repo+'/actions/workflows/'+filename})
+            continue
+        require(runs, 'Required validation has no run for this source and repository: '+path)
         run = max(runs, key=lambda r: r['id'])
-        require(run['status'] == 'completed' and run['conclusion'] == 'success', 'Required validation did not succeed: '+path)
         require(datetime.timedelta(0) <= clock-timestamp(run['updated_at']) <=
                 datetime.timedelta(hours=policy['maximum_validation_age_hours']), 'Validation is stale or future-dated: '+path)
         # GitHub's PR association must identify this PR and the tested head/base pair.
@@ -44,6 +56,13 @@ def validation_runs(repo, pr, policy, *, get=api, clock=None, manual=False):
         require(any(p['number'] == pr['number'] and p.get('head', {}).get('sha') == pr['head']['sha'] and
                     p.get('base', {}).get('sha') == pr['base']['sha'] for p in associations),
                 'Validation belongs to another PR or base commit: '+path)
+        if run['status'] in ('queued', 'in_progress', 'requested', 'waiting', 'pending'):
+            require(run['conclusion'] is None, 'Unfinished validation has a terminal conclusion: '+path)
+            pending.append({'workflow': path, 'status': run['status'], 'run_id': run['id'],
+                            'run_attempt': run['run_attempt'], 'url': run['html_url']})
+            continue
+        require(run['status'] == 'completed' and run['conclusion'] == 'success',
+                'Required validation did not succeed: '+path+' ('+str(run['conclusion'])+')')
         response = get('repos/'+repo+'/actions/runs/'+str(run['id'])+'/jobs?filter=latest&per_page=100')
         require(response['total_count'] <= 100, 'Validation job enumeration is incomplete.')
         jobs = response['jobs']
@@ -56,6 +75,9 @@ def validation_runs(repo, pr, policy, *, get=api, clock=None, manual=False):
             'completed_at': run['updated_at'], 'conclusion': 'success',
             'jobs': [{'id': job['id'], 'name': job['name'], 'conclusion': job['conclusion']}
                      for job in jobs if job['name'] in required_jobs]})
+    # Check every workflow so a running prerequisite never hides a finished failure.
+    if pending:
+        raise ValidationPending(pending, results)
     return results
 
 
@@ -101,7 +123,7 @@ def inspect(repo, number, reviewer_source, output):
     base, head = sha(pr['base']['sha']), sha(pr['head']['sha'])
     policy_raw = contents(repo, 'security/update-policy.json', base)
     policy = policy_document(policy_raw, repo)
-    record, checks, findings, inspected = {}, [], [], []
+    record, checks, findings, inspected, pending = {}, [], [], [], []
     try:
         require(pr['state'] == 'open' and not pr['draft'] and pr['base']['ref'] == 'main' and
                 pr['head']['ref'] == policy['proposal_branch'] and pr['head']['repo']['full_name'] == repo,
@@ -143,12 +165,15 @@ def inspect(repo, number, reviewer_source, output):
                      for path in sorted(record['changes'])]
         require(record['requires_human'] is bool(manual_findings),
                 'Candidate misclassified a dependency update as an automatic change.')
-        checks = validation_runs(repo, pr, policy)
         findings.extend(manual_findings)
+        checks = validation_runs(repo, pr, policy)
+    except ValidationPending as waiting:
+        pending, checks = waiting.workflows, waiting.completed
     except (MaintenanceError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError) as error:
         findings.append(str(error))
     decision = evidence.decision(record, head=head, base=base, policy=policy_raw, checks=checks,
-        eligible=not findings, findings=findings, reviewer_source=reviewer_source)
+        eligible=not findings and not pending, findings=findings, reviewer_source=reviewer_source)
+    decision['validation_pending'] = pending
     decision['input_validation'] = inspected
     decision['repository'] = repo
     decision['pull_request'] = {'number': number, 'url': pr['html_url'], 'author': pr['user']['login']}
@@ -156,6 +181,8 @@ def inspect(repo, number, reviewer_source, output):
     print('Security update '+('eligible' if decision['eligible'] else 'blocked')+': '+str(number))
     for finding in findings:
         print(finding)
+    for workflow in pending:
+        print('Waiting for '+workflow['workflow']+': '+workflow['status'])
     return decision, policy
 
 
@@ -257,8 +284,9 @@ def admission(repo, number, decision_path, reviewer_source, app_id):
     qualified_manual = (record.get('candidate', {}).get('requires_human') is True and bool(record['findings']) and
                         set(record['findings']) <= inputs.HUMAN_REVIEW_FINDINGS)
     automatic = pr['head']['ref'] == policy['proposal_branch'] and pr['head']['repo']['full_name'] == repo and not qualified_manual
-    error = None
+    error, pending = None, record.get('validation_pending', [])
     if not automatic:
+        pending = []
         try:
             manual_policy = dict(policy)
             if repo == 'Lanrith/lanrith':
@@ -270,19 +298,42 @@ def admission(repo, number, decision_path, reviewer_source, app_id):
                 if not needs_image:
                     manual_policy['required_workflows'] = {p: j for p, j in policy['required_workflows'].items() if p.endswith('/check.yml')}
             record['validation'] = validation_runs(repo, pr, manual_policy, manual=True)
+        except ValidationPending as waiting:
+            pending = waiting.workflows
+            record['validation'] = waiting.completed
         except (MaintenanceError, KeyError, OSError, ValueError) as failure:
             error = str(failure)
-    elif not record['eligible']:
+    elif not record['eligible'] and (record['findings'] or not pending):
         error = '; '.join(record['findings'])
+        require(error, 'Ineligible decision has no failure or pending validation.')
+    record['validation_pending'] = pending
     require(type(app_id) is int and app_id > 0 and app_id != policy['proposer_app_id'], 'Independent check App identity is invalid.')
-    check = api('repos/'+repo+'/check-runs', method='POST', payload={
+    payload = {
         'name': 'Security update admission', 'head_sha': record['head_sha'], 'status': 'in_progress',
         'output': {'title': 'Independent qualification review',
-                   'summary': 'Human review remains required for changes outside the automatic security policy.'}})
+                   'summary': 'Human review remains required for changes outside the automatic security policy.'}}
+    if pending and not error:
+        payload['details_url'] = pending[0]['url']
+        payload['output'] = {'title': 'Waiting for required qualification', 'summary':
+            '\n'.join('- ['+w['workflow']+']('+w['url']+'): '+w['status'] for w in pending)+
+            '\n\nAdmission reruns when validation completes. Merge and automated approval remain blocked.'}
+    response = api('repos/'+repo+'/commits/'+record['head_sha']+
+                   '/check-runs?check_name=Security%20update%20admission&filter=latest&per_page=100')
+    require(response['total_count'] <= 100, 'Admission check enumeration is incomplete.')
+    unfinished = [c for c in response['check_runs'] if c['name'] == payload['name'] and
+                  c['head_sha'] == record['head_sha'] and c['app']['id'] == app_id and
+                  c['status'] == 'in_progress']
+    if unfinished:
+        # Complete the existing waiting check rather than leave an orphaned spinner.
+        previous = max(unfinished, key=lambda c: c['id'])
+        check = api('repos/'+repo+'/check-runs/'+str(previous['id']), method='PATCH',
+                    payload={k: v for k, v in payload.items() if k != 'head_sha'})
+    else:
+        check = api('repos/'+repo+'/check-runs', method='POST', payload=payload)
     require(check['app']['id'] == app_id, 'Check did not come from the configured reviewer App.')
     conclusion = 'failure' if error else 'success'
     # In enforcement mode an automatic candidate needs the separately submitted approval too.
-    if not error and automatic and policy['mode'] == 'enforce':
+    if not error and (pending or automatic and policy['mode'] == 'enforce'):
         conclusion = None
     if conclusion:
         api('repos/'+repo+'/check-runs/'+str(check['id']), method='PATCH', payload={

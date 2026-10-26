@@ -221,6 +221,8 @@ class NpmReviewTests(unittest.TestCase):
                 if kwargs.get('method'):
                     writes.append(kwargs['payload'])
                     return {'id': 99, 'app': {'id': self.policy['reviewer_app_id']}}
+                if '/check-runs?' in endpoint:
+                    return {'total_count': 0, 'check_runs': []}
                 return pr
             with self.subTest(attack=attack), tempfile.TemporaryDirectory() as temporary, \
                     patch.object(review, 'inspect', return_value=(record, self.policy)), \
