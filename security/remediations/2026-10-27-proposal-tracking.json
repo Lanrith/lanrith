@@ -1,0 +1,103 @@
+{
+  "activation": "Keep all approval flags disabled. Require full hosted PR checks, fresh actual human approval, protected merge, verified immutable Main publication, and reviewed component trust-pin updates before activation.",
+  "approval": {
+    "reason": "This changes trusted workflow source and its reviewed assessment hash; it is outside automatic dependency-update policy.",
+    "status": "fresh-exact-head-independent-human-GitHub-review-required"
+  },
+  "automatic_approvals_enabled": false,
+  "base_commit": "eaafa126f2aaea4deb1db36dcebc1f511f41820c",
+  "correction": [
+    "Track the exact previously validated candidate in RUNNER_TEMP/proposal/security/update-candidate.json, outside the checkout managed by the PR action.",
+    "Run the actual workflow tracking command through the real CLI against missing and stale restored-main records, and reject absent, symlinked or changed artifact evidence.",
+    "Update the one reviewed workflow digest in the conditional build assessment. Preserve every other workflow digest and qualification requirement."
+  ],
+  "created_at": "2026-10-27T08:41:59.854646+00:00",
+  "evidence_archive": "https://github.com/Lanrith/lanrith/releases/tag/audit-proposal-tracking-repair-20261027T084159Z",
+  "input_changes": {
+    ".github/workflows/security-proposal.yml": {
+      "after_sha256": "30160dc4c6497f899448a3a678eb227d0afe95a704fc220f450ad26da4643319",
+      "before_sha256": "3881f94562e100c115191792c9a374a6d72ac1030b629e104e7a886075530ab5"
+    },
+    "security/slsa-assessment.json": {
+      "after_sha256": "75f6e7aa19c9d0afc86e9858e4cfdef9b6b8f0ff235d1fb40ec52d35dc29d1fd",
+      "before_sha256": "32a27be682fdbc8e0a94a478382aa07b7b1252d1e2e9a1626f21fcb18648bcc3"
+    },
+    "tests/test_proposal_tracking.py": {
+      "after_sha256": "0dd02eb34872242d119123cd192491b944d5bb2e91a369ca8cb84b5dc7f8a669",
+      "before_sha256": null
+    }
+  },
+  "kind": "preserved-proposal-remediation-tracking-repair",
+  "production_qualified": false,
+  "reason": "The PR action restores owner to main after pushing its proposal. Tracking then reads owner/security/update-candidate.json. On the first update that file is absent and the publish job fails after successfully updating PR14; after a prior candidate merges, the same path can silently refer to an older candidate. This breaks the reason-to-PR remediation trace.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "trigger": {
+    "error": "automation.common.MaintenanceError: Evidence must be a regular file.",
+    "failed_run": {
+      "conclusion": "failure",
+      "created_at": "2026-10-26T22:46:57Z",
+      "event": "schedule",
+      "head_sha": "eaafa126f2aaea4deb1db36dcebc1f511f41820c",
+      "html_url": "https://github.com/Lanrith/lanrith/actions/runs/40415052337",
+      "id": 40415052337,
+      "path": ".github/workflows/update-inputs.yml",
+      "run_attempt": 1,
+      "status": "completed",
+      "updated_at": "2026-10-26T22:49:39Z"
+    },
+    "published_pr": {
+      "base": "eaafa126f2aaea4deb1db36dcebc1f511f41820c",
+      "body": "Security remediation `security-89c95b6f358533bbe399`.\n\nCandidate: `2e599aa50782b2a0573ed63138e397fe658be0f4a82ddddf6e9ce03d8bd5e5ab`\nBase: `eaafa126f2aaea4deb1db36dcebc1f511f41820c`\nPolicy: `5604196bdfc31484592fcb7e92b8b4c37e806f9b7c5db0aa7c6327382ad0ebbe`\n\nReasons:\n\n- Lanrith/discovery-bridge@v0.1.2: discovery-bridge v0.1.1 \u2192 v0.1.2 (https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.2).\n\nApproval: **eligible for independent App review after qualification**.\n\nThis proposal needs full qualification and independent approval. The candidate record binds the reasons to every changed file digest.\n",
+      "head": "8e715f89846dcb0723a297a57f11117033da6117",
+      "html_url": "https://github.com/Lanrith/lanrith/pull/14",
+      "number": 14,
+      "updated_at": "2026-10-26T22:49:23Z"
+    }
+  },
+  "validation": {
+    "actionlint": "pinned 1.7.12 pass",
+    "assessment": "Only the security-proposal workflow digest changes; all other seven workflow hashes and every requirement remain identical.",
+    "full_suite": {
+      "passed": 475,
+      "run": 487,
+      "skipped": 12
+    },
+    "limits": [
+      "The first sandbox-only full suite lacked dpkg and permitted local socket operations. With the preserved tools and local IPC permissions, the complete suite passes without further source changes.",
+      "Twelve existing tests require native builder, ownership or private-tmpfs facilities; full hosted PR and Main qualification remain mandatory.",
+      "Local replay does not create a real remediation issue, approve a PR or qualify a production build."
+    ],
+    "logs": {
+      "proposal-tracking-actionlint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "proposal-tracking-after.log": "acbc65c367a1abdb106e8e30d53a56e7308a459fd582330ea22f0bd4214c2c47",
+      "proposal-tracking-all-tests-verified.log": "89846858a2c0b233ae210a77f3ba45ebc80bc7df1305fef9c313994b512b665d",
+      "proposal-tracking-before.log": "077d2f02517e5dd392cde84b7a42209dca12f780350bc790bef6d6ee30b98f4d",
+      "proposal-tracking-source-checks.log": "c5d62abfb3755aec209e23353f03fff6628d0491780be1fc43befff0bd6ae19c",
+      "proposal-tracking-workflow-checks.log": "b6c249a62e9b37b98761c87cdc0d7f4deeaaa6a3b14c76354ba6337de702a697"
+    },
+    "production_qualified": false,
+    "regression": "Execute the workflow tracking command through the actual maintenance CLI and tracker; stub only GitHub reads/writes. Assert exact candidate, remediation, PR link and unreleased state.",
+    "regression_methods": 3,
+    "regression_scenarios": [
+      "Restored main has no candidate.",
+      "Restored main contains a different valid older candidate.",
+      "Preserved artifact is missing.",
+      "Preserved artifact is a symlink.",
+      "Preserved artifact identity was modified."
+    ],
+    "result": "pass",
+    "source_boundary": "pass",
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  },
+  "verified_predecessor": {
+    "actual_human_review_id": 5654519966,
+    "pilot_sha256": "02260dcca4bb9888d55e3fec71af523a806082b59362647b415a98e69c367084",
+    "publication_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-publication-40371292250-1",
+    "result": "pass",
+    "retained_assessment": "https://github.com/Lanrith/lanrith/releases/tag/assessment-20261027T053549Z-10cc39e67191",
+    "source_commit": "eaafa126f2aaea4deb1db36dcebc1f511f41820c",
+    "tag": "v0.1.7"
+  }
+}
