@@ -21,6 +21,7 @@ class NpmReviewTests(unittest.TestCase):
     def setUp(self):
         self.policy = json.loads((ROOT/'security/update-policy.json').read_text())
         self.policy['mode'] = 'enforce'
+        self.policy['automatic_minor_security_updates'] = False
         self.package = {'scripts': {'build': 'vite build'}, 'devDependencies': {'jsdom': '29.0.1'}}
         self.old = {'lockfileVersion': 3, 'packages': {
             '': {'devDependencies': self.package['devDependencies']},
@@ -46,6 +47,22 @@ class NpmReviewTests(unittest.TestCase):
     def test_transitive_minor_fix_requires_human_without_adding_a_direct_dependency(self):
         self.assertTrue(self.validate())
         self.assertNotIn('undici', self.package['devDependencies'])
+
+    def test_opted_in_advisory_bound_minor_needs_no_human_and_no_new_dependency(self):
+        self.policy['automatic_minor_security_updates'] = True
+        self.assertFalse(self.validate())
+        self.assertNotIn('undici', self.package['devDependencies'])
+        self.assertTrue(self.inspect(False)['eligible'])
+        self.assertFalse(self.inspect(True)['eligible'])
+
+    def test_opted_in_minor_still_rejects_unrelated_or_unverified_changes(self):
+        self.policy['automatic_minor_security_updates'] = True
+        with self.assertRaises(MaintenanceError):
+            self.validate(reasons=[])
+        lock = copy.deepcopy(self.new)
+        lock['packages']['node_modules/jsdom'].update(version='29.0.2')
+        with self.assertRaises(MaintenanceError):
+            self.validate(lock=lock)
 
     def test_automatic_scope_stays_approved_packages_on_the_same_patch_line(self):
         for name, before, after, manual in (

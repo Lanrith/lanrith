@@ -2,15 +2,40 @@
 
 The updater proposes authenticated security fixes. A separate App approves only
 changes that satisfy the policy on protected `main`, fresh advisory checks and
-the exact required validation runs. Native source upgrades, workflow changes and changes to approval or security rules
-require human review. An existing npm dependency with an authenticated security fix
-can also get a PR when its name is outside the automatic patch set or its fix
-crosses a minor version within the same major. The reviewer derives the human
-review requirement from the actual manifest and lockfile changes; it does not
-trust the candidate's flag. These proposals cannot receive App approval or an
-automatic merge request. New dependencies, major migrations, installation hooks,
-script changes and dependency graph changes still stop resolution and raise an
-attention issue. Exact transitive fixes must satisfy their existing parents.
+the exact required validation runs. With `automatic_minor_security_updates: true`,
+an authenticated security fix may advance an existing Go or npm dependency within
+the same major version. Go updates also include only the minimum versions required
+by the fixed module's checksum-verified constraints. The reviewer independently
+resolves that selection from the original manifest, checks the existing module
+paths and roles, and verifies changed checksums against the Go checksum database.
+npm changes need exact advisory reasons, registry integrity and unchanged package
+coverage. Supported Node LTS majors can receive official minor security releases.
+Every automatic update still needs fresh advisory evidence, the complete required
+CI, independent App approval and immutable decision evidence.
+
+Native source upgrades, compiler support-branch migrations, workflow changes and
+changes to approval or security rules require human review. Adding dependencies,
+changing module roles, major migrations, prereleases, installation hooks or scripts
+remain outside automatic approval. If a safe proposal cannot be formed, its
+attention issue is assigned to `mikenorgate`. Policies without the minor-update
+opt-in retain the previous patch-only behavior until their reviewed rollout.
+
+Ready PRs that need human input request review from `mikenorgate` through GitHub's
+review-request API. Requests are made when a human-required proposal is published,
+when a PR becomes ready or its head changes, and when independent admission finds
+a manual change or blocked qualification. Pending requests and reviews already
+submitted on the current head are not repeated. Drafts wait until they are ready;
+a new head after completed review gets a fresh request. If the owner authored the
+PR and cannot review it, assignment records the need for another independent
+reviewer. Blocked proposal and freshness issues also receive an owner assignment.
+
+The PR event job only signals its GitHub-controlled head with no checkout or write
+permissions. A separate notification job executes the trusted protected-main
+workflow source. It can request reviews and assign issues, but has no App keys,
+release-writing or signing permissions. Notification routing never approves a
+change; the independent reviewer still validates the actual candidate. GitHub's
+review-request timeline and the archived admission decision retain the request
+and the actual review identity.
 
 Signed Unbound security-source updates can be proposed
 automatically, but carry an explicit human-review requirement. The public Debian

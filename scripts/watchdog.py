@@ -76,6 +76,10 @@ def main():
                 api('repos/'+repo+'/issues/'+str(issue['number']), method='PATCH', payload=payload)
         else:
             api('repos/'+repo+'/issues', method='POST', payload=payload)
+        from automation.notifications import assign_attention
+        for issue in pages('repos/'+repo+'/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100'):
+            if issue['title'] == TITLE and 'pull_request' not in issue:
+                assign_attention(repo, issue['number'])
         raise SystemExit('Security maintenance requires attention.')
     if issues:
         audit = verified_publication(repo, releases, stable)

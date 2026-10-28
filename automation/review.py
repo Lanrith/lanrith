@@ -21,10 +21,12 @@ class ValidationPending(MaintenanceError):
 
 def policy_document(raw, repo):
     policy = document(raw)
-    require(set(policy) == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
+    require(set(policy) - {'automatic_minor_security_updates'} == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
         'proposer_app_id', 'proposer_user_id', 'reviewer_app_id', 'required_workflows', 'maximum_validation_age_hours', 'go_branches',
         'node_branches', 'npm_packages', 'component_repositories', 'maximum_changes',
         'large_artifact_retention_days', 'paid_ai'}, 'Maintenance policy schema differs.')
+    require(type(policy.get('automatic_minor_security_updates', False)) is bool,
+            'Minor security update policy must be an explicit boolean.')
     require(policy['schema'] == 1 and policy['repository'] == repo and policy['mode'] in ('report-only', 'enforce') and
             policy['paid_ai'] is False and 0 < policy['maximum_validation_age_hours'] <= 24 and
             0 < policy['maximum_changes'] <= 30 and policy['required_workflows'], 'Invalid maintenance policy.')
@@ -325,7 +327,7 @@ def event_target(repo, event):
     return None
 
 
-def admission(repo, number, decision_path, reviewer_source, app_id):
+def admission(repo, number, decision_path, reviewer_source, app_id, *, notify=False):
     """Publish qualification status for manual PRs without granting them App approval."""
     record, policy = inspect(repo, number, reviewer_source, decision_path)
     pr = api('repos/'+repo+'/pulls/'+str(number))
@@ -355,6 +357,10 @@ def admission(repo, number, decision_path, reviewer_source, app_id):
         error = '; '.join(record['findings'])
         require(error, 'Ineligible decision has no failure or pending validation.')
     record['validation_pending'] = pending
+    if notify and (not automatic or policy['mode'] == 'report-only' or error):
+        from .notifications import request_review
+        record['human_review_request'] = request_review(repo, number, record['head_sha'],
+            error or 'The change is outside automatic approval and requires independent human review.')
     require(type(app_id) is int and app_id > 0 and app_id != policy['proposer_app_id'], 'Independent check App identity is invalid.')
     payload = {
         'name': 'Security update admission', 'head_sha': record['head_sha'], 'status': 'in_progress',

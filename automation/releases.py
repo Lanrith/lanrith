@@ -138,9 +138,11 @@ def blocked_issue(repo, report):
         value.get('run_url', 'https://github.com/'+repo+'/actions/runs/'+os.environ['GITHUB_RUN_ID'])+'\n\n'
         'Resolve the recorded source, compatibility or infrastructure problem. Do not bypass the security gate.')
     if not matches:
-        api('repos/'+repo+'/issues', method='POST', payload={'title': title, 'body': body})
+        issue = api('repos/'+repo+'/issues', method='POST', payload={'title': title, 'body': body})
     else:
-        api('repos/'+repo+'/issues/'+str(matches[0]['number']), method='PATCH', payload={'body': body})
+        issue = api('repos/'+repo+'/issues/'+str(matches[0]['number']), method='PATCH', payload={'body': body})
+    from .notifications import assign_attention
+    assign_attention(repo, issue['number'])
 
 
 def track(repo, candidate_path, pr=None):

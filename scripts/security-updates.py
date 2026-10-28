@@ -10,14 +10,14 @@ import sys
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
-from automation import cleanup, evidence, proposal, releases, review
+from automation import cleanup, evidence, notifications, proposal, releases, review
 from automation.common import MaintenanceError, document, metadata_bundle, now, repository
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('propose', 'review', 'approve', 'collect-release',
-                                           'proposal-state', 'blocked-issue', 'cleanup', 'stage', 'apply-proposal', 'bundle', 'review-event', 'track', 'admission', 'complete-release', 'finalize'))
+                                           'proposal-state', 'blocked-issue', 'cleanup', 'stage', 'apply-proposal', 'bundle', 'review-event', 'track', 'admission', 'complete-release', 'finalize', 'request-review', 'notify-human-event'))
     parser.add_argument('--owner', type=Path, default=Path('.'))
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'))
     parser.add_argument('--source', default=os.environ.get('LANRITH_TOOLS_SHA', os.environ.get('GITHUB_SHA')))
@@ -60,13 +60,31 @@ def main():
             review.approve(repo, args.pr, args.output, args.source, os.environ.get('LANRITH_SECURITY_APPROVALS_ENABLED', 'false'))
         except (MaintenanceError, ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
             recheck = args.output.with_name('approval-recheck.json')
-            record = evidence.read(recheck if recheck.exists() else args.output)
+            submitted = evidence.read(args.output) if args.output.exists() else {}
+            record = submitted if submitted.get('approval') else evidence.read(recheck if recheck.exists() else args.output)
             record['eligible'] = False
             record['findings'].append('Approval blocked: '+str(error)[-2000:])
+            if record.get('head_sha'):
+                try:
+                    record['human_review_request'] = notifications.request_review(repo, args.pr, record['head_sha'],
+                        'Automatic approval needs human attention: '+str(error)[-1000:])
+                except (MaintenanceError, ValueError, KeyError, OSError, subprocess.SubprocessError) as failure:
+                    record['human_review_request'] = {'state': 'failed', 'error': str(failure)[-1000:]}
             evidence.write(args.output, record)
             raise
     elif args.command == 'admission':
-        review.admission(repo, args.pr, args.output, args.source, int(os.environ['LANRITH_REVIEW_APP_ID']))
+        review.admission(repo, args.pr, args.output, args.source, int(os.environ['LANRITH_REVIEW_APP_ID']), notify=True)
+    elif args.command == 'request-review':
+        pr = notifications.api('repos/'+repo+'/pulls/'+str(args.pr))
+        evidence.write(args.output, notifications.request_review(repo, args.pr, pr['head']['sha'],
+            'The verified update candidate requires independent human review.'))
+        print('Human review request: '+evidence.read(args.output)['state'])
+    elif args.command == 'notify-human-event':
+        event = document(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
+        evidence.write(args.output, notifications.event_requests(repo, event, args.source,
+            os.environ.get('LANRITH_SECURITY_APPROVALS_ENABLED', 'false'), args.pr))
+        for request in evidence.read(args.output)['requests']:
+            print('PR '+str(request['pull_request'])+': '+request['state'])
     elif args.command == 'finalize':
         review.finalize(repo, args.pr, args.output, args.source,
                         os.environ.get('LANRITH_SECURITY_APPROVALS_ENABLED', 'false'), args.audit_tag)

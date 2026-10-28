@@ -41,5 +41,6 @@
   ],
   "maximum_changes": 30,
   "large_artifact_retention_days": 1,
-  "paid_ai": false
+  "paid_ai": false,
+  "automatic_minor_security_updates": true
 }
