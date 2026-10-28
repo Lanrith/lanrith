@@ -1,0 +1,44 @@
+{
+  "base_sha": "5a4bbdb033f16a6d46cbf62c95870164c3bbd8ec",
+  "candidate_id": "172271127a6b1c6c32769660d1dbada178eb8d667dbef5097232088c9629b67d",
+  "changes": {
+    "build-inputs.json": {
+      "after_sha256": "bd0b6578e33b10185dbe711a1270ddf5b5e7e16be8d6a4e874770cf7c976614c",
+      "before_sha256": "87d62f3d9980768e3683caf0532077fa1131320ec03abe21498fe476ea05510e"
+    },
+    "security/policy.json": {
+      "after_sha256": "0106a7e95b1665e21e3cab9d95579e19b4a024e030c82285d643c29dffd85d71",
+      "before_sha256": "2ae5389c906add94ea7781740a11964428fd0140c1b03f38e6fd8fa6f877f88d"
+    }
+  },
+  "created_at": "2026-10-27T20:09:36.011119+00:00",
+  "kind": "security-update-candidate",
+  "policy_sha256": "5604196bdfc31484592fcb7e92b8b4c37e806f9b7c5db0aa7c6327382ad0ebbe",
+  "producer_sha": "5a4bbdb033f16a6d46cbf62c95870164c3bbd8ec",
+  "reasons": [
+    {
+      "ecosystem": "Lanrith",
+      "evidence_sha256": "d1ae55e7862d71e21cdb2aba69bd3fa82f55cc1ddaafa886a123acda2f1fed0f",
+      "fixed": "v0.1.3",
+      "id": "Lanrith/discovery-bridge@v0.1.3",
+      "installed": "v0.1.1",
+      "package": "discovery-bridge",
+      "source": "https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.3",
+      "type": "qualified-component-update"
+    },
+    {
+      "ecosystem": "Lanrith",
+      "evidence_sha256": "fdeaea59b6fca9e8ea8138b3d9063dc22bb1e32ed76cc896e6400a7b3cae02b5",
+      "fixed": "v0.1.6",
+      "id": "Lanrith/router-policy-agent@v0.1.6",
+      "installed": "v0.1.4",
+      "package": "router-policy-agent",
+      "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.6",
+      "type": "qualified-component-update"
+    }
+  ],
+  "remediation_id": "security-bec1fe3fa475dc1f4c22",
+  "repository": "Lanrith/lanrith",
+  "requires_human": false,
+  "schema": 1
+}
