@@ -1,0 +1,13 @@
+name: Review routing
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions: {}
+cache-mode: none
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      # Signal GitHub's actual PR head only, without a checkout or write permissions.
+      - run: 'true'

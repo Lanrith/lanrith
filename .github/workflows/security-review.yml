@@ -123,7 +123,7 @@ jobs:
           permission-contents: read
           permission-actions: read
           permission-checks: write
-          permission-pull-requests: read
+          permission-pull-requests: write
       - name: Publish qualification status while preserving independent human review
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

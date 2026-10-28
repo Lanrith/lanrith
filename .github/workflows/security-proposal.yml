@@ -162,6 +162,14 @@ jobs:
           # The PR action restores owner to main; the sealed proposal stays outside that checkout.
           python3 tools/scripts/security-updates.py track --candidate "$RUNNER_TEMP/proposal/security/update-candidate.json" \
             --pr "$PR_NUMBER" --output "$RUNNER_TEMP/tracked.json"
+      - name: Request independent human review when the verified candidate needs it
+        if: steps.pr.outputs.pull-request-number != '' && steps.state.outputs.requires-human == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          python3 tools/scripts/security-updates.py request-review --pr "$PR_NUMBER" --output "$RUNNER_TEMP/review-request.json"
       - name: Request protected auto-merge only after the pilot is enabled
         if: steps.pr.outputs.pull-request-number != '' && vars.LANRITH_SECURITY_APPROVALS_ENABLED == 'true' && steps.state.outputs.requires-human != 'true'
         env:
