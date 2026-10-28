@@ -1,0 +1,41 @@
+{
+  "approval": "Workflow/security-control changes require a fresh independent human GitHub approval after every required build passes. No App approval, merge, release or production qualification is claimed.",
+  "base_commit": "4f2184f6ec923186365a32c9bf0275499df3a858",
+  "changes": [
+    "Existing assessment requirements remain intact; only reviewed workflow digests are updated for the exact pinned action replacement.",
+    "The cheap workflow preflight requires the same complete eight-workflow inventory and exact digests as final qualification.",
+    "Tests prove matching workflows pass and drift/missing assessment coverage fail before expensive package work."
+  ],
+  "created_at": "2026-10-28T22:20:53.418090+00:00",
+  "kind": "reviewed-action-assessment-and-early-workflow-drift-repair",
+  "observed_failure": {
+    "error": "A build workflow changed after its platform requirement assessment.",
+    "job": 123007997649,
+    "native_vm_observation": "Existing-head log reports real UEFI factory, encrypted-state and A/B qualification passed before the assessment rejected stale workflow hashes. This does not qualify the new head.",
+    "run": 40730624483
+  },
+  "paid_ai": false,
+  "previous_head": "f87c4444aa78f316de5a568ce221120371c85a95",
+  "pull_request": 1,
+  "reason": "The official download-artifact patch changed assessed workflow bytes, while Dependabot left their reviewed hashes unchanged. Native qualification correctly rejected stale assessment only after expensive successful VM tests. Refresh only the exact reviewed hash values and enforce the same complete workflow set/hash gate in the cheap preflight.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "upstream": {
+    "commit": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+    "published_at": "2026-10-07T10:09:51Z",
+    "release_url": "https://github.com/actions/download-artifact/releases/tag/v8.0.2",
+    "repository": "actions/download-artifact",
+    "tag": "v8.0.2",
+    "verification": "Official tag resolves to the exact existing Dependabot pin; GitHub reports the upstream commit signature valid. This is regular workflow maintenance, not an automatic security-fix approval."
+  },
+  "validation": {
+    "fresh_hosted_ci": "Required for the final new source before requesting human review.",
+    "log_sha256": "a34cbb7dc33ffd95abc64b5913825badfcf5cf88a055736841bd0d13bcdbc856",
+    "passed": 526,
+    "pinned_actionlint": "pass",
+    "skip_reason": "Existing native-host requirements.",
+    "skipped": 12,
+    "total": 538,
+    "workflow_invariants": "pass"
+  }
+}

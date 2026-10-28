@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 """Enforce pinned actions and the absence of privileged PR signing paths."""
 
+import hashlib
+import json
 from pathlib import Path
 import re
 import yaml
 
 root = Path(__file__).resolve().parents[1]
+assessment = json.loads((root/'security/slsa-assessment.json').read_bytes())
+reviewed = assessment.get('reviewed_workflows', {})
+assert set(reviewed) == {'.github/workflows/build-base.yml', '.github/workflows/release.yml',
+    '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
+    '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
+    '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'}, \
+    'The reviewed workflow set is incomplete; review the platform assessment before building.'
+for name, expected in reviewed.items():
+    assert isinstance(expected, str) and re.fullmatch('[0-9a-f]{64}', expected) and \
+        hashlib.sha256((root/name).read_bytes()).hexdigest() == expected, \
+        'Assessed workflow hash differs: '+name+'. Review the workflow and update security/slsa-assessment.json before the package build.'
+
 for path in (root/'.github/workflows').glob('*.yml'):
     text = path.read_text()
     value = yaml.safe_load(text)
