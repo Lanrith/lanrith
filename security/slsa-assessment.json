@@ -75,7 +75,7 @@
     ".github/workflows/publish-release.yml": "545dcd4a800dff6f273ad067638056e47aa7dfb80733d9b59b9016c0a68265ad",
     ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
     ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
-    ".github/workflows/security-proposal.yml": "c071928f8ac77138e6e23420ec67eefab066f7b9ef035d0bd162632735db38db",
+    ".github/workflows/security-proposal.yml": "f88fb29f8abf7809cf11fdad02b0f466664c0991044060d0695e695835b7b175",
     ".github/workflows/security-review.yml": "6a354cb1d5f6167efd0152b387ad4120fe5a693bf3d87a944b9e1fce10032bd4"
   },
   "schema": 1,

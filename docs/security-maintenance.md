@@ -21,17 +21,19 @@ attention issue is assigned to `mikenorgate`. Policies without the minor-update
 opt-in retain the previous patch-only behavior until their reviewed rollout.
 
 Ready PRs that need human input request review from `mikenorgate` through GitHub's
-review-request API. Requests are made when a human-required proposal is published,
-when a PR becomes ready or its head changes, and when independent admission finds
-a manual change or blocked qualification. Pending requests and reviews already
-submitted on the current head are not repeated. Drafts wait until they are ready;
-a new head after completed review gets a fresh request. If the owner authored the
+review-request API only after all required CI workflows and build jobs pass for
+the current head and protected base. Missing, running, failed, cancelled, skipped,
+stale or mismatched builds defer the request. PR events and build starts/completions
+recheck readiness; the last successful build can release the request without
+another push. New heads and reruns withdraw outstanding requests until CI passes
+again. Current-head reviews and pending requests are not repeated. Drafts wait
+until ready. If the owner authored the
 PR and cannot review it, assignment records the need for another independent
 reviewer. Blocked proposal and freshness issues also receive an owner assignment.
 
 The PR event job only signals its GitHub-controlled head with no checkout or write
 permissions. A separate notification job executes the trusted protected-main
-workflow source. It can request reviews and assign issues, but has no App keys,
+workflow source. It reads build status and can request reviews and assign issues, but has no App keys,
 release-writing or signing permissions. Notification routing never approves a
 change; the independent reviewer still validates the actual candidate. GitHub's
 review-request timeline and the archived admission decision retain the request

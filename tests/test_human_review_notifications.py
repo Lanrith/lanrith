@@ -1,5 +1,6 @@
 """Human-required changes create real, idempotent GitHub review requests."""
 import copy
+import datetime
 import importlib.util
 import json
 import os
@@ -9,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from automation import evidence, notifications as notify, releases, review
-from automation.common import MaintenanceError, canonical, digest
+from automation.common import MaintenanceError, canonical, digest, now
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO, BASE, HEAD, SOURCE = 'Lanrith/lanrith', 'a'*40, 'b'*40, 'c'*40
@@ -29,17 +30,36 @@ class HumanNotificationTests(unittest.TestCase):
                 'package': 'stdlib', 'installed': '1.27.2', 'fixed': '1.27.3',
                 'source': 'https://api.osv.dev/v1/vulns/GO-2026-6809', 'evidence_sha256': 'd'*64}], SOURCE)
         self.files = [{'filename': '.go-version', 'status': 'modified'}, {'filename': evidence.CANDIDATE, 'status': 'added'}]
+        self.main = BASE
+        self.runs, self.jobs = {}, {}
+        for index, (path, names) in enumerate(self.policy['required_workflows'].items(), 100):
+            self.runs[path] = [{'id': index, 'run_attempt': 1, 'head_sha': HEAD, 'event': 'pull_request',
+                'path': path, 'head_repository': {'full_name': REPO}, 'status': 'completed',
+                'conclusion': 'success', 'updated_at': now(), 'html_url': 'https://example.test/run/'+str(index),
+                'pull_requests': [{'number': 12, 'head': {'sha': HEAD}, 'base': {'sha': BASE}}]}]
+            self.jobs[index] = {'total_count': len(names), 'jobs': [{'id': index*10+n, 'name': name,
+                'status': 'completed', 'conclusion': 'success'} for n, name in enumerate(names)]}
 
     def api(self, endpoint, **kwargs):
         if kwargs.get('method'):
             self.writes.append((endpoint, kwargs))
             if endpoint.endswith('/requested_reviewers'):
+                if kwargs['method'] == 'DELETE':
+                    self.requests.clear()
+                    return None
                 self.requests.append({'login': notify.HUMAN_REVIEWER})
                 return {'requested_reviewers': self.requests}
             self.assignees.append({'login': notify.HUMAN_REVIEWER})
             return {'assignees': self.assignees}
         if '/collaborators/' in endpoint:
             return {'permission': self.permission, 'user': {'login': notify.HUMAN_REVIEWER, 'type': 'User', 'id': 7}}
+        if endpoint.endswith('/commits/main'):
+            return {'sha': self.main}
+        if '/jobs?' in endpoint:
+            return self.jobs[int(endpoint.split('/runs/')[1].split('/')[0])]
+        if '/workflows/' in endpoint:
+            path = '.github/workflows/'+endpoint.split('/workflows/')[1].split('/runs?')[0]
+            return {'workflow_runs': self.runs[path]}
         if endpoint.endswith('/requested_reviewers'):
             return {'users': self.requests}
         if '/issues/' in endpoint:
@@ -57,7 +77,8 @@ class HumanNotificationTests(unittest.TestCase):
         return canonical(self.policy if name == 'security/update-policy.json' else self.candidate)
 
     def request(self):
-        with patch.object(notify, 'api', side_effect=self.api), patch.object(notify, 'pages', side_effect=self.pages):
+        with patch.object(notify, 'api', side_effect=self.api), patch.object(notify, 'pages', side_effect=self.pages), \
+                patch.object(notify, 'contents', side_effect=self.contents):
             return notify.request_review(REPO, 12, HEAD, 'Human-required source change.')
 
     def route(self, enabled='true'):
@@ -147,6 +168,7 @@ class HumanNotificationTests(unittest.TestCase):
                 return {'requested_reviewers': []}
             return self.api(endpoint, **kwargs)
         with patch.object(notify, 'api', side_effect=api), patch.object(notify, 'pages', side_effect=self.pages), \
+                patch.object(notify, 'contents', side_effect=self.contents), \
                 self.assertRaises(MaintenanceError):
             notify.request_review(REPO, 12, HEAD, 'Human required.')
 
@@ -160,8 +182,9 @@ class HumanNotificationTests(unittest.TestCase):
                 releases.blocked_issue(REPO, path)
                 assign.assert_called_once_with(REPO, 42)
 
-    def test_admission_requests_manual_review_even_while_ci_is_pending_or_failed(self):
+    def test_admission_defers_manual_review_until_ci_passes(self):
         for state in ('completed', 'pending', 'failed'):
+            self.setUp()
             record = {'candidate': {}, 'head_sha': HEAD, 'findings': ['Outside automatic source inputs.'],
                       'eligible': False, 'validation_pending': []}
             def api(endpoint, **kwargs):
@@ -175,11 +198,130 @@ class HumanNotificationTests(unittest.TestCase):
                     patch.object(review, 'inspect', return_value=(record, self.policy)), patch.object(review, 'api', side_effect=api), \
                     patch.object(review, 'pages', return_value=[]), patch.object(review, 'validation_runs',
                         side_effect=None if state == 'completed' else waiting if state == 'pending' else MaintenanceError('CI failed'), return_value=[]), \
-                    patch.object(notify, 'request_review', return_value={'state': 'requested'}) as request:
+                    patch.object(notify, 'api', side_effect=self.api), patch.object(notify, 'pages', side_effect=self.pages), \
+                    patch.object(notify, 'contents', side_effect=self.contents):
                 result = review.admission(REPO, 12, Path(temporary)/'record.json', SOURCE,
                     self.policy['reviewer_app_id'], notify=True)
-                request.assert_called_once()
-                self.assertEqual(result['human_review_request']['state'], 'requested')
+                expected = {'completed': 'requested', 'pending': 'deferred-ci-pending', 'failed': 'deferred-ci-unqualified'}
+                self.assertEqual(result['human_review_request']['state'], expected[state])
+                self.assertEqual(len(self.writes), 1 if state == 'completed' else 0)
+
+    def test_every_missing_running_or_unsuccessful_build_defers_the_request(self):
+        for path in self.policy['required_workflows']:
+            for state in ('missing', 'queued', 'in_progress', 'failure', 'cancelled', 'skipped', 'timed_out'):
+                self.setUp()
+                if state == 'missing':
+                    self.runs[path] = []
+                elif state in ('queued', 'in_progress'):
+                    self.runs[path][0].update(status=state, conclusion=None)
+                else:
+                    self.runs[path][0]['conclusion'] = state
+                with self.subTest(path=path, state=state):
+                    self.assertTrue(self.request()['state'].startswith('deferred-ci-'))
+                    self.assertEqual(self.writes, [])
+
+    def test_stale_other_pr_base_head_or_skipped_mandatory_job_cannot_notify(self):
+        for mutation in ('stale', 'head', 'base', 'pr', 'job', 'advanced-main'):
+            self.setUp()
+            path = '.github/workflows/package-check.yml'
+            run = self.runs[path][0]
+            if mutation == 'stale': run['updated_at'] = (datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(hours=13)).isoformat()
+            elif mutation == 'head': run['head_sha'] = 'd'*40
+            elif mutation == 'base': run['pull_requests'][0]['base']['sha'] = 'd'*40
+            elif mutation == 'pr': run['pull_requests'][0]['number'] = 99
+            elif mutation == 'job': self.jobs[run['id']]['jobs'][0]['conclusion'] = 'skipped'
+            else: self.main = 'd'*40
+            with self.subTest(mutation=mutation):
+                self.assertEqual(self.request()['state'], 'deferred-ci-unqualified')
+                self.assertEqual(self.writes, [])
+
+    def test_last_successful_build_event_releases_one_idempotent_review_request(self):
+        path = '.github/workflows/package-check.yml'
+        self.runs[path][0].update(status='in_progress', conclusion=None)
+        event = {'repository': {'full_name': REPO}, 'workflow_run': {'event': 'pull_request', 'head_sha': HEAD, 'path': path}}
+        with patch.object(notify, 'api', side_effect=self.api), patch.object(notify, 'pages', side_effect=self.pages), \
+                patch.object(notify, 'contents', side_effect=self.contents):
+            self.assertEqual(notify.event_requests(REPO, event, SOURCE, 'true')['requests'][0]['state'], 'deferred-ci-pending')
+            self.assertEqual(self.writes, [])
+            self.runs[path][0].update(status='completed', conclusion='success')
+            self.assertEqual(notify.event_requests(REPO, event, SOURCE, 'true')['requests'][0]['state'], 'requested')
+            self.assertEqual(notify.event_requests(REPO, event, SOURCE, 'true')['requests'][0]['state'], 'already-requested')
+        self.assertEqual(len(self.writes), 1)
+
+    def test_a_new_rerun_withdraws_the_pending_request_and_only_success_reissues_it(self):
+        self.request()
+        run = self.runs['.github/workflows/package-check.yml'][0]
+        run.update(run_attempt=2, status='in_progress', conclusion=None)
+        deferred = self.request()
+        self.assertEqual(deferred['state'], 'deferred-ci-pending')
+        self.assertEqual(deferred['previous_request'], 'withdrawn-until-ci-passes')
+        self.assertEqual(self.requests, [])
+        run.update(status='completed', conclusion='failure')
+        self.assertEqual(self.request()['state'], 'deferred-ci-unqualified')
+        self.assertEqual(len(self.writes), 2)
+        run.update(run_attempt=3, conclusion='success')
+        self.assertEqual(self.request()['state'], 'requested')
+        self.assertEqual(len(self.writes), 3)
+
+    def test_a_rerun_started_during_readiness_check_cannot_use_the_previous_success(self):
+        previous = notify.qualification
+        calls = []
+        def readiness(repo, pr):
+            calls.append(True)
+            if len(calls) == 2:
+                self.runs['.github/workflows/package-check.yml'][0].update(status='queued', conclusion=None, run_attempt=2)
+            return previous(repo, pr)
+        with patch.object(notify, 'qualification', side_effect=readiness):
+            self.assertEqual(self.request()['state'], 'deferred-ci-pending')
+        self.assertEqual(self.writes, [])
+
+    def test_a_new_head_is_notified_only_after_its_own_builds_pass(self):
+        self.request()
+        self.pr['head']['sha'] = 'e'*40
+        for path in self.runs:
+            self.runs[path] = []
+        with patch.object(notify, 'api', side_effect=self.api), patch.object(notify, 'pages', side_effect=self.pages), \
+                patch.object(notify, 'contents', side_effect=self.contents):
+            result = notify.request_review(REPO, 12, 'e'*40, 'Changed source needs review.')
+        self.assertEqual(result['state'], 'deferred-ci-pending')
+        self.assertEqual(self.requests, [])
+
+    def test_docs_only_pr_uses_the_existing_source_only_qualification_rule(self):
+        self.files = [{'filename': 'docs/security-maintenance.md', 'status': 'modified'}]
+        self.runs['.github/workflows/package-check.yml'] = []
+        self.assertEqual(self.request()['state'], 'requested')
+
+    def test_automatic_candidates_do_not_keep_a_premature_human_request(self):
+        self.pr['head']['ref'] = self.policy['proposal_branch']
+        self.requests = [{'login': 'mikenorgate'}]
+        self.runs['.github/workflows/package-check.yml'][0].update(status='in_progress', conclusion=None)
+        self.assertEqual(self.route()['state'], 'deferred-ci-pending')
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.writes[0][1]['method'], 'DELETE')
+
+    def test_forged_candidate_cannot_turn_failed_ci_into_a_human_review_request(self):
+        self.pr['head']['ref'] = self.policy['proposal_branch']
+        self.candidate['producer_sha'] = 'f'*40
+        self.runs['.github/workflows/check.yml'][0]['conclusion'] = 'failure'
+        self.assertEqual(self.route()['state'], 'deferred-ci-unqualified')
+        self.assertEqual(self.writes, [])
+
+    def test_head_or_base_change_before_post_cannot_request_review(self):
+        for subject in ('head', 'base'):
+            self.setUp()
+            reads = []
+            def api(endpoint, **kwargs):
+                value = self.api(endpoint, **kwargs)
+                if endpoint == 'repos/'+REPO+'/pulls/12' and not kwargs.get('method'):
+                    reads.append(True)
+                    if len(reads) > 1:
+                        value[subject]['sha'] = 'e'*40
+                return value
+            with self.subTest(subject=subject), patch.object(notify, 'api', side_effect=api), \
+                    patch.object(notify, 'pages', side_effect=self.pages), patch.object(notify, 'contents', side_effect=self.contents), \
+                    self.assertRaises(MaintenanceError):
+                notify.request_review(REPO, 12, HEAD, 'Source review.')
+            self.assertEqual(self.writes, [])
 
 
 class ApprovalFailureCliEvidenceTests(unittest.TestCase):

@@ -102,8 +102,7 @@ for path in (root/'.github/workflows').glob('*.yml'):
     if path.name == 'security-proposal.yml':
         assert set(value['jobs']['publish']['needs']) == {'resolve', 'archive'}, 'PR publication must wait for immutable proposal evidence'
         assert value['jobs']['archive']['needs'] == 'resolve', 'Proposal archive must precede the publishing credential'
-        request = next(s for s in value['jobs']['publish']['steps'] if s.get('name') == 'Request independent human review when the verified candidate needs it')
-        assert "steps.state.outputs.requires-human == 'true'" in request['if'], path.name
+        assert 'request-review' not in text, 'Publishing a proposal must not request review before CI'
     if path.name == 'review-routing.yml':
         assert value['permissions'] == {} and set(value['jobs']) == {'signal'}, path.name
         assert value['jobs']['signal']['steps'] == [{'run': 'true'}], 'Untrusted PR routing can only signal, without checkout or write permissions'
@@ -111,8 +110,9 @@ for path in (root/'.github/workflows').glob('*.yml'):
     if path.name == 'request-human-review.yml':
         job = value['jobs']['notify']
         assert "github.ref == 'refs/heads/main'" in job['if'] and 'environment' not in job, path.name
-        assert job['permissions'] == {'contents': 'read', 'pull-requests': 'write', 'issues': 'write'}, path.name
-        assert value[True]['workflow_run']['workflows'] == ['Review routing'], path.name
+        assert job['permissions'] == {'contents': 'read', 'actions': 'read', 'pull-requests': 'write', 'issues': 'write'}, path.name
+        assert value[True]['workflow_run']['workflows'] == ['Review routing', 'Check', 'Package qualification', 'CI'], path.name
+        assert set(value[True]['workflow_run']['types']) == {'in_progress', 'completed'}, path.name
         checkout = next(s['with'] for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@'))
         assert checkout == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
                             'path': 'tools', 'persist-credentials': False}, 'Notification must run only its trusted workflow source'

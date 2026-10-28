@@ -36,6 +36,20 @@ def policy_document(raw, repo):
     return policy
 
 
+def manual_validation_policy(repo, number, policy, *, files=None):
+    """Use the same build-path requirements for admission and review readiness."""
+    result = dict(policy)
+    if repo == 'Lanrith/lanrith':
+        files = pages('repos/'+repo+'/pulls/'+str(number)+'/files?per_page=100') if files is None else files
+        build_paths = ('builders/', 'scripts/', 'security/', 'mkosi/', 'lanrith/', 'tests/',
+                       'automation/', 'schemas/', '.github/workflows/')
+        needs_image = any(f['filename'].startswith(build_paths) or f['filename'] in
+                          ('build-inputs.json', 'VERSION', '.go-version') for f in files)
+        if not needs_image:
+            result['required_workflows'] = {p: j for p, j in policy['required_workflows'].items() if p.endswith('/check.yml')}
+    return result
+
+
 def validation_runs(repo, pr, policy, *, get=api, clock=None, manual=False):
     clock = clock or datetime.datetime.now(datetime.timezone.utc)
     results, pending = [], []
@@ -338,15 +352,7 @@ def admission(repo, number, decision_path, reviewer_source, app_id, *, notify=Fa
     if not automatic:
         pending = []
         try:
-            manual_policy = dict(policy)
-            if repo == 'Lanrith/lanrith':
-                files = pages('repos/'+repo+'/pulls/'+str(number)+'/files?per_page=100')
-                build_paths = ('builders/', 'scripts/', 'security/', 'mkosi/', 'lanrith/', 'tests/',
-                               'automation/', 'schemas/', '.github/workflows/')
-                needs_image = any(f['filename'].startswith(build_paths) or f['filename'] in
-                                  ('build-inputs.json', 'VERSION', '.go-version') for f in files)
-                if not needs_image:
-                    manual_policy['required_workflows'] = {p: j for p, j in policy['required_workflows'].items() if p.endswith('/check.yml')}
+            manual_policy = manual_validation_policy(repo, number, policy)
             record['validation'] = validation_runs(repo, pr, manual_policy, manual=True)
         except ValidationPending as waiting:
             pending = waiting.workflows

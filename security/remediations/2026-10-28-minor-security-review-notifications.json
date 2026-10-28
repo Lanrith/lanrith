@@ -58,27 +58,28 @@
     },
     "pinned_actionlint": "pass",
     "python_tests": {
-      "passed": 513,
+      "passed": 523,
       "skip_reason": "Existing tests require native host facilities.",
       "skipped": 12,
-      "total": 525
+      "total": 535
     },
     "source_boundary": "pass",
-    "test_log_sha256": "d5c4c05185b89d2a550e2a863f648cb14e07bfc7ef7de92ff51fdcd3eeb4a857",
+    "test_log_sha256": "17d4fdad3c871458c428c92432bbe129c3590cf1cd67e6e4dc33334214341403",
     "whitespace": "pass",
     "workflow_invariants": "pass"
   },
   "notifications": {
+    "ci_gate": "Only fresh, successful required workflows and mandatory build jobs for the exact current head and protected base permit review requests. Missing, pending, failed, cancelled, skipped, stale or mismatched CI defers requests; reruns/new heads withdraw pending requests until qualified.",
     "drafts": "Deferred until ready.",
+    "earlier_requests": "The first implementation requested review before full CI. The correction withdrew six unqualified native requests, including Root PR23, without changing actual reviews; Discovery PR11 retained its qualified request.",
     "events": [
-      "Published human-required proposal.",
-      "Ready PR opened, reopened, synchronized or made ready after a draft.",
-      "Independent admission finds a manual change or blocked CI.",
-      "Automatic approval fails and needs attention."
+      "PR opened, reopened, synchronized or made ready after a draft: check build readiness, without requesting early.",
+      "Required build starts and completions: withdraw premature requests or notify once every required build passes.",
+      "Independent admission or automatic approval needs human attention: use the same enforced CI gate."
     ],
     "idempotency": "Pending requests and current-head completed human reviews are respected; a changed head can request a fresh review.",
     "no_pr_or_self_review": "Blocked proposal/freshness issues are assigned to the owner; an owner-authored PR is assigned because GitHub prohibits self-review.",
-    "permissions": "Unprivileged PR signal has no checkout or write permission. Trusted protected-main notification code uses Contents read, Pull requests write and Issues write, with no App keys, release write or signing authority.",
+    "permissions": "Unprivileged PR signal has no checkout or write permission. Protected-main notifier uses Contents read, Actions read, Pull requests write and Issues write; no App keys, release write or signing authority.",
     "reviewer": "mikenorgate"
   },
   "policy": {
@@ -103,7 +104,7 @@
     "signed_decision_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-decision-40656795875-1",
     "source_commit": "bead25c0c5532ae1e13427e0d55ae1603026c6a2"
   },
-  "reason": "The owner requested that a minor dependency version change should not by itself require human approval once its verified security-fix inputs and complete CI pass, and that every change requiring human action sends a native GitHub review request or assigned attention issue.",
+  "reason": "The owner requested that a minor dependency version change should not by itself require human approval once its verified security-fix inputs and complete CI pass, and that every change requiring human action sends a native GitHub review request or assigned attention issue. The owner subsequently required human review requests only after all mandatory builds pass.",
   "repository": "Lanrith/lanrith",
   "schema": 1
 }
