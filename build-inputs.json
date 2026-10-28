@@ -4,14 +4,14 @@
   "component_releases": {
     "discovery-bridge": {
       "files": {
-        "discovery-bridge_0.1.4_amd64.deb": "65acef818200cea359c58d5d3e5ed8429d7d9afda2a5cb78c56eeaa77831eeb3",
-        "release.json": "20bd7bb765c3850e261c4243fcdf23dafb55e8f12ff2ea7a25094a3fb5256be9",
-        "update-record.json": "56eccc341ba42b5e8f8f8c4c086650212f6c277e263daea231f985d5afa0bae8"
+        "discovery-bridge_0.1.5_amd64.deb": "1c163de1b2c544d969bfbbc5b8dc21b536d6fd7a299f8ab2fedfd8e5117ad2d3",
+        "release.json": "6bf89bae7fab6876a4448371cca87f918e462d9cd6f8deac8c8d5d8692450ed5",
+        "update-record.json": "e162a2e1bfc85d782d447f2b2718fba78dce8c8573da48fc74348767ba924de1"
       },
       "repository": "Lanrith/discovery-bridge",
-      "source_commit": "6bb2d6781318017957be4dd55748f280d71114c2",
-      "tag": "v0.1.4",
-      "workflow_commit": "6bb2d6781318017957be4dd55748f280d71114c2"
+      "source_commit": "2d4708f9a5f891332204b79c5173540dc0580f1d",
+      "tag": "v0.1.5",
+      "workflow_commit": "2d4708f9a5f891332204b79c5173540dc0580f1d"
     },
     "router-policy-agent": {
       "files": {
