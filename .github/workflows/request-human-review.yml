@@ -1,8 +1,8 @@
 name: Request human review
 on:
   workflow_run:
-    workflows: [Review routing]
-    types: [completed]
+    workflows: [Review routing, Check, Package qualification, CI]
+    types: [in_progress, completed]
   workflow_dispatch:
     inputs:
       pr:
@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
       pull-requests: write
       issues: write
     env:
