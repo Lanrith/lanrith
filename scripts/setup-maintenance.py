@@ -111,13 +111,15 @@ def main():
     if args.reviewer_id <= 0 or args.reviewer_id == 5355607:
         raise ValueError('The reviewer must be a distinct GitHub App.')
     app = app_request('app', args.reviewer_key, args.reviewer_id)
-    expected = {'actions': 'read', 'checks': 'write', 'contents': 'read', 'metadata': 'read', 'pull_requests': 'write'}
+    expected = {'actions': 'read', 'checks': 'write', 'contents': 'write', 'metadata': 'read', 'pull_requests': 'write'}
     if app['id'] != args.reviewer_id or app['permissions'] != expected:
         raise ValueError('Reviewer App permissions differ from the reviewed manifest.')
     for repo in REPOSITORIES:
         install = app_request('repos/'+repo+'/installation', args.reviewer_key, args.reviewer_id)
         if install['account']['login'] != 'Lanrith' or install['repository_selection'] != 'selected':
             raise ValueError('Install the reviewer only on the three selected Lanrith repositories.')
+        if install['permissions'] != expected:
+            raise ValueError('Accept the reviewer permission update on its installation before configuring or activating automation.')
         if args.configure:
             for environment in ('lanrith-updates', 'lanrith-review'):
                 gh('repos/'+repo+'/environments/'+environment, method='PUT', value={

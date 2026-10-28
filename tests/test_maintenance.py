@@ -26,6 +26,14 @@ def reason():
             'evidence_sha256': 'd'*64}
 
 
+def authority_response():
+    return {'data': {'repository': {'nameWithOwner': 'Lanrith/lanrith', 'pullRequest': {
+        'number': 12, 'headRefOid': HEAD, 'baseRefOid': BASE,
+        'reviews': {'nodes': [{'databaseId': 21, 'state': 'APPROVED',
+            'authorCanPushToRepository': True, 'author': {'__typename': 'Bot', 'login': 'security-reviewer'},
+            'commit': {'oid': HEAD}}]}}}}}
+
+
 class CandidateTests(unittest.TestCase):
     def make(self):
         return evidence.candidate('Lanrith/lanrith', BASE, canonical(policy()),
@@ -212,6 +220,8 @@ class ApprovalBoundaryTests(unittest.TestCase):
         self.writes = []
 
     def api(self, endpoint, **kwargs):
+        if endpoint == 'graphql':
+            return authority_response()
         if kwargs.get('method'):
             self.writes.append((endpoint, kwargs))
             if endpoint.endswith('/reviews'):
@@ -466,6 +476,8 @@ class DurableApprovalTests(unittest.TestCase):
         self.writes=[]
 
     def api(self, endpoint, **kwargs):
+        if endpoint == 'graphql':
+            return authority_response()
         if kwargs.get('method'):
             self.writes.append((endpoint,kwargs))
             return {}

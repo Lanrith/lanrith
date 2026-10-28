@@ -36,10 +36,25 @@ cannot grant an automated approval or permit a merge.
 Create a private App at
 [the organization's App settings](https://github.com/organizations/Lanrith/settings/apps/new)
 using `.github/apps/security-reviewer.json` as the permission specification.
-Disable webhooks. Grant only Actions read, Checks write, Contents read, Metadata
+Disable webhooks. Grant only Actions read, Checks write, Contents write, Metadata
 read and Pull requests write. Install it on `lanrith`, `discovery-bridge` and
 `router-policy-agent` using **Only select repositories**. Generate and download
 its private key locally; never paste a key into a PR, issue or chat.
+
+GitHub counts required approvals only from reviewers with repository write
+access. The App therefore needs Contents write on its registration and accepted
+installation permissions. A Contents-read App can submit an `APPROVED` review
+that does not satisfy protection, including the last-push approval rule. When
+updating an existing App, save the permission change and accept it on the
+installation. Keep the three selected repositories and existing branch rules.
+
+Review jobs still request only Contents read for their short-lived installation
+tokens. They execute the reviewed workflow source from protected `main` and do
+not push source changes. GitHub's `authorCanPushToRepository` field verifies the
+exact approving review's write authority before its decision is archived, and
+again before admission succeeds. Missing authority, changed review identity or
+a GraphQL error keeps the merge gate closed. The signed decision records this
+authority check alongside the actual review ID and commit.
 
 Expand the existing `lanrith-dependency-updater` installation to the same three
 repositories. Its permissions remain Contents write and Pull requests write.

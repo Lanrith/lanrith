@@ -1,0 +1,86 @@
+{
+  "base_commit": "bead25c0c5532ae1e13427e0d55ae1603026c6a2",
+  "created_at": "2026-10-28T08:37:18.318828+00:00",
+  "kind": "counted-independent-reviewer-approval-correction",
+  "observed_failure": {
+    "authorCanPushToRepository": false,
+    "head": "1e761ce6870211678901cab657a51ae158518b2b",
+    "pull_request": 14,
+    "reviewDecision": "REVIEW_REQUIRED",
+    "review_id": 5674722051,
+    "signed_decision_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-decision-40587698112-1"
+  },
+  "owner_authorized_correction": {
+    "contents": "write",
+    "installation": 174539071,
+    "protection_bypass": false,
+    "repositories": [
+      "Lanrith/lanrith",
+      "Lanrith/discovery-bridge",
+      "Lanrith/router-policy-agent"
+    ],
+    "repository_selection": "selected",
+    "review_job_token_contents": "read",
+    "reviewer_app_id": 5444158
+  },
+  "preserved_controls": [
+    "No workflow or required policy changes.",
+    "Review job installation tokens keep Contents read.",
+    "Required CI, last-push approval, stale-review dismissal and administrator enforcement stay enabled.",
+    "No paid AI services or new dependencies."
+  ],
+  "reason": "GitHub accepted independent reviewer approval 5674722051 for PR14 but did not count it for protection because the App had Contents read and authorCanPushToRepository was false. Align setup and manifest with the owner-accepted Contents write permission and verify current authority before an approval can release admission.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "source_change_approval": "Fresh independent human GitHub approval of the final published source head is required; this receipt is not that approval.",
+  "validation": {
+    "live_read_only_helper": {
+      "actual_review_id": 5679779511,
+      "base": "5a4bbdb033f16a6d46cbf62c95870164c3bbd8ec",
+      "head": "1e761ce6870211678901cab657a51ae158518b2b",
+      "kind": "live-approval-authority-helper-validation",
+      "pr": 14,
+      "read_only": true,
+      "repository": "Lanrith/lanrith",
+      "result": "pass",
+      "schema": 1,
+      "token_permissions": {
+        "contents": "read",
+        "pull_requests": "read"
+      }
+    },
+    "original_code_regressions": {
+      "failed": 2,
+      "tests": 2
+    },
+    "python_tests": {
+      "passed": 486,
+      "skip_reason": "Existing tests require native host facilities.",
+      "skipped": 12,
+      "total": 498
+    },
+    "source_boundary": "pass",
+    "test_log_sha256": "bdc3814efe2805410571910fdb052f9c78fdcc27a769ab93131dec6e34165d48",
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  },
+  "verified_recovery": {
+    "fresh_app_review_id": 5679779511,
+    "merged_at": "2026-10-28T08:32:44Z",
+    "operator_assisted": true,
+    "package_qualification": {
+      "attempt": 1,
+      "result": "success",
+      "run_id": 40575820209
+    },
+    "protected_merge": "bead25c0c5532ae1e13427e0d55ae1603026c6a2",
+    "publication_run": 40657559902,
+    "publication_status": "in_progress_at_preparation",
+    "signed_approval_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-decision-40656795875-1",
+    "source_check": {
+      "attempt": 2,
+      "result": "success",
+      "run_id": 40575820409
+    }
+  }
+}
