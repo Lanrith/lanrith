@@ -162,6 +162,7 @@ jobs:
           # The PR action restores owner to main; the sealed proposal stays outside that checkout.
           python3 tools/scripts/security-updates.py track --candidate "$RUNNER_TEMP/proposal/security/update-candidate.json" \
             --pr "$PR_NUMBER" --output "$RUNNER_TEMP/tracked.json"
+      # Trusted build-completion routing requests human review only after qualification.
       - name: Request protected auto-merge only after the pilot is enabled
         if: steps.pr.outputs.pull-request-number != '' && vars.LANRITH_SECURITY_APPROVALS_ENABLED == 'true' && steps.state.outputs.requires-human != 'true'
         env:

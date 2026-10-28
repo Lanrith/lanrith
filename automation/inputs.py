@@ -74,12 +74,13 @@ def go_security_update(current, branches):
     return selected, reasons
 
 
-def node_security_update(current, branches):
+def node_security_update(current, branches, *, allow_minor=False):
     old = version(current)
     require(str(old[0]) in branches, 'Node branch is not reviewed.')
     releases = fetch_json('https://nodejs.org/dist/index.json')
     choices = [r for r in releases if r.get('security') is True and r.get('lts') and
-               version(r['version'])[:2] == old[:2] and version(r['version']) > old]
+               version(r['version'])[0] == old[0] and
+               (allow_minor or version(r['version'])[:2] == old[:2]) and version(r['version']) > old]
     if not choices:
         require(not any(r.get('security') is True and r.get('lts') and version(r['version'])[0] == old[0] and
                         version(r['version']) > old for r in releases),
@@ -133,7 +134,8 @@ def npm_requires_human(name, before, after, policy):
     old, new = version(before), version(after)
     require(old[0] == new[0] and old < new,
             'UI security fix must advance an existing stable major version.')
-    return name not in policy['npm_packages'] or old[:2] != new[:2]
+    return not policy.get('automatic_minor_security_updates', False) and (
+        name not in policy['npm_packages'] or old[:2] != new[:2])
 
 
 def validate_npm_manifests(before, after, reasons, policy):
@@ -145,6 +147,8 @@ def validate_npm_manifests(before, after, reasons, policy):
     for group in ('dependencies', 'devDependencies'):
         old, new = old_package.get(group, {}), new_package.get(group, {})
         for name in changed_fields(old, new):
+            if policy.get('automatic_minor_security_updates', False):
+                has_reason(reasons, 'npm', name, old[name], new[name])
             if npm_requires_human(name, old[name], new[name], policy):
                 has_reason(reasons, 'npm', name, old[name], new[name])
                 manual = True
@@ -166,6 +170,8 @@ def validate_npm_manifests(before, after, reasons, policy):
         require(fields <= {'version', 'resolved', 'integrity', 'dependencies', 'peerDependencies'},
                 'UI dependency changed installation hooks, executables or unrelated metadata.')
         name = path.rsplit('node_modules/', 1)[-1]
+        if policy.get('automatic_minor_security_updates', False):
+            has_reason(reasons, 'npm', name, old[path]['version'], new[path]['version'])
         if npm_requires_human(name, old[path]['version'], new[path]['version'], policy):
             has_reason(reasons, 'npm', name, old[path]['version'], new[path]['version'])
             manual = True
@@ -221,7 +227,8 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
     if {'go.mod', 'go.sum'} & set(before):
         from .go_dependencies import validate
         validate((read_before('go.mod'), read_before('go.sum')),
-                 (read_after('go.mod'), read_after('go.sum')), reasons)
+                 (read_after('go.mod'), read_after('go.sum')), reasons,
+                 allow_minor=policy.get('automatic_minor_security_updates', False))
     for path in sorted(before):
         old_raw, new_raw = before[path], after[path]
         if path in ('go.mod', 'go.sum'):
@@ -249,8 +256,13 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
             require(not fields & {'go_image', 'builder'} or 'go_version' in fields,
                     'Image changed without a compiler security update.')
             if fields & {'node_version', 'node_image'}:
-                stable_patch(old['node_version'], new['node_version'],
-                             ['.'.join(map(str, version(old['node_version'])[:2]))])
+                if policy.get('automatic_minor_security_updates', False):
+                    before_node, after_node = version(old['node_version']), version(new['node_version'])
+                    require(before_node < after_node and before_node[0] == after_node[0],
+                            'Node security update leaves its supported stable major.')
+                else:
+                    stable_patch(old['node_version'], new['node_version'],
+                                 ['.'.join(map(str, version(old['node_version'])[:2]))])
                 require(str(version(new['node_version'])[0]) in policy['node_branches'] and
                         any(r['type'] == 'node-security-release' and r['installed'] == old['node_version'] and
                             r['fixed'] == new['node_version'] for r in reasons), 'Node patch has no matching security release.')

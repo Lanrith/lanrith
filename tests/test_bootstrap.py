@@ -1,6 +1,7 @@
 """Bootstrap preserves independent human approval and last-push protection."""
 
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -55,3 +56,38 @@ class BootstrapTests(unittest.TestCase):
     def test_missing_updater_key_cannot_fall_back_to_the_owner_pushing(self):
         with self.assertRaises(ValueError):
             setup.bind_bootstrap_push('Lanrith/lanrith','security/verified-update-automation',None)
+
+
+class ReviewerInstallationTests(unittest.TestCase):
+    def validate(self, registered, installed):
+        def app(endpoint, key, identity, **kwargs):
+            self.assertEqual(identity, 5444158)
+            if endpoint == 'app':
+                return {'id': identity, 'permissions': registered}
+            return {'id': 99, 'account': {'login': 'Lanrith'},
+                    'repository_selection': 'selected', 'permissions': installed}
+        with patch('sys.argv', ['setup-maintenance.py', '--reviewer-id', '5444158', '--reviewer-key', '/local/test.pem']), \
+                patch.object(setup, 'key_file', return_value=b'local-test-key'), \
+                patch.object(setup, 'app_request', side_effect=app), patch.object(setup, 'gh') as mutate, \
+                patch('builtins.print'):
+            try:
+                setup.main()
+            finally:
+                mutate.assert_not_called()
+
+    def test_registered_write_permission_without_installation_consent_is_rejected(self):
+        expected = json.loads((ROOT/'.github/apps/security-reviewer.json').read_bytes())['default_permissions']
+        self.assertEqual(expected['contents'], 'write')
+        pending = dict(expected, contents='read')
+        with self.assertRaisesRegex(ValueError, 'Accept the reviewer permission update'):
+            self.validate(expected, pending)
+
+    def test_the_old_read_only_app_cannot_be_reconfigured_as_a_counted_approver(self):
+        expected = json.loads((ROOT/'.github/apps/security-reviewer.json').read_bytes())['default_permissions']
+        old = dict(expected, contents='read')
+        with self.assertRaisesRegex(ValueError, 'Reviewer App permissions differ'):
+            self.validate(old, old)
+
+    def test_exact_accepted_permissions_pass_without_changing_any_repository(self):
+        expected = json.loads((ROOT/'.github/apps/security-reviewer.json').read_bytes())['default_permissions']
+        self.validate(expected, expected)

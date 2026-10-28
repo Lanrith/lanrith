@@ -1,0 +1,56 @@
+name: Request human review
+on:
+  workflow_run:
+    workflows: [Review routing, Check, Package qualification, CI]
+    types: [in_progress, completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request needing review routing
+        required: true
+        type: number
+  workflow_call:
+    inputs:
+      pr:
+        required: false
+        default: 0
+        type: number
+permissions:
+  contents: read
+cache-mode: none
+concurrency:
+  group: human-review-${{ github.event.workflow_run.head_sha || inputs.pr || github.run_id }}
+  cancel-in-progress: false
+jobs:
+  notify:
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ inputs.pr || '' }}
+      LANRITH_SECURITY_APPROVALS_ENABLED: ${{ vars.LANRITH_SECURITY_APPROVALS_ENABLED }}
+    steps:
+      - name: Bind the trusted notification source
+        env:
+          WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: |
+          [[ "$WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'LANRITH_TOOLS_SHA=%s\n' "$WORKFLOW_COMMIT" >> "$GITHUB_ENV"
+      # Only trusted protected-main/reusable source runs with the notification token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - name: Request human review or assign blocked attention without approving source
+        run: |
+          args=()
+          if [[ -n "$PR_NUMBER" ]]; then [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; args+=(--pr "$PR_NUMBER"); fi
+          python3 tools/scripts/security-updates.py notify-human-event --output "$RUNNER_TEMP/review-request.json" "${args[@]}"

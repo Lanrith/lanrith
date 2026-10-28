@@ -21,10 +21,12 @@ class ValidationPending(MaintenanceError):
 
 def policy_document(raw, repo):
     policy = document(raw)
-    require(set(policy) == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
+    require(set(policy) - {'automatic_minor_security_updates'} == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
         'proposer_app_id', 'proposer_user_id', 'reviewer_app_id', 'required_workflows', 'maximum_validation_age_hours', 'go_branches',
         'node_branches', 'npm_packages', 'component_repositories', 'maximum_changes',
         'large_artifact_retention_days', 'paid_ai'}, 'Maintenance policy schema differs.')
+    require(type(policy.get('automatic_minor_security_updates', False)) is bool,
+            'Minor security update policy must be an explicit boolean.')
     require(policy['schema'] == 1 and policy['repository'] == repo and policy['mode'] in ('report-only', 'enforce') and
             policy['paid_ai'] is False and 0 < policy['maximum_validation_age_hours'] <= 24 and
             0 < policy['maximum_changes'] <= 30 and policy['required_workflows'], 'Invalid maintenance policy.')
@@ -32,6 +34,20 @@ def policy_document(raw, repo):
             policy['reviewer_app_id'] > 0 and policy['reviewer_app_id'] != policy['proposer_app_id'],
             'Enforcement needs the independent reviewer App identity.')
     return policy
+
+
+def manual_validation_policy(repo, number, policy, *, files=None):
+    """Use the same build-path requirements for admission and review readiness."""
+    result = dict(policy)
+    if repo == 'Lanrith/lanrith':
+        files = pages('repos/'+repo+'/pulls/'+str(number)+'/files?per_page=100') if files is None else files
+        build_paths = ('builders/', 'scripts/', 'security/', 'mkosi/', 'lanrith/', 'tests/',
+                       'automation/', 'schemas/', '.github/workflows/')
+        needs_image = any(f['filename'].startswith(build_paths) or f['filename'] in
+                          ('build-inputs.json', 'VERSION', '.go-version') for f in files)
+        if not needs_image:
+            result['required_workflows'] = {p: j for p, j in policy['required_workflows'].items() if p.endswith('/check.yml')}
+    return result
 
 
 def validation_runs(repo, pr, policy, *, get=api, clock=None, manual=False):
@@ -186,6 +202,41 @@ def inspect(repo, number, reviewer_source, output):
     return decision, policy
 
 
+def approval_authority(repo, number, head, base, approval):
+    """A successful review submission alone does not satisfy required reviews."""
+    repository(repo)
+    owner, name = repo.split('/')
+    response = api('graphql', method='POST', payload={
+        'query': '''query($owner:String!,$name:String!,$number:Int!){
+          repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){
+            number headRefOid baseRefOid reviews(last:100){nodes{
+              databaseId state authorCanPushToRepository
+              author{__typename login} commit{oid}
+            }}
+          }}
+        }''', 'variables': {'owner': owner, 'name': name, 'number': number}})
+    require(isinstance(response, dict) and not response.get('errors'),
+            'GitHub could not establish the approving review authority.')
+    observed = (response.get('data') or {}).get('repository') or {}
+    pull = observed.get('pullRequest') or {}
+    require(observed.get('nameWithOwner') == repo and pull.get('number') == number and
+            pull.get('headRefOid') == head and pull.get('baseRefOid') == base,
+            'Approval authority belongs to another repository, PR or source.')
+    matches = [r for r in (pull.get('reviews') or {}).get('nodes', [])
+               if r and r.get('databaseId') == approval['review_id']]
+    require(len(matches) == 1, 'The exact approving review authority is missing or ambiguous.')
+    actual = matches[0]
+    actor = actual.get('author') or {}
+    require(actual.get('state') == 'APPROVED' and
+            (actual.get('commit') or {}).get('oid') == approval['commit_id'] == head and
+            actor.get('__typename') == 'Bot' and
+            actor.get('login') == approval['reviewer_login'].removesuffix('[bot]'),
+            'Approval authority differs from the independent commit-bound App review.')
+    require(actual.get('authorCanPushToRepository') is True,
+            'The approving App lacks repository write access required by GitHub review protection.')
+    return True
+
+
 def approve(repo, number, decision_path, reviewer_source, enabled):
     """Re-evaluate at the credential boundary; never approve a downloaded decision blindly."""
     previous = evidence.read(decision_path)
@@ -219,6 +270,16 @@ def approve(repo, number, decision_path, reviewer_source, enabled):
         'commit_id': review['commit_id'], 'state': review['state'], 'url': review['html_url']}
     # The separately archived approval must exist before this check can permit merge.
     fresh['admission_check'] = {**claimed, 'conclusion': None, 'manual_review_required': False}
+    fresh['approval']['repository_write_access_verified'] = False
+    evidence.write(decision_path, fresh)
+    try:
+        fresh['approval']['repository_write_access_verified'] = approval_authority(
+            repo, number, fresh['head_sha'], fresh['base_sha'], fresh['approval'])
+    except MaintenanceError as error:
+        fresh['eligible'] = False
+        fresh['findings'].append(str(error))
+        evidence.write(decision_path, fresh)
+        raise
     evidence.write(decision_path, fresh)
     return fresh
 
@@ -255,6 +316,9 @@ def finalize(repo, number, decision_path, reviewer_source, enabled, audit_tag):
     observed = max(latest, key=lambda r: r['id'])
     require(observed['id'] == approval['review_id'] and observed['state'] == approval.get('state') == 'APPROVED' and
             observed['commit_id'] == approval.get('commit_id') == fresh['head_sha'] and approval.get('reviewer_login') == actor, 'Independent approval was superseded or dismissed.')
+    require(approval.get('repository_write_access_verified') is True,
+            'Archived approval does not establish the reviewer repository write access.')
+    approval_authority(repo, number, fresh['head_sha'], fresh['base_sha'], approval)
     current = api('repos/'+repo+'/pulls/'+str(number))
     require(current['head']['sha'] == fresh['head_sha'] and current['base']['sha'] == fresh['base_sha'],
             'PR changed before the final merge gate.')
@@ -277,7 +341,7 @@ def event_target(repo, event):
     return None
 
 
-def admission(repo, number, decision_path, reviewer_source, app_id):
+def admission(repo, number, decision_path, reviewer_source, app_id, *, notify=False):
     """Publish qualification status for manual PRs without granting them App approval."""
     record, policy = inspect(repo, number, reviewer_source, decision_path)
     pr = api('repos/'+repo+'/pulls/'+str(number))
@@ -288,15 +352,7 @@ def admission(repo, number, decision_path, reviewer_source, app_id):
     if not automatic:
         pending = []
         try:
-            manual_policy = dict(policy)
-            if repo == 'Lanrith/lanrith':
-                files = pages('repos/'+repo+'/pulls/'+str(number)+'/files?per_page=100')
-                build_paths = ('builders/', 'scripts/', 'security/', 'mkosi/', 'lanrith/', 'tests/',
-                               'automation/', 'schemas/', '.github/workflows/')
-                needs_image = any(f['filename'].startswith(build_paths) or f['filename'] in
-                                  ('build-inputs.json', 'VERSION', '.go-version') for f in files)
-                if not needs_image:
-                    manual_policy['required_workflows'] = {p: j for p, j in policy['required_workflows'].items() if p.endswith('/check.yml')}
+            manual_policy = manual_validation_policy(repo, number, policy)
             record['validation'] = validation_runs(repo, pr, manual_policy, manual=True)
         except ValidationPending as waiting:
             pending = waiting.workflows
@@ -307,6 +363,10 @@ def admission(repo, number, decision_path, reviewer_source, app_id):
         error = '; '.join(record['findings'])
         require(error, 'Ineligible decision has no failure or pending validation.')
     record['validation_pending'] = pending
+    if notify and (not automatic or policy['mode'] == 'report-only' or error):
+        from .notifications import request_review
+        record['human_review_request'] = request_review(repo, number, record['head_sha'],
+            error or 'The change is outside automatic approval and requires independent human review.')
     require(type(app_id) is int and app_id > 0 and app_id != policy['proposer_app_id'], 'Independent check App identity is invalid.')
     payload = {
         'name': 'Security update admission', 'head_sha': record['head_sha'], 'status': 'in_progress',

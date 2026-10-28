@@ -1,0 +1,110 @@
+{
+  "base_commit": "bead25c0c5532ae1e13427e0d55ae1603026c6a2",
+  "created_at": "2026-10-28T10:42:23.631144+00:00",
+  "deployment": "This changes workflow and review policy code and needs a fresh independent human GitHub approval of the final source head plus complete platform qualification. After verified immutable Root publication, component workflow pins/policy opt-ins must adopt that same trusted source before claiming this behavior across all three repositories. Existing branch protection and paid_ai=false remain in force.",
+  "included_security_fix": {
+    "actual_human_review_id": 5680647400,
+    "component": "Lanrith/discovery-bridge",
+    "publication_audit": "https://github.com/Lanrith/discovery-bridge/releases/tag/audit-publication-40666847569-1",
+    "release_run": 40666847569,
+    "result": "Verified immutable publication and exact reviewed source/native qualification.",
+    "selection": {
+      "files": {
+        "discovery-bridge_0.1.4_amd64.deb": "65acef818200cea359c58d5d3e5ed8429d7d9afda2a5cb78c56eeaa77831eeb3",
+        "release.json": "20bd7bb765c3850e261c4243fcdf23dafb55e8f12ff2ea7a25094a3fb5256be9",
+        "update-record.json": "56eccc341ba42b5e8f8f8c4c086650212f6c277e263daea231f985d5afa0bae8"
+      },
+      "repository": "Lanrith/discovery-bridge",
+      "source_commit": "6bb2d6781318017957be4dd55748f280d71114c2",
+      "tag": "v0.1.4",
+      "workflow_commit": "6bb2d6781318017957be4dd55748f280d71114c2"
+    },
+    "source_commit": "6bb2d6781318017957be4dd55748f280d71114c2",
+    "tag": "v0.1.4"
+  },
+  "kind": "verified-minor-security-updates-and-human-review-notifications",
+  "local_validation": {
+    "actual_resolver_replay": {
+      "file_sha256": {
+        "go.mod": "062fa6aacb776bf94e35c428dbe5f3a93a689980624866ac178bd08613af81f6",
+        "go.sum": "a552c819a9bcd9c8ab13b5f99ab4e221f9d642d65d95ef0ae5c1cb6e8542ddfc"
+      },
+      "kind": "local-authenticated-minor-security-resolver-replay",
+      "limits": "Local resolver produced the exact human-reviewed and qualified module bytes; this replay does not create or approve a GitHub PR.",
+      "reasons": [
+        {
+          "ecosystem": "Go",
+          "evidence_sha256": "bd5dc7cc6dc2825c4ad0678add58362fd74eb8ea836d81e49aedd91ee4a4e0fa",
+          "fixed": "v0.62.0",
+          "id": "GO-2026-6860",
+          "installed": "v0.60.0",
+          "package": "golang.org/x/net",
+          "source": "https://api.osv.dev/v1/vulns/GO-2026-6860",
+          "type": "security-fix"
+        },
+        {
+          "ecosystem": "Go",
+          "evidence_sha256": "5a89a571fe073b0b2ad77d52a3612c906e1396101c9f976c61161abee364d0c4",
+          "fixed": "v0.62.0",
+          "id": "GO-2026-6866",
+          "installed": "v0.60.0",
+          "package": "golang.org/x/net",
+          "source": "https://api.osv.dev/v1/vulns/GO-2026-6866",
+          "type": "security-fix"
+        }
+      ],
+      "result": "pass",
+      "schema": 1
+    },
+    "pinned_actionlint": "pass",
+    "python_tests": {
+      "passed": 523,
+      "skip_reason": "Existing tests require native host facilities.",
+      "skipped": 12,
+      "total": 535
+    },
+    "source_boundary": "pass",
+    "test_log_sha256": "17d4fdad3c871458c428c92432bbe129c3590cf1cd67e6e4dc33334214341403",
+    "whitespace": "pass",
+    "workflow_invariants": "pass"
+  },
+  "notifications": {
+    "ci_gate": "Only fresh, successful required workflows and mandatory build jobs for the exact current head and protected base permit review requests. Missing, pending, failed, cancelled, skipped, stale or mismatched CI defers requests; reruns/new heads withdraw pending requests until qualified.",
+    "drafts": "Deferred until ready.",
+    "earlier_requests": "The first implementation requested review before full CI. The correction withdrew six unqualified native requests, including Root PR23, without changing actual reviews; Discovery PR11 retained its qualified request.",
+    "events": [
+      "PR opened, reopened, synchronized or made ready after a draft: check build readiness, without requesting early.",
+      "Required build starts and completions: withdraw premature requests or notify once every required build passes.",
+      "Independent admission or automatic approval needs human attention: use the same enforced CI gate."
+    ],
+    "idempotency": "Pending requests and current-head completed human reviews are respected; a changed head can request a fresh review.",
+    "no_pr_or_self_review": "Blocked proposal/freshness issues are assigned to the owner; an owner-authored PR is assigned because GitHub prohibits self-review.",
+    "permissions": "Unprivileged PR signal has no checkout or write permission. Protected-main notifier uses Contents read, Actions read, Pull requests write and Issues write; no App keys, release write or signing authority.",
+    "reviewer": "mikenorgate"
+  },
+  "policy": {
+    "automatic_minor_security_updates": true,
+    "human_controls": [
+      "New module or package paths, dependency role changes, major or prerelease migrations.",
+      "Compiler support-branch changes, native source, installation hooks or scripts.",
+      "Workflow, approval and security-control source changes."
+    ],
+    "legacy_behavior": "Policies without the new opt-in retain patch-only behavior until reviewed rollout.",
+    "scope": [
+      "Existing Go and npm dependencies within the same stable major version, rooted in authenticated security advisories.",
+      "Only Go versions required by the minimum advisory fixes and their independently resolved, checksum-verified constraints.",
+      "Official Node security releases within an already supported LTS major."
+    ]
+  },
+  "preceding_candidate": {
+    "actual_app_review_id": 5679779511,
+    "candidate_id": "172271127a6b1c6c32769660d1dbada178eb8d667dbef5097232088c9629b67d",
+    "pr": 14,
+    "publication": "The candidate merged but its Discovery v0.1.3 selection was never published in a platform. This follow-up supersedes that selection with the verified fixed v0.1.4 and retains RPA v0.1.6.",
+    "signed_decision_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-decision-40656795875-1",
+    "source_commit": "bead25c0c5532ae1e13427e0d55ae1603026c6a2"
+  },
+  "reason": "The owner requested that a minor dependency version change should not by itself require human approval once its verified security-fix inputs and complete CI pass, and that every change requiring human action sends a native GitHub review request or assigned attention issue. The owner subsequently required human review requests only after all mandatory builds pass.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1
+}

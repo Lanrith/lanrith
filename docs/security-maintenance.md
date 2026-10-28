@@ -2,15 +2,42 @@
 
 The updater proposes authenticated security fixes. A separate App approves only
 changes that satisfy the policy on protected `main`, fresh advisory checks and
-the exact required validation runs. Native source upgrades, workflow changes and changes to approval or security rules
-require human review. An existing npm dependency with an authenticated security fix
-can also get a PR when its name is outside the automatic patch set or its fix
-crosses a minor version within the same major. The reviewer derives the human
-review requirement from the actual manifest and lockfile changes; it does not
-trust the candidate's flag. These proposals cannot receive App approval or an
-automatic merge request. New dependencies, major migrations, installation hooks,
-script changes and dependency graph changes still stop resolution and raise an
-attention issue. Exact transitive fixes must satisfy their existing parents.
+the exact required validation runs. With `automatic_minor_security_updates: true`,
+an authenticated security fix may advance an existing Go or npm dependency within
+the same major version. Go updates also include only the minimum versions required
+by the fixed module's checksum-verified constraints. The reviewer independently
+resolves that selection from the original manifest, checks the existing module
+paths and roles, and verifies changed checksums against the Go checksum database.
+npm changes need exact advisory reasons, registry integrity and unchanged package
+coverage. Supported Node LTS majors can receive official minor security releases.
+Every automatic update still needs fresh advisory evidence, the complete required
+CI, independent App approval and immutable decision evidence.
+
+Native source upgrades, compiler support-branch migrations, workflow changes and
+changes to approval or security rules require human review. Adding dependencies,
+changing module roles, major migrations, prereleases, installation hooks or scripts
+remain outside automatic approval. If a safe proposal cannot be formed, its
+attention issue is assigned to `mikenorgate`. Policies without the minor-update
+opt-in retain the previous patch-only behavior until their reviewed rollout.
+
+Ready PRs that need human input request review from `mikenorgate` through GitHub's
+review-request API only after all required CI workflows and build jobs pass for
+the current head and protected base. Missing, running, failed, cancelled, skipped,
+stale or mismatched builds defer the request. PR events and build starts/completions
+recheck readiness; the last successful build can release the request without
+another push. New heads and reruns withdraw outstanding requests until CI passes
+again. Current-head reviews and pending requests are not repeated. Drafts wait
+until ready. If the owner authored the
+PR and cannot review it, assignment records the need for another independent
+reviewer. Blocked proposal and freshness issues also receive an owner assignment.
+
+The PR event job only signals its GitHub-controlled head with no checkout or write
+permissions. A separate notification job executes the trusted protected-main
+workflow source. It reads build status and can request reviews and assign issues, but has no App keys,
+release-writing or signing permissions. Notification routing never approves a
+change; the independent reviewer still validates the actual candidate. GitHub's
+review-request timeline and the archived admission decision retain the request
+and the actual review identity.
 
 Signed Unbound security-source updates can be proposed
 automatically, but carry an explicit human-review requirement. The public Debian
@@ -36,10 +63,25 @@ cannot grant an automated approval or permit a merge.
 Create a private App at
 [the organization's App settings](https://github.com/organizations/Lanrith/settings/apps/new)
 using `.github/apps/security-reviewer.json` as the permission specification.
-Disable webhooks. Grant only Actions read, Checks write, Contents read, Metadata
+Disable webhooks. Grant only Actions read, Checks write, Contents write, Metadata
 read and Pull requests write. Install it on `lanrith`, `discovery-bridge` and
 `router-policy-agent` using **Only select repositories**. Generate and download
 its private key locally; never paste a key into a PR, issue or chat.
+
+GitHub counts required approvals only from reviewers with repository write
+access. The App therefore needs Contents write on its registration and accepted
+installation permissions. A Contents-read App can submit an `APPROVED` review
+that does not satisfy protection, including the last-push approval rule. When
+updating an existing App, save the permission change and accept it on the
+installation. Keep the three selected repositories and existing branch rules.
+
+Review jobs still request only Contents read for their short-lived installation
+tokens. They execute the reviewed workflow source from protected `main` and do
+not push source changes. GitHub's `authorCanPushToRepository` field verifies the
+exact approving review's write authority before its decision is archived, and
+again before admission succeeds. Missing authority, changed review identity or
+a GraphQL error keeps the merge gate closed. The signed decision records this
+authority check alongside the actual review ID and commit.
 
 Expand the existing `lanrith-dependency-updater` installation to the same three
 repositories. Its permissions remain Contents write and Pull requests write.

@@ -1,12 +1,12 @@
 {
   "name": "Lanrith Security Reviewer",
-  "description": "Independent, policy-bound security update review. No source write or protection bypass.",
+  "description": "Independent security review. Contents write enables counted approvals; review tokens keep Contents read. No protection bypass.",
   "url": "https://github.com/Lanrith/lanrith",
   "public": false,
   "default_permissions": {
     "actions": "read",
     "checks": "write",
-    "contents": "read",
+    "contents": "write",
     "metadata": "read",
     "pull_requests": "write"
   },

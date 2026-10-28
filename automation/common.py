@@ -84,7 +84,8 @@ def run(*arguments, **kwargs):
 
 
 def api(endpoint, *, method='GET', payload=None, paginate=False, missing_ok=False):
-    require(endpoint.startswith(('repos/', 'orgs/', 'users/', 'app/')) and
+    require((endpoint.startswith(('repos/', 'orgs/', 'users/', 'app/')) or
+             endpoint == 'graphql' and method == 'POST') and
             not any(c in endpoint for c in ('\n', '\r', '#')), 'Invalid GitHub API endpoint.')
     command = ['gh', 'api', '--method', method, '-H', 'Accept: application/vnd.github+json', endpoint]
     if paginate:

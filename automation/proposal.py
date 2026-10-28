@@ -222,7 +222,7 @@ def propose(root, tools, repo, producer):
     reasons = []
     if (root/'go.mod').exists():
         from .go_dependencies import update
-        reasons.extend(update(root))
+        reasons.extend(update(root, allow_minor=policy.get('automatic_minor_security_updates', False)))
     for name in ('.go-version',):
         current = (root/name).read_text().strip()
         selected, found = inputs.go_security_update(current, policy['go_branches'])
@@ -252,7 +252,8 @@ def propose(root, tools, repo, producer):
             path.write_bytes(canonical(pin))
         alloy = root/'builders/alloy/source.json'
         pin = document(alloy.read_bytes())
-        selected, found = inputs.node_security_update(pin['node_version'], policy['node_branches'])
+        selected, found = inputs.node_security_update(pin['node_version'], policy['node_branches'],
+            allow_minor=policy.get('automatic_minor_security_updates', False))
         reasons.extend(found)
         if selected != pin['node_version']:
             pin['node_version'] = selected
