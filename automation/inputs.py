@@ -240,8 +240,12 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
             require(changed_fields(old, new) <= {'go', 'integration_image'}, 'Toolchain schema changed.')
             for role in changed_fields(old['go'], new['go']):
                 validate_go(old['go'][role], new['go'][role], reasons, policy)
-            if old.get('integration_image') != new.get('integration_image'):
-                require(new['integration_image'] == image('golang', new['go']['previous']+'-bookworm'),
+            previous_changed = old['go'].get('previous') != new['go'].get('previous')
+            image_changed = old.get('integration_image') != new.get('integration_image')
+            require(not image_changed or previous_changed,
+                    'Integration image changed without a previous compiler security update.')
+            if 'integration_image' in old and previous_changed:
+                require(image_changed and new['integration_image'] == image('golang', new['go']['previous']+'-bookworm'),
                         'Integration image does not match the selected compiler.')
         elif path in ('builders/alloy/source.json', 'builders/node-exporter/source.json'):
             old, new = document(old_raw), document(new_raw)

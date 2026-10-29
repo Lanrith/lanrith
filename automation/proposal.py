@@ -232,11 +232,12 @@ def propose(root, tools, repo, producer):
     toolchains = root/'.github/toolchains.json'
     if toolchains.exists():
         value = document(toolchains.read_bytes())
+        previous = value['go'].get('previous')
         for role, current in value['go'].items():
             selected, found = inputs.go_security_update(current, policy['go_branches'])
             reasons.extend(found)
             value['go'][role] = selected
-        if 'integration_image' in value:
+        if 'integration_image' in value and value['go']['previous'] != previous:
             value['integration_image'] = inputs.image('golang', value['go']['previous']+'-bookworm')
         toolchains.write_bytes(canonical(value))
     if repo == 'Lanrith/lanrith':
