@@ -1070,7 +1070,9 @@ done''')
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'Accepted update did not persist.')
         check_state(guest, state, 'Interrupted staging changed populated state.')
-        guest.ssh('sudo lanrith-runtime promote '+third_path, timeout=900)
+        # Resume the authenticated, durable inbox after discarding guest RAM.
+        # The untrusted upload is not required to survive this power cut.
+        guest.ssh('sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/11', timeout=900)
         guest.close()
         guest.start()
         guest.ready(healthy=False)
