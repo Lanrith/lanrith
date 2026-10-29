@@ -60,7 +60,7 @@ def load(path):
 
 
 def effective_digest(value, integrations, serial_provisioning_sha256=None, *, target_facts=None,
-                     retained_allocations=None):
+                     retained_allocations=None, boot_inputs=None):
     """Bind normalized intent, admitted integrations and selected serial material."""
     value = normalize(value)
     require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
@@ -77,6 +77,14 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None, *, ta
         inputs['hardware_ownership'] = hardware_policy.ownership_manifest(value, target_facts)
     if retained_allocations is not None:
         inputs['translation_allocations'] = translation.allocate(value, retained_allocations)
+    if boot_inputs:
+        require(isinstance(boot_inputs, dict) and set(boot_inputs) <= {
+            'pcr_public_key_sha256', 'recovery_credential_sha256', 'fallback_binding'},
+            'Invalid effective boot inputs.')
+        require(all(isinstance(item, str) and re.fullmatch(r'[0-9a-f]{64}', item)
+                    for name, item in boot_inputs.items() if name != 'fallback_binding'),
+                'Invalid effective boot digest.')
+        inputs['boot_inputs'] = boot_inputs
     return hashlib.sha256(canonical(inputs)).hexdigest()
 
 
@@ -288,10 +296,9 @@ def normalize(value):
             type(serial.get('timeout_seconds', 300)) is int and 30 <= serial.get('timeout_seconds', 300) <= 3600,
             'Invalid serial administration policy.')
     root_access = administration.setdefault('root_access', 'enabled')
-    require(root_access in ('enabled', 'disabled'),
-            'Root access must be enabled or disabled.')
+    require(root_access in ('enabled', 'disabled'), 'Root access must be enabled or disabled.')
     require(root_access == 'enabled' or not serial['enabled'],
-            'Serial recovery requires root access to be enabled.')
+            'Serial login requires root access to be enabled.')
     require(isinstance(administration['networks'], list) and administration['networks'] and
             all(key in networks for key in administration['networks']), 'Declare management networks explicitly.')
     require(isinstance(administration['authorized_keys'], list) and administration['authorized_keys'],

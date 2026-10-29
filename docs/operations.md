@@ -13,8 +13,10 @@ as its seed. systemd binds automatic `/var` discovery to this identity; never
 derive it from a release, rotating key, hostname or changing network settings.
 See [systemd's partition discovery rules](https://github.com/systemd/systemd/blob/main/man/systemd-gpt-auto-generator.xml).
 
-TPM state enrollment explicitly binds to PCR 7, and boot health checks every
-TPM token for that policy. Keep the offline recovery key before changing
+Fresh TPM state enrollment binds to direct PCRs 7 and 15 and signed PCR 11.
+The verified initrd unlocks state and closes the PCR 15 window before switching
+root. Boot health checks the enrollment and current-boot unlock observation.
+Keep the offline recovery key before changing
 firmware or Secure Boot policy. Automatic pcrlock policy generation stays
 disabled unless a reviewed signed-image integration supplies its profile and
 `/usr/share/lanrith/enable-pcrlock-policy` marker. See the pinned
@@ -25,9 +27,10 @@ sequence, effective configuration/integration digest, architecture and the
 exact artifact names, lengths and SHA-256 digests. Unknown fields, extra files,
 linked files, wrong trust, replay and incomplete sets fail admission.
 
-On the router, an administrator uploads to the unprivileged staging area and
-invokes the root-owned promotion helper through the approved authorization
-path. It copies into exclusive root-owned files before signature verification.
+On the router, an operator uploads to the unprivileged staging area and triggers
+the fixed image-operation interface. Its privileged service copies into exclusive
+root-owned files before signature verification. The operator can do this with
+`administration.root_access: disabled`, without root login or sudo.
 The admitted files and publication directories are flushed before staging, so
 the authenticated inbox survives a power cycle after admission.
 The updater identifies the actual mounted dm-verity dependency graph and both
@@ -114,8 +117,10 @@ in the destructive confirmation. It reads the copied image back before
 power-off. Never substitute an ordinary raw writer for those checks.
 
 Slot and encrypted state provisioning must finish before the initrd switches
-to the installed root. A provisioning failure leaves the system in initrd
-emergency mode. Disk checks bind GPT identities to kernel partition numbers,
+to the installed root. A candidate failure attempts authenticated fallback;
+if that cannot pass, the initrd holds for serial or independent media recovery.
+See [boot recovery](recovery.md) for build inputs, slot selection and offline
+backup and restore. Disk checks bind GPT identities to kernel partition numbers,
 capacity and in-use state; cached udev partition properties do not select the
 state volume or update slots.
 

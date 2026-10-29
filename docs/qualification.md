@@ -76,8 +76,10 @@ Boot-authority qualification inventories firmware `db`/`dbx`, shim and MOK
 trust separately for OVMF and each supported physical profile. It records every
 boot entry and tests unsigned and broadly vendor-signed alternate loaders,
 fallback paths, `BootOrder`, loader default and boot-count manipulation, plus a
-complete older signed UKI/root/verity set. The test confirms that a rejected or
-older boot cannot unlock current protected state or silently become accepted.
+complete older signed UKI/root/verity set. Record which images remain authorized
+to unlock state, including the intended compatible fallback, and reject silent
+acceptance of an unexpected image. Test revocation separately: the shared PCR
+signing authority does not provide TPM NV anti-rollback for older signed images.
 It also observes the ESP read-only during ordinary operation, writable only
 inside staging/blessing, and read-only again after success and every injected
 failure. Source checks for the mount policy are not hardware evidence.
@@ -130,3 +132,8 @@ a separate evaluation key, then verify with an independently obtained
 certificate. Verification recomputes every member and rejects missing, extra,
 altered, linked, noncanonical or wrong-authority bundles. The signing key and
 trusted certificate are not evidence supplied by the tested router.
+
+Fresh-install recovery has additional VM runners and evidence described in
+[recovery qualification](recovery-qualification.md). Run the affected recovery
+cases against the release candidate. Historical tests that deliberately override
+experimental gates do not qualify the supported compiled-policy path.

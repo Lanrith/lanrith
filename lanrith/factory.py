@@ -1,11 +1,14 @@
 """Explicit factory installation and checks for the verified A/B state layout."""
 
 import argparse
+import base64
+import hashlib
 import getpass
 import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -96,21 +99,49 @@ def target(installed, boot_disk):
     return device
 
 
-def enrollment_tokens(luks, *, tpm_required):
+def enrollment_tokens(luks, *, tpm_required, policy=None):
     entries = luks.get('tokens', {})
     require(isinstance(entries, dict) and all(isinstance(item, dict) for item in entries.values()),
             'State encryption token metadata is malformed.')
     tokens = [item.get('type') for item in entries.values()]
     if tpm_required:
+        if policy is not None:
+            from .early_unlock import validate
+            validate(policy)
         require('systemd-tpm2' in tokens, 'State lacks its required TPM enrollment.')
-        require(all(item.get('tpm2-pcrs') == [7] for item in entries.values()
+        require(all(item.get('tpm2-pcrs') == (policy['direct_pcrs'] if policy else [7]) for item in entries.values()
                     if item.get('type') == 'systemd-tpm2'),
                 'State TPM enrollment differs from the selected Secure Boot policy.')
+        if policy is not None:
+            require(isinstance(luks.get('keyslots'), dict) and 1 <= len(luks['keyslots']) <= 32,
+                    'State keyslot inventory is malformed.')
+            covered = set()
+            for item in entries.values():
+                require(item.get('type') in ('systemd-tpm2', 'systemd-recovery') and
+                        isinstance(item.get('keyslots'), list) and len(item['keyslots']) == 1 and
+                        isinstance(item['keyslots'][0], str) and item['keyslots'][0].isdecimal() and
+                        item['keyslots'][0] in luks.get('keyslots', {}), 'Unexpected state unlock method.')
+                slot = item['keyslots'][0]
+                require(slot not in covered, 'State unlock tokens share a keyslot.')
+                covered.add(slot)
+                if item['type'] == 'systemd-recovery':
+                    continue
+                try:
+                    public = base64.b64decode(item.get('tpm2_pubkey', ''), validate=True)
+                except (ValueError, TypeError):
+                    raise ReleaseError('Invalid enrolled TPM policy key.') from None
+                require(item.get('tpm2-pcr-bank') == policy['bank'] and
+                        item.get('tpm2_pubkey_pcrs') == policy['signed_pcrs'] and
+                        item.get('tpm2_pcrlock', False) is False and
+                        item.get('tpm2-pin', False) is False and
+                        hashlib.sha256(public).hexdigest() == policy['public_key_sha256'],
+                        'State TPM token lacks the complete authorized measured policy.')
+            require(covered == set(luks.get('keyslots', {})), 'State contains an unapproved unlock keyslot.')
     return tokens
 
 
-def initialize(installed):
-    disk, active = verified_root()
+def state_metadata(installed, *, root='/'):
+    disk, active = verified_root(root)
     rows = geometry(disk)
     for role, guid in GUIDS.items():
         candidates = [row for row in rows if row['type'].lower() == guid]
@@ -123,16 +154,35 @@ def initialize(installed):
     # Use the verified disk's partition number; global label symlinks are not authority.
     device = var[0]['device']
     command(['cryptsetup', 'isLuks', device])
-    source = command(['findmnt', '--noheadings', '--output', 'SOURCE', '/var']).strip()
+    source = command(['findmnt', '--noheadings', '--output', 'SOURCE', str(Path(root)/'var')]).strip()
     require(source.startswith(('/dev/mapper/', '/dev/dm-')), 'Persistent state is not mounted through encryption.')
     status = command(['cryptsetup', 'status', source])
     backing = re.findall(r'^\s*device:\s+(\S+)\s*$', status, re.MULTILINE)
     require(len(backing) == 1 and Path(backing[0]).resolve() == Path(device).resolve(),
             'Mounted state is not backed by the selected encrypted partition.')
     luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', device]))
-    tokens = enrollment_tokens(luks, tpm_required=installed['boot'].get('tpm', 'required') == 'required')
-    directory = Path(installed['state_directory'])
-    directory.mkdir(mode=0o700, exist_ok=True)
+    return disk, device, luks
+
+
+def state_tokens(installed, luks):
+    if 'tpm_transition' in installed:
+        from .tpm_migration import classify
+        classify(installed, luks)
+        return [item['type'] for item in luks['tokens'].values()]
+    return enrollment_tokens(luks, tpm_required=installed['boot'].get('tpm', 'required') == 'required',
+                             policy=installed.get('tpm_policy'))
+
+
+def initialize(installed, *, root='/'):
+    disk, device, luks = state_metadata(installed, root=root)
+    tokens = state_tokens(installed, luks)
+    if 'tpm_policy' in installed and root == '/':
+        from .early_unlock import observation
+        observation(installed)
+    if installed.get('tpm_transition', {}).get('phase') == 'enforce':
+        enrollment_tokens(luks, tpm_required=True, policy=installed['tpm_policy'])
+    directory = Path(root)/installed['state_directory'].lstrip('/')
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     require(not directory.is_symlink() and directory.stat().st_uid == 0 and
             not directory.stat().st_mode & 0o077, 'Unsafe state-administration directory.')
     marker = directory/'slots-initialized'
@@ -140,14 +190,21 @@ def initialize(installed):
         with marker.open('xb') as stream:
             stream.write(canonical({'schema': 1, 'disk': disk}))
         marker.chmod(0o600)
+    if root == '/' and 'image_contract' in installed:
+        from .image_contract import remember
+        remember(installed)
     return device, tokens
 
 
-def recovery(installed):
+def recovery(installed, *, root='/'):
+    if 'tpm_policy' in installed:
+        from .early_unlock import in_initrd
+        in_initrd()
+        require(root == '/sysroot', 'Measured recovery enrollment requires the verified initrd root.')
     require(os.geteuid() == 0 and os.ttyname(sys.stdin.fileno()) ==
             '/dev/'+installed['boot']['recovery_console'], 'Recovery requires the selected physical console.')
-    device, tokens = initialize(installed)
-    marker = Path(installed['state_directory'])/'recovery-key-enrolled'
+    device, tokens = initialize(installed, root=root)
+    marker = Path(root)/installed['state_directory'].lstrip('/')/'recovery-key-enrolled'
     require(not marker.exists(), 'Recovery enrollment is already complete.')
     if 'systemd-recovery' not in tokens:
         print('Record the following recovery key outside the router. It is shown only on this console.')
@@ -161,7 +218,13 @@ def recovery(installed):
     require(input('Type RECOVERY-KEY-STORED after recording the key offline: ').strip() == 'RECOVERY-KEY-STORED',
             'Recovery-key storage was not acknowledged.')
     descriptor = os.open(marker, os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, 0o600)
+    os.fsync(descriptor)
     os.close(descriptor)
+    descriptor = os.open(marker.parent, os.O_RDONLY|os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def repartition(installed, disk, *, installed_root):
@@ -184,7 +247,18 @@ def repartition(installed, disk, *, installed_root):
             del first
             command([*arguments, '--key-file='+str(key), disk], timeout=600)
     else:
-        command([*arguments, '--tpm2-pcrs=7', '--tpm2-pcrlock=', disk], timeout=600)
+        policy = installed.get('tpm_policy')
+        if policy is None:
+            command([*arguments, '--tpm2-pcrs=7', '--tpm2-pcrlock=', disk], timeout=600)
+        else:
+            public = Path('/sysroot/usr/lib/systemd/tpm2-pcr-public-key.pem')
+            require(hashlib.sha256(read(public, 16384)).hexdigest() == policy['public_key_sha256'],
+                    'Factory measured-policy authority differs.')
+            from .early_unlock import in_initrd, validate
+            validate(policy)
+            in_initrd()
+            command([*arguments, '--tpm2-pcrs=7:sha256+15:sha256='+('0'*64), '--tpm2-pcrlock=',
+                     '--tpm2-public-key='+str(public), '--tpm2-public-key-pcrs=11', disk], timeout=600)
     command(['udevadm', 'settle', '--timeout=30'])
 
 
@@ -214,6 +288,7 @@ def prepare_state(installed, disk, active):
             state[0]['size'] >= installed['storage']['state_mib']*1024*1024,
             'Selected persistent state partition is absent or undersized.')
     command(['cryptsetup', 'isLuks', state[0]['device']])
+    return state[0]['device']
 
 
 def provision():
@@ -235,7 +310,10 @@ def provision():
             require(str(Path(selected).resolve()) == disk, 'Installed boot disk differs from the selected hardware profile.')
         require(selected or command(['lsblk', '--nodeps', '--noheadings', '--output', 'TRAN', disk]).strip() != 'usb',
                 'Removable boot media lacks its authenticated factory payload.')
-        prepare_state(installed, disk, active)
+        device = prepare_state(installed, disk, active)
+        if 'tpm_policy' in installed:
+            from .early_unlock import unlock
+            unlock(installed, device)
         return
     require(len(media) == 1 and media[0].get('pkname') == disk,
             'Factory payload must be on the single verified boot disk.')
@@ -248,6 +326,13 @@ def provision():
                               image_id=installed['image_id'], expected_configuration=installed['configuration_sha256'])
             require(manifest['deployment_sequence'] == installed['deployment_sequence'] and
                     manifest['platform_version'] == installed['platform_version'], 'Media does not match the booted root.')
+            if 'image_contract' in installed:
+                require(manifest.get('image_contract') == installed['image_contract'],
+                        'Factory image operation contract differs from its verified root.')
+            if 'tpm_policy' in installed:
+                from .measured_boot import verify as verify_measured_boot
+                uki = next(item for item in manifest['artifacts'] if item['role'] == 'uki')
+                verify_measured_boot(payload/uki['name'], installed['tpm_policy'])
             rows = geometry(disk)
             for role in ('root', 'verity'):
                 artifact = next(item for item in manifest['artifacts'] if item['role'] == role)
@@ -276,13 +361,83 @@ def provision():
         time.sleep(60)
 
 
+FALLBACK_DEADLINE_SECONDS = 900
+
+
+def bounded_fallback(identity):
+    """Limit emergency verification; a timed-out attempt must hold for recovery.
+
+    This bounds interruptible userspace work. An uninterruptible kernel I/O
+    stall still needs an independently qualified hardware watchdog.
+    """
+    from .early_failure import failed_boot
+
+    require(signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0),
+            'Fallback cannot replace an existing process timer.')
+    previous = signal.getsignal(signal.SIGALRM)
+    def expired(_signum, _frame):
+        raise TimeoutError('Fallback verification deadline exceeded.')
+    signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, FALLBACK_DEADLINE_SECONDS)
+        failed_boot(identity)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def fallback_diagnostic(error):
+    """Return a bounded failure location without exception text or runtime values."""
+    categories = ((ReleaseError, 'verification'), (OSError, 'os'), (ValueError, 'value'),
+                  (KeyError, 'key'), (subprocess.SubprocessError, 'subprocess'))
+    category = next((name for kind, name in categories if isinstance(error, kind)), 'other')
+    trusted = {'early_failure.py', 'repair.py', 'update.py', 'release.py', 'factory.py',
+               'tpm_migration.py', 'measured_boot.py'}
+    location = 'unknown'
+    trace = error.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        module = Path(code.co_filename).name
+        if (module in trusted and not (module == 'release.py' and code.co_name == 'require') and
+                re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}', code.co_name)):
+            location = f'{module}:{code.co_name}:{trace.tb_lineno}'
+        trace = trace.tb_next
+    return f'Automatic fallback diagnostic: {category} {location}'
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('provision',))
-    parser.parse_args(arguments)
+    parser.add_argument('command', choices=('provision', 'failed', 'hold', 'emergency'))
+    args = parser.parse_args(arguments)
     try:
-        provision()
+        if args.command == 'provision':
+            provision()
+        elif args.command == 'failed':
+            from .early_failure import failed_boot, failure_identity
+            installed = failure_identity(json.loads(read(Path('/usr/share/lanrith/initrd-failure.json'), 65536)))
+            failed_boot(installed)
+        else:
+            require(os.geteuid() == 0 and Path('/etc/initrd-release').is_file(),
+                    'Initrd recovery hold is unavailable in normal userspace.')
+            if args.command == 'emergency':
+                try:
+                    from .early_failure import failure_identity
+                    identity = failure_identity(json.loads(read(Path('/usr/share/lanrith/initrd-failure.json'), 65536)))
+                    bounded_fallback(identity)
+                except (ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+                    print(fallback_diagnostic(error), flush=True)
+                    print('Automatic fallback unavailable; holding for recovery.', flush=True)
+            print('Entering emergency mode. Boot verified signed recovery media.', flush=True)
+            import time
+            while True:
+                time.sleep(60)
     except (ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
-        print(str(error) if isinstance(error, ReleaseError) else 'Factory installation failed closed.', file=sys.stderr)
+        if isinstance(error, ReleaseError):
+            print(str(error), file=sys.stderr)
+        else:
+            detail = 'operation='+args.command+',exception='+type(error).__name__
+            if isinstance(error, OSError):
+                detail += ',errno='+str(error.errno)
+            print('Factory installation failed closed ('+detail+').', file=sys.stderr)
         return 1
     return 0

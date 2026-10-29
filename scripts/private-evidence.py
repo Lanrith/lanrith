@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import archive as handoff, config, evidence, release, trust
+from lanrith import archive as handoff, build_inputs, config, evidence, release, trust
 from consumer import integration_pins, signing_profile
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -24,7 +24,23 @@ value = config.load(owner/'config.yaml')
 selection = trust.lock(owner/'platform.lock')
 deployment = json.loads(release.read(artifacts/'deployment.json', 65536), object_pairs_hook=release.unique)
 integrations = {name: pin[1] for name, pin in integration_pins(owner, value).items()}
-effective_digest = config.effective_digest(value, integrations, deployment['serial_provisioning_sha256'])
+boot = deployment.get('boot_inputs', {})
+release.require(isinstance(boot, dict) and set(boot) <= {
+    'image_id', 'pcr_certificate_sha256', 'pcr_public_key_sha256', 'recovery_credential_sha256'} and
+    (not boot or boot.get('image_id') == value.get('release', {}).get('image_id', 'lanrith')),
+    'Invalid hosted boot inputs.')
+if value['hardware']['boot'].get('tpm', 'required') == 'required':
+    certificate = owner/'trust'/('pcr.crt' if 'pcr_certificate_sha256' in boot else 'boot.crt')
+    release.require(boot.get('pcr_public_key_sha256') == hashlib.sha256(release.public_key(certificate)).hexdigest(),
+                    'PCR authority differs from reviewed owner trust.')
+    if 'pcr_certificate_sha256' in boot:
+        release.require(boot['pcr_certificate_sha256'] == release.file_record(certificate)['sha256'],
+                        'PCR certificate differs from reviewed owner trust.')
+else:
+    release.require(not {'pcr_certificate_sha256', 'pcr_public_key_sha256'} & boot.keys(),
+                    'Manual-unlock evidence cannot declare a PCR signer.')
+effective_digest = config.effective_digest(value, integrations, deployment['serial_provisioning_sha256'],
+                                         boot_inputs=build_inputs.digest_fields(boot))
 expected = {'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'effective_configuration_sha256': effective_digest,
             'integration_digests': integrations,
@@ -66,6 +82,7 @@ statement = evidence.predicate(artifacts, repository=expected['repository'], sou
     inputs={'platform': selection, 'configuration_sha256': expected['configuration_sha256'],
             'effective_configuration_sha256': effective_digest, 'integration_digests': integrations,
             'serial_provisioning_sha256': deployment['serial_provisioning_sha256'],
+            'boot_inputs': boot,
             'signing_profile': expected['signing_profile'],
             'protected_signing': expected['signing_profile'] == 'protected'})
 with tempfile.TemporaryDirectory(prefix='lanrith-evidence.', dir='/dev/shm') as temporary:

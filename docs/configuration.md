@@ -168,10 +168,16 @@ Set it to `disabled` to build an image with no human UID-0 login or elevation
 path. The administrator can still use key-authenticated SSH for unprivileged
 inspection, but cannot use `sudo`, `sudoedit`, `su`, agent-forwarded PAM
 authentication, set-user-ID programs or file-capability executables. Serial
-recovery is incompatible with this mode. Re-enabling root access requires a new
+login is incompatible with this mode. Re-enabling root access requires a new
 signed image or verified signed recovery media; no deployed setting can change
 the mode. The owner YAML is consumed during compilation and is never installed
 or read by the deployed image.
+
+`administration.root_access: disabled` removes root login, sudo and su. The
+unprivileged operator can still upload an image and trigger the fixed update
+service. A separately provisioned fixed-command recovery menu remains available
+through `--recovery-passphrase-hash`; it grants no shell access. See
+[boot recovery](recovery.md) for PCR signing and recovery build inputs.
 
 Hardware watchdog defaults are `mode: auto`, `device: /dev/watchdog0` and
 `timeout_seconds: 60`. Root and initrd use the same systemd watchdog policy.

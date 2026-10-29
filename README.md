@@ -76,6 +76,8 @@ configuration digest. Staging protects the mounted root, writes the inactive
 verity triplet, publishes its counted UKI last and keeps the accepted default.
 A fresh healthy boot and recovery enrollment must pass before acceptance.
 [Recovery and operations](docs/operations.md) describes these boundaries.
+[Boot recovery](docs/recovery.md) covers fresh-install PCR policy, authenticated
+fallback, serial recovery and independent recovery media.
 
 ## Development
 

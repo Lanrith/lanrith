@@ -58,7 +58,7 @@ def consumer():
     return module
 
 
-def inputs(owner, platform, sequence, serial_hash=None):
+def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
     """Bind the request to exact owner bytes, not a mutable working directory."""
     release.require(owner.is_dir() and owner.resolve() == owner.absolute() and not owner.is_symlink(),
                     'Owner directory must be canonical.')
@@ -83,7 +83,7 @@ def inputs(owner, platform, sequence, serial_hash=None):
         records[name] = {**release.file_record(path), 'mode': stat.S_IMODE(path.stat().st_mode)}
     integration_digests = {name: pin[1] for name, pin in pins.items()}
     serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
-    return {'schema': 1, 'purpose': 'local-owner-build', 'deployment_sequence': sequence,
+    result = {'schema': 1, 'purpose': 'local-owner-build', 'deployment_sequence': sequence,
             'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'effective_configuration_sha256': config.effective_digest(value, integration_digests, serial_digest),
             'integration_digests': integration_digests,
@@ -94,9 +94,18 @@ def inputs(owner, platform, sequence, serial_hash=None):
             'serial_provisioning_sha256': serial_digest,
             'assessment_sha256': release.file_record(platform/'security-assessment.json')['sha256']
                 if (platform/'security-assessment.json').exists() else None}
+    from . import build_inputs
+    boot_record = build_inputs.record(boot_options or {}, certificate=owner/'trust/boot.crt',
+        image_id=value.get('release', {}).get('image_id', 'lanrith'), sequence=sequence,
+        tpm_required=value['hardware']['boot'].get('tpm', 'required') == 'required')
+    if boot_options is not None or build_inputs.digest_fields(boot_record):
+        result['boot_inputs'] = boot_record
+    result['effective_configuration_sha256'] = config.effective_digest(value, integration_digests,
+        serial_digest, boot_inputs=build_inputs.digest_fields(boot_record))
+    return result
 
 
-def admit(owner, platform, sequence, engine, serial_hash=None):
+def admit(owner, platform, sequence, engine, serial_hash=None, boot_options=None):
     selection = trust.lock(owner/'platform.lock')
     trust.verify(platform, selection)
     reference = trust.verify_builder(selection, platform/'builder.intoto.jsonl')
@@ -104,7 +113,7 @@ def admit(owner, platform, sequence, engine, serial_hash=None):
     subprocess.run([engine, 'pull', reference], check=True, stdin=subprocess.DEVNULL, timeout=600)
     release.require(not config.load(owner/'config.yaml')['administration']['serial']['enabled'] or serial_hash is not None,
                     'Serial administration needs its provisioning hash during preflight.')
-    return inputs(owner, platform, sequence, serial_hash)
+    return inputs(owner, platform, sequence, serial_hash, **({'boot_options': boot_options} if boot_options is not None else {}))
 
 
 def private_copy(source, destination, maximum):
@@ -126,7 +135,7 @@ def private_copy(source, destination, maximum):
         output.write(data)
 
 
-def assemble(owner, platform, request, work, output, *, key, certificate, serial_hash=None, engine='podman'):
+def assemble(owner, platform, request, work, output, *, key, certificate, serial_hash=None, engine='podman', boot_options=None):
     expected = json.loads(release.read(request, 1024*1024), object_pairs_hook=release.unique)
     release.require(not work.exists() and not work.is_symlink() and not output.exists() and not output.is_symlink(),
                     'Local workspace and output must be new.')
@@ -135,7 +144,8 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
     release.require(all(path.parent.is_dir() and path.parent.resolve() == path.parent.absolute()
                         for path in (work, output)), 'Build destinations need existing canonical parent directories.')
     # Every network operation precedes the first private-file read.
-    actual = admit(owner, platform, expected['deployment_sequence'], engine, serial_hash)
+    extra = {'boot_options': boot_options} if boot_options is not None else {}
+    actual = admit(owner, platform, expected['deployment_sequence'], engine, serial_hash, **extra)
     release.require(actual == expected, 'Local build inputs differ from the reviewed preflight request.')
     release.require(Path('/dev/shm').is_mount(), 'Signing requires a private tmpfs.')
     work.mkdir(mode=0o700, parents=True)
@@ -154,7 +164,7 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
                     'Compiler archive changed after admission.')
     archive.extract(tools_archive, tools, entries=10000, maximum_size=64*1024*1024,
                     maximum_file=4*1024*1024, nested=True)
-    release.require(inputs(snapshot, platform, actual['deployment_sequence'], serial_hash) == actual,
+    release.require(inputs(snapshot, platform, actual['deployment_sequence'], serial_hash, **extra) == actual,
                     'Owner snapshot differs from preflight.')
     name = 'lanrith-local-'+uuid.uuid4().hex
     with signing_space(engine, name) as private:
@@ -169,6 +179,9 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
                                 check=True, capture_output=True, timeout=15).stdout
         release.require(public.strip() == release.public_key(private/'boot.crt').strip(),
                         'Boot key does not match reviewed owner trust.')
+        if boot_options is not None:
+            from . import build_inputs
+            build_inputs.stage(boot_options, actual['boot_inputs'], private=private, work=work, private_copy=private_copy)
         if config.load(snapshot/'config.yaml')['administration']['serial']['enabled']:
             release.require(serial_hash is not None, 'Serial administration needs its private provisioning hash.')
             private_copy(serial_hash, private/'serial.hash', 512)
@@ -179,7 +192,8 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
             'configuration_sha256': actual['configuration_sha256'], 'files': actual['platform_files'],
             'effective_configuration_sha256': actual['effective_configuration_sha256'],
             'serial_provisioning_sha256': actual['serial_provisioning_sha256'],
-            'integration_digests': actual['integration_digests'], 'assessment_sha256': actual['assessment_sha256']}))
+            'integration_digests': actual['integration_digests'], 'assessment_sha256': actual['assessment_sha256'],
+            **({'boot_inputs': actual['boot_inputs']} if 'boot_inputs' in actual else {})}))
         (private/'admitted.json').chmod(0o600)
         # Normalize ownership inside this isolated mount only. Rootless Podman's
         # namespace root is the caller; rootful Docker needs the host numeric IDs.
@@ -199,7 +213,8 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
                 '-w', '/work/tools', actual['builder'], 'python3', '-c', script, str(uid), str(gid),
                 '--owner', '/work/owner', '--platform', '/platform', '--private', str(private),
                 '--workspace', '/work/image', '--output', '/work/update',
-                '--sequence', str(actual['deployment_sequence'])],
+                '--sequence', str(actual['deployment_sequence']),
+                *(['--fallback-release', '/work/fallback'] if boot_options and 'fallback_release' in boot_options else [])],
                 check=True, stdin=subprocess.DEVNULL, timeout=7200)
         image_id = config.load(snapshot/'config.yaml').get('release', {}).get('image_id', 'lanrith')
         for purpose in ('update', 'factory'):

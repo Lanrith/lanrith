@@ -1,0 +1,183 @@
+{
+  "builder": "docker.io/library/lanrith-mkosi:4d187598e3547fb477b19201a81babde3a72e38a28817a9a384adbac5d507cb0",
+  "builder_image_id": "sha256:80a5c303a7f431f9d44d16690ea9b0ad9afd12c8b0dba5112aed100b16e95c53",
+  "filesystem_sha256": "9c175aabd8cdf6f33964a0dda42e600b09c0c44d950bf2f22f8801fe7191b147",
+  "initrd_sha256": "91c6883230ad101ee571ee153f65f3d9f34bf3dcf786c44a80f81d192f7767e0",
+  "legacy_migration_qualified": false,
+  "limits": [
+    "VM development evidence does not admit a production release.",
+    "Each run identifies its frozen source; later changes need their affected checks.",
+    "Exact release artifacts, firmware, hardware console, watchdog and physical media remain release qualification requirements.",
+    "No owner topology, production state, real credentials or serial transcript is included."
+  ],
+  "native_parsers": {
+    "result": "pass",
+    "synthetic_topologies": 2
+  },
+  "physical_hardware_qualified": false,
+  "production_qualified": false,
+  "recorded_source": {
+    "files": 154,
+    "sha256": "872dbb3e591e46167eacfe4cfe29386ed4cd7edfc78c4581dc63efcabfa9eb4c"
+  },
+  "result": "pass",
+  "runs": [
+    {
+      "assessed_at": "2026-10-29T21:20:19.674987+00:00",
+      "checks": [
+        "fresh-PCR-7-11-15-boot-and-late-unseal-denial",
+        "normal-build-path-with-bound-fallback",
+        "injected-initrd-failure",
+        "authenticated-fallback-and-real-state-contract",
+        "accepted-prior-image-reboot",
+        "persistent-state-retained"
+      ],
+      "filesystem_sha256": "9c175aabd8cdf6f33964a0dda42e600b09c0c44d950bf2f22f8801fe7191b147",
+      "initrd_sha256": "91c6883230ad101ee571ee153f65f3d9f34bf3dcf786c44a80f81d192f7767e0",
+      "qualification_gates_overridden": false,
+      "result": "pass",
+      "runner": "tests/qualify_fresh_recovery_vm.py",
+      "runner_sha256": "ef05ade266101bfb63dbe92cee78adbef63a02d9b82ceecfbe49719433fa1707",
+      "runtime_files_changed_since_run": [
+        "lanrith/boot_policy.py",
+        "lanrith/build.py",
+        "lanrith/build_inputs.py",
+        "lanrith/cli.py",
+        "lanrith/early_failure.py",
+        "lanrith/image_operation.py",
+        "lanrith/local.py",
+        "lanrith/media.py",
+        "lanrith/recovery_authority.py",
+        "lanrith/recovery_backup_device.py",
+        "lanrith/recovery_backup_preflight.py",
+        "lanrith/recovery_build.py",
+        "lanrith/recovery_console.py",
+        "lanrith/recovery_failure_build.py",
+        "lanrith/recovery_failure_console.py",
+        "lanrith/recovery_restore.py",
+        "lanrith/recovery_restore_target.py",
+        "lanrith/recovery_restore_transaction.py",
+        "lanrith/recovery_select.py",
+        "lanrith/recovery_slot.py",
+        "lanrith/state_formats.py",
+        "lanrith/steady_recovery.py",
+        "scripts/assemble-offline.py",
+        "scripts/build-base.py",
+        "scripts/build-local.py",
+        "scripts/consumer.py",
+        "scripts/make-media.py"
+      ],
+      "scope": "fresh-install-measured-boot-recovery",
+      "tested_source": {
+        "files": 145,
+        "sha256": "6831595c4e79cb5e01e850337510afb431bd3de33edc45a1d71bcd7b79f3f4ba"
+      }
+    },
+    {
+      "assessed_at": "2026-10-29T21:33:12.788068+00:00",
+      "checks": [
+        "dedicated-signed-recovery-export",
+        "signed-media-readback",
+        "update-purpose-rejected",
+        "wrong-recovery-passphrase-rejected",
+        "authenticated-signed-slot-inspection",
+        "corrupted-slot-denied",
+        "root-disabled-recovery-image",
+        "read-only-disks-unchanged",
+        "no-boot-or-write-authorization"
+      ],
+      "qualification_gates_overridden": false,
+      "recovery_manifest_sha256": "c8f76f6a9646369065d2c53b120fdc86dcdb8a24fb8b57adbc26f122c136b409",
+      "result": "pass",
+      "resumed_built_image": true,
+      "runner": "tests/qualify_offline_inputs_vm.py",
+      "runner_sha256": "a4740c671073168b2091ec8edbeab9f3e9b3fdd584a29d68d2f6e505270cdd3a",
+      "runtime_files_changed_since_run": [
+        "lanrith/boot_policy.py",
+        "lanrith/build.py",
+        "lanrith/cli.py",
+        "lanrith/image_operation.py",
+        "lanrith/recovery_authority.py",
+        "lanrith/recovery_backup_device.py",
+        "lanrith/recovery_build.py",
+        "lanrith/recovery_console.py",
+        "lanrith/recovery_restore.py",
+        "lanrith/recovery_slot.py",
+        "lanrith/state_formats.py",
+        "scripts/build-base.py"
+      ],
+      "scope": "dedicated-recovery-release-and-root-disabled-serial",
+      "tested_source": {
+        "files": 149,
+        "sha256": "9bf437e92be75aef13aef83a914097be0603fde808c349a80480882ad852f69d"
+      }
+    },
+    {
+      "assessed_at": "2026-10-29T22:31:58.213499+00:00",
+      "checks": [
+        "fresh-PCR-7-11-15-installation",
+        "one-OS-slot-corrupted",
+        "root-disabled-independent-recovery",
+        "incorrect-state-key-denied-with-no-writes",
+        "confirmed-signed-slot-repair",
+        "GPT-and-encrypted-state-unchanged",
+        "other-slot-unchanged",
+        "repaired-image-booted-with-retained-state-and-identity"
+      ],
+      "qualification_gates_overridden": false,
+      "result": "pass",
+      "runner": "tests/qualify_slot_repair_vm.py",
+      "runner_sha256": "2f8e071adacaa9a8e5acf54c95383bc221c856ddb94f2baf6f372fcda606d1b9",
+      "runtime_files_changed_since_run": [
+        "lanrith/recovery_backup_device.py",
+        "lanrith/recovery_build.py",
+        "lanrith/recovery_restore.py"
+      ],
+      "scope": "authenticated-state-preserving-OS-slot-repair",
+      "tested_source": {
+        "files": 153,
+        "sha256": "f497e9b31e6366abc74bad13e10ce61575d781cff16ee22da25564ba2d153832"
+      }
+    },
+    {
+      "assessed_at": "2026-10-29T22:37:58.432710+00:00",
+      "checks": [
+        "root-disabled-signed-recovery",
+        "compiled-backup-and-restore-policy",
+        "no-gate-overrides",
+        "initially-writable-target-protected",
+        "encrypted-state-backup-with-receipt",
+        "backup-source-unchanged",
+        "both-LUKS-headers-and-payload-damaged",
+        "wrong-receipt-denied-with-no-writes",
+        "confirmed-restore-with-independent-receipt",
+        "exact-encrypted-state-bytes-restored",
+        "backup-unchanged"
+      ],
+      "qualification_gates_overridden": false,
+      "result": "pass",
+      "runner": "tests/qualify_admitted_backup_vm.py",
+      "runner_sha256": "db80463e0ff863466aa1c3e22767c739ea2497ea6196e490210b90d1ab300731",
+      "runtime_files_changed_since_run": [],
+      "scope": "compiled-recovery-backup-and-receipt-restore",
+      "tested_source": {
+        "files": 154,
+        "sha256": "872dbb3e591e46167eacfe4cfe29386ed4cd7edfc78c4581dc63efcabfa9eb4c"
+      }
+    }
+  ],
+  "schema": 1,
+  "scope": "synthetic-fresh-install-recovery-development",
+  "source_base_commit": "8b099269c7e9ca9c6e1bb0199fa4d1705462dee2",
+  "source_boundary": {
+    "result": "pass"
+  },
+  "source_digest_format": "SHA-256 of sorted compact JSON mapping relative Python source paths to SHA-256 digests, followed by newline",
+  "unit_tests": {
+    "count": 395,
+    "result": "pass"
+  },
+  "workflow_boundaries": {
+    "result": "pass"
+  }
+}

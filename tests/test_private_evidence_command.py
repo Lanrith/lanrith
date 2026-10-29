@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import yaml
 
-from lanrith import build, config, evidence, local, release
+from lanrith import build, build_inputs, config, evidence, local, release
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -99,7 +99,10 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(data))
         workspace = self.root/'assembly'
         identity = build.assembly(self.value, base.resolve(), workspace,
-            version='1.2.3', sequence=107, integrations=integrations, serial_hash=serial_hash)
+            version='1.2.3', sequence=107, integrations=integrations, serial_hash=serial_hash,
+            certificate=self.keys/'boot.crt', private_key=self.keys/'boot.key')
+        self.boot_inputs = build_inputs.record({}, certificate=self.keys/'boot.crt', image_id='lanrith',
+                                              sequence=107, tpm_required=True)
         self.effective_configuration = identity['configuration_sha256']
         self.serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
         self.serial_hash = serial_hash
@@ -127,6 +130,7 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
                 for path in sorted(directory.iterdir()):
                     archive.add(path, arcname=path.name)
         self.deployment = {'schema': 1, 'configuration_sha256': self.configuration,
+            'boot_inputs': self.boot_inputs,
             'effective_configuration_sha256': self.effective_configuration,
             'serial_provisioning_sha256': self.serial_digest,
             'integration_digests': self.integration_digests,
@@ -164,7 +168,7 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
         (self.owner/'platform.lock').write_bytes(release.canonical(self.selection))
         request = {name: value for name, value in self.deployment.items() if name not in
                    {'effective_configuration_sha256', 'serial_provisioning_sha256',
-                    'deployment_sequence', 'release', 'factory'}}
+                    'deployment_sequence', 'release', 'factory', 'boot_inputs'}}
         request['platform_lock_sha256'] = release.file_record(self.owner/'platform.lock')['sha256']
         path = self.root/'request.json'
         path.write_bytes(release.canonical(request))
@@ -251,6 +255,24 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
         result = self.command()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Configuration digest differs.', result.stderr)
+        self.assertFalse((self.artifacts/'provenance.dsse.json').exists())
+
+    def test_changed_pcr_authority_is_rejected_before_evidence_signing(self):
+        self.handoff()
+        self.deployment['boot_inputs']['pcr_public_key_sha256'] = 'f'*64
+        (self.artifacts/'deployment.json').write_bytes(release.canonical(self.deployment))
+        result = self.command()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('PCR authority differs from reviewed owner trust.', result.stderr)
+        self.assertFalse((self.artifacts/'provenance.dsse.json').exists())
+
+    def test_changed_recovery_digest_cannot_replace_signed_assembly_identity(self):
+        self.handoff()
+        self.deployment['boot_inputs']['recovery_credential_sha256'] = 'f'*64
+        (self.artifacts/'deployment.json').write_bytes(release.canonical(self.deployment))
+        result = self.command()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Build output differs from the immutable workflow inputs.', result.stderr)
         self.assertFalse((self.artifacts/'provenance.dsse.json').exists())
 
     def test_changed_serial_provisioning_digest_is_rejected(self):

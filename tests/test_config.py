@@ -141,7 +141,7 @@ class ConfigTests(unittest.TestCase):
         value = copy.deepcopy(self.example)
         value['administration']['root_access'] = 'disabled'
         value['administration']['serial'] = {'enabled': True}
-        with self.assertRaisesRegex(ReleaseError, 'Serial recovery requires root access'):
+        with self.assertRaisesRegex(ReleaseError, 'Serial login requires root access'):
             config.normalize(value)
 
 
