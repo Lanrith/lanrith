@@ -1,0 +1,61 @@
+{
+  "approval": {
+    "old_review_not_reused_for_this_semantic_change": true,
+    "previous_review": 5694532884,
+    "previous_reviewed_head": "691b13aee9522c8199882ec24e10b153145eb7eb",
+    "required": "Fresh independent human GitHub approval of the new security-control source, after every exact-head required hosted build passes."
+  },
+  "deployment": "Only the source PR is prepared. After protected merge and verified immutable Root publication, component workflow trust pins must be updated through their own CI and independent review before the repaired shared resolver/reviewer is deployed there.",
+  "implementation": [
+    "Preserve the integration image when the previous compiler version is unchanged, including updates to the separate current compiler.",
+    "Resolve a new official integration image only for an authenticated security fix to the previous compiler.",
+    "Independent review rejects image drift without that compiler fix and rejects retaining the old image after changing the previous compiler."
+  ],
+  "kind": "security-maintenance-control-repair",
+  "observed_failure": {
+    "audit": "https://github.com/Lanrith/router-policy-agent/releases/tag/audit-proposal-40841896767-1",
+    "repository": "Lanrith/router-policy-agent",
+    "run": 40841896767,
+    "source_commit": "16f113d68fda4cecc1d0208d210038dfab4ab339"
+  },
+  "paid_ai": false,
+  "protection_bypass": false,
+  "pull_request": 1,
+  "reason": "Router resolution refreshed a mutable official Docker tag even though its previous Go compiler version had no security update. The same-version tag rebuild changed the pinned digest without an authenticated reason, so the required reason gate correctly blocked publication.",
+  "repository": "Lanrith/lanrith",
+  "reviewed_input": {
+    "go_version": "1.26.10",
+    "integration_image": "docker.io/library/golang@sha256:88750ccdd0f2a77fcc00a14b1a48d6409bd8ddb5d7c2dd6ec0b4a2e916daf9d9"
+  },
+  "schema": 1,
+  "unrequested_same_version_tag_rebuild": "docker.io/library/golang@sha256:2bba1f6b063d0e09c5297fbd0a7b9664c4931afc4476a779d7c9a3062704f949",
+  "validation": {
+    "before": "The original code reproduces the no-reason failure and accepts two unrelated-image paths or a stale image after a compiler change; the new regression cases detect those paths.",
+    "full_suite": {
+      "existing_environment_skips": 12,
+      "passed": 532,
+      "total": 544
+    },
+    "full_suite_log_sha256": "f354da116e84923345daacbb89d645e1458152c12d3b70b9c9c5e4b1d89a252f",
+    "pinned_actionlint": "pass",
+    "real_replay": {
+      "after_candidate": null,
+      "after_changed_paths": [],
+      "after_error": null,
+      "after_record_sha256": "8b9c1ac70804322b1e5018cc266582be7459588e4366796a752319e8c2f5d518",
+      "before_changed_paths": [
+        ".github/toolchains.json"
+      ],
+      "before_error": "Input bytes changed without a security or qualified-component reason.",
+      "before_record_sha256": "00e7d470cdf31801c88ccb5ab314dd5efa7f7c766d7df34cc5fc2c45709f53ad",
+      "go_version": "go version go1.27.3 linux/amd64",
+      "mocked_verifiers": false,
+      "security_checks": "Actual authenticated advisory requests, module checks and govulncheck ./...; zero reachable vulnerabilities.",
+      "source_commit": "16f113d68fda4cecc1d0208d210038dfab4ab339"
+    },
+    "regression_tests": 6,
+    "source_boundary": "pass",
+    "whitespace": "pass",
+    "workflow_assessment_and_trust_invariants": "pass"
+  }
+}
