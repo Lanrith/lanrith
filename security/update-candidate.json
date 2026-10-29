@@ -1,33 +1,33 @@
 {
-  "base_sha": "4f2184f6ec923186365a32c9bf0275499df3a858",
-  "candidate_id": "b9a7e70311e44dca8f8115d86162e4e548bfda442f238a02a4a507023f7e163e",
+  "base_sha": "157a14ec5f443d0279c51969d87aec8f6b95c3f2",
+  "candidate_id": "021df02c6c3aed0fb20fe5d3a12c8ff7f79f97e195337d97b597668f2d26ae3f",
   "changes": {
     "build-inputs.json": {
-      "after_sha256": "23f8c1f4b9ace032fabb8dea0e708a74b0c874fbf141dfee8625c12db3040497",
-      "before_sha256": "456c32062a3523e016e786167688f0e611e2c382d1d69b408480b73d2b4d28e0"
+      "after_sha256": "b99ef9e01f1809f862d807403b7edfc248db1f89855561b55818381b5ee89c8f",
+      "before_sha256": "23f8c1f4b9ace032fabb8dea0e708a74b0c874fbf141dfee8625c12db3040497"
     },
     "security/policy.json": {
-      "after_sha256": "b190dab2b9d65a08a3c1c24d8e824e7aa6351277855fe00a15c10e562180bee9",
-      "before_sha256": "cb5fdb906c98f423638c787621a91ed5f6d287baa21369cfb23af88892795ca9"
+      "after_sha256": "7b4a1a05f019eb90b55db37b58472b096ad64380173ce2aae2ead472cfa2fc5d",
+      "before_sha256": "b190dab2b9d65a08a3c1c24d8e824e7aa6351277855fe00a15c10e562180bee9"
     }
   },
-  "created_at": "2026-10-28T22:44:18.557860+00:00",
+  "created_at": "2026-10-29T06:04:33.882193+00:00",
   "kind": "security-update-candidate",
   "policy_sha256": "254735198ea8f209b956870f9748b32123de831fc20dcd3c8a46fb44a1561cf8",
-  "producer_sha": "4f2184f6ec923186365a32c9bf0275499df3a858",
+  "producer_sha": "157a14ec5f443d0279c51969d87aec8f6b95c3f2",
   "reasons": [
     {
       "ecosystem": "Lanrith",
-      "evidence_sha256": "1f3b3d442ca17c0c326873025d818970202a3a9e255ef4bf0239677428a7c2f8",
-      "fixed": "v0.1.5",
-      "id": "Lanrith/discovery-bridge@v0.1.5",
-      "installed": "v0.1.4",
-      "package": "discovery-bridge",
-      "source": "https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.5",
+      "evidence_sha256": "69d2e3f5e21d37d89e37cfd5a66c55c2ba17b54e98e43ca8f4dc6f91d31c0f36",
+      "fixed": "v0.1.7",
+      "id": "Lanrith/router-policy-agent@v0.1.7",
+      "installed": "v0.1.6",
+      "package": "router-policy-agent",
+      "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.7",
       "type": "qualified-component-update"
     }
   ],
-  "remediation_id": "security-c7b599dc452ab99b7c80",
+  "remediation_id": "security-9ebc23f6dd699aabadb8",
   "repository": "Lanrith/lanrith",
   "requires_human": false,
   "schema": 1
