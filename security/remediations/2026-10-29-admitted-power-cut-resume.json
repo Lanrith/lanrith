@@ -1,0 +1,26 @@
+{
+  "approval": "Independent human source review only after every required hosted build passes; no auto-approval of this test-source change.",
+  "base_commit": "84443e724a4d0160cc6fdfb58925dea89f280381",
+  "change": "Replace only the post-power-cut promote call with stage /var/lib/lanrith/update-inbox/11. Preserve earlier tampered-manifest rejection, injected disk interruption, acceptance, persistent state, failed-health and fallback checks.",
+  "deployment_status": "Source proposal only. The newer failed release is unpublished; immutable v0.1.12 already passed its own full qualification.",
+  "failure": {
+    "message": "Guest SSH operation failed: Artifact size or digest differs.",
+    "phase": "Post-interruption TPM2 A/B recovery",
+    "run": 40902187284,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/40902187284"
+  },
+  "hosted_native_validation": "Required on the final PR head; local unit tests do not certify the power-cut VM result.",
+  "integrity_boundary": "The existing stage implementation re-verifies the original admitted manifest signature and every artifact size/digest before any partition write. A corrupt admitted store still fails. Runtime admission, fsync, verification and staging code are unchanged.",
+  "kind": "native-power-cut-qualification-recovery-source-repair",
+  "local_validation": {
+    "existing_environment_skips": 12,
+    "log_sha256": "5f332651aea54fd4a7d594b06b3f527879e7c4d97e311b184eedadcef108347c",
+    "passed": 532,
+    "total": 544
+  },
+  "paid_ai": false,
+  "protection_bypass": false,
+  "reason": "After discarding guest RAM during the inactive-slot fault, the VM test re-promotes an untrusted uploaded fixture whose durability was never promised. Resume the already admitted root-owned update instead, so the recovery probe directly validates the original durable inbox.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1
+}
