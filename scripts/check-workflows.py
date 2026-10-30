@@ -55,7 +55,8 @@ for path in (root/'.github/workflows').glob('*.yml'):
         call = value[True]['workflow_call']
         assert call['inputs']['signing-profile'] == {'type': 'string', 'default': 'protected'}, path.name
         assert set(call['secrets']) == {'LANRITH_BOOT_KEY', 'LANRITH_BOOT_CERTIFICATE',
-            'LANRITH_SERIAL_PASSPHRASE_HASH', 'LANRITH_EVIDENCE_KEY', 'LANRITH_EVIDENCE_CERTIFICATE'}, path.name
+            'LANRITH_SERIAL_PASSPHRASE_HASH', 'LANRITH_PCR_KEY', 'LANRITH_PCR_CERTIFICATE',
+            'LANRITH_RECOVERY_PASSPHRASE_HASH', 'LANRITH_EVIDENCE_KEY', 'LANRITH_EVIDENCE_CERTIFICATE'}, path.name
         jobs = value['jobs']
         assert jobs['sign']['if'] == ("inputs.publish && github.ref == 'refs/heads/main' && "
             "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"), path.name
@@ -66,7 +67,8 @@ for path in (root/'.github/workflows').glob('*.yml'):
         for job_name, job in jobs.items():
             for step in job.get('steps', []):
                 for name in step.get('env', {}):
-                    if name.startswith('LANRITH_BOOT_') or name == 'LANRITH_SERIAL_PASSPHRASE_HASH':
+                    if name.startswith(('LANRITH_BOOT_', 'LANRITH_PCR_')) or name in (
+                            'LANRITH_SERIAL_PASSPHRASE_HASH', 'LANRITH_RECOVERY_PASSPHRASE_HASH'):
                         assert job_name == 'sign' and 'consumer.py assemble' in step.get('run', ''), path.name
                     if name.startswith('LANRITH_EVIDENCE_'):
                         assert job_name == 'evidence' and 'private-evidence.py' in step.get('run', ''), path.name
