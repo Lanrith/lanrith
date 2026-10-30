@@ -33,7 +33,10 @@ def minimize(root):
                     'usr/share/man', 'usr/share/info', 'usr/share/groff', 'usr/share/gtk-doc',
                     'usr/share/locale', 'usr/lib/python3.*/test', 'usr/lib/python3.*/idlelib',
                     '**/__pycache__', 'boot/initrd.img-*', 'boot/initrd.img',
-                    'usr/bin/dpkg*', 'usr/sbin/dpkg*', 'usr/lib/dpkg', 'usr/share/dpkg',
+                    'usr/bin/dpkg*', 'usr/sbin/dpkg*', 'usr/lib/dpkg', 'usr/libexec/dpkg', 'usr/share/dpkg',
+                    'etc/cron.daily/dpkg',
+                    'usr/lib/systemd/system/dpkg-db-backup.service',
+                    'usr/lib/systemd/system/dpkg-db-backup.timer',
                     'usr/bin/make', 'usr/bin/gmake', 'usr/share/make',
                     'var/lib/dpkg', 'var/lib/apt', 'var/cache/apt'):
         for path in list(root.glob(pattern)):
@@ -111,7 +114,10 @@ def main():
                 # Only the authenticated staging helper owns image updates and
                 # reboot selection. Package presets must not schedule either.
                 'systemd-sysupdate.service','systemd-sysupdate.timer',
-                'systemd-sysupdate-reboot.service','systemd-sysupdate-reboot.timer'}
+                'systemd-sysupdate-reboot.service','systemd-sysupdate-reboot.timer',
+                # Runtime package installation and its database are removed.
+                # Mask both entry points before final assembly reapplies presets.
+                'dpkg-db-backup.service','dpkg-db-backup.timer'}
     for path in (root/'usr/lib/systemd/system').iterdir():
         # Every bundled advanced integration is inactive until owner assembly
         # explicitly selects its health units. This includes dependency activation.

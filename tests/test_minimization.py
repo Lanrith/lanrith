@@ -38,7 +38,8 @@ class MinimizationTests(unittest.TestCase):
                 self.assertEqual(result.stderr, b'')
 
     def test_cleanup_preserves_licenses_drivers_and_utf8_runtime(self):
-        keep = ('usr/share/doc/alloy/copyright', 'usr/share/doc/alloy/THIRD-PARTY-NOTICES.lanrith',
+        keep = ('usr/share/doc/dpkg/copyright',
+                'usr/share/doc/alloy/copyright', 'usr/share/doc/alloy/THIRD-PARTY-NOTICES.lanrith',
                 'usr/share/doc/service/LICENSE.gz', 'usr/lib/locale/C.utf8/LC_CTYPE',
                 'usr/lib/modules/test/kernel/drivers/net/example.ko', 'usr/bin/alloy',
                 'usr/lib/systemd/systemd-sysupdate', 'usr/lib/systemd/systemd-import',
@@ -48,6 +49,9 @@ class MinimizationTests(unittest.TestCase):
                   'usr/share/man/man8/example.8.gz', 'usr/share/locale/de/messages.mo',
                   'usr/lib/python3.13/__pycache__/os.pyc', 'boot/initrd.img-test',
                   'var/lib/dpkg/status', 'var/cache/apt/archive.deb', 'usr/bin/dpkg-query', 'usr/bin/make',
+                  'usr/libexec/dpkg/dpkg-db-backup', 'etc/cron.daily/dpkg',
+                  'usr/lib/systemd/system/dpkg-db-backup.service',
+                  'usr/lib/systemd/system/dpkg-db-backup.timer',
                   'usr/bin/machinectl', 'usr/bin/systemd-nspawn', 'usr/lib/systemd/systemd-machined',
                   'usr/lib/systemd/system/systemd-machined.service',
                   'usr/lib/systemd/system/systemd-sysupdate.timer',

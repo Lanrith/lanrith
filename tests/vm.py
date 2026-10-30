@@ -680,6 +680,15 @@ for unit in cron.service systemd-hostnamed.service ssh.socket sshd@.service; do
     test "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked
     ! systemctl is-active --quiet "$unit"
 done
+# Exercise both activation paths directly; the daily timer need not reach midnight.
+for unit in dpkg-db-backup.service dpkg-db-backup.timer; do
+    test "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = masked
+    if systemctl start "$unit"; then
+        printf 'Removed package maintenance activated: %s\n' "$unit" >&2
+        exit 1
+    fi
+    test "$(systemctl show --property=ActiveState --value "$unit")" = inactive
+done
 python3 - <<'PY'
 from pathlib import Path
 import pwd
