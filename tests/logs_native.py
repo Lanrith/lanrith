@@ -9,9 +9,11 @@ import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import math
 import os
 from pathlib import Path
 import pwd
+import queue
 import signal
 import socket
 import ssl
@@ -29,12 +31,12 @@ from test_intent import minimal
 CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
           'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
           'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
-          'collector-return-delivery', 'private-state-directory-boundary'}
+          'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations'}
 MARKER = b'LANRITH_SYNTHETIC_QUEUED_RECORD'
 SELF = b'LANRITH_SYNTHETIC_EXPORTER_SELF_RECORD'
 SECRET = b'lanrith-disposable-secret-value'
-RUN = ('import json,sys; from lanrith.logs_runtime import supervise; '
-       'supervise(json.loads(sys.argv[1]), startup_seconds=float(sys.argv[2]), interval=.2)')
+RUN = ('import json,sys; from pathlib import Path; from lanrith.logs_runtime import supervise; '
+       'supervise(json.loads(sys.argv[1]), startup_seconds=float(sys.argv[2]), interval=.2, observation_path=Path(sys.argv[3]))')
 
 
 def run(*arguments, **kwargs):
@@ -67,9 +69,11 @@ def metrics():
 
 
 def metric(text, name):
-    return sum(float(line.split()[-1]) for line in text.splitlines()
+    values = [float(line.split()[-1]) for line in text.splitlines()
                if line.startswith(name+'{') and 'component_id="otelcol.exporter.otlphttp.router"' in line
-               and ('data_type="logs"' in line or 'data_type=' not in line))
+               and ('data_type="logs"' in line or 'data_type=' not in line)]
+    assert all(math.isfinite(value) and 0 <= value < 2**63 for value in values)
+    return sum(values)
 
 
 def journal(root):
@@ -150,7 +154,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
         os.chown(root/'password', account.pw_uid, account.pw_gid)
         for name in ('state', 'queue', 'bad-state', 'bad-queue'):
             path = root/name
-            path.mkdir(mode=0o700)
+            path.mkdir(mode=0o750)
             os.chown(path, account.pw_uid, account.pw_gid)
         value = minimal()
         value['networks']['home']['ipv4'] = '192.0.2.0/24'
@@ -175,6 +179,23 @@ else:raise AssertionError('Exporter can traverse the private control directory')
         (root/'notify').chmod(0o666)
         notifications.settimeout(.1)
         environment['NOTIFY_SOCKET'] = str(root/'notify')
+        # PID 1 continuously consumes notifications. Leaving this datagram
+        # socket undrained blocks the supervisor after the small kernel queue
+        # fills and falsely makes its observations appear stale.
+        ready_notifications = queue.Queue(maxsize=4)
+        notification_stop = threading.Event()
+
+        def consume_notifications():
+            while not notification_stop.is_set():
+                try:
+                    message = notifications.recv(256)
+                except socket.timeout:
+                    continue
+                if message == b'READY=1':
+                    ready_notifications.put_nowait(message)
+
+        notification_worker = threading.Thread(target=consume_notifications, daemon=True)
+        notification_worker.start()
 
         def launch(bad=False):
             command = [str(args.alloy), *logs_runtime.ALLOY[1:-1]]
@@ -182,7 +203,8 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             command.append(str(root/('bad.alloy' if bad else 'config.alloy')))
             log = root/('bad.log' if bad else 'alloy.log')
             with log.open('ab') as stream:
-                process = subprocess.Popen([sys.executable, '-c', RUN, json.dumps(command), '3' if bad else '25'],
+                process = subprocess.Popen([sys.executable, '-c', RUN, json.dumps(command), '3' if bad else '25',
+                    str(root/('bad-state' if bad else 'state')/'health.json')],
                     env=environment, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
                     user=account.pw_uid, group=account.pw_gid, extra_groups=(), start_new_session=True)
             processes.append(process)
@@ -191,8 +213,8 @@ else:raise AssertionError('Exporter can traverse the private control directory')
         def ready(process):
             assert process.poll() is None, 'Exporter supervisor exited before readiness.'
             try:
-                return notifications.recv(256) == b'READY=1'
-            except socket.timeout:
+                return ready_notifications.get(timeout=.1) == b'READY=1'
+            except queue.Empty:
                 return False
 
         received = {'marker': False, 'redacted': False, 'self': False, 'secret': False, 'records': 0,
@@ -229,17 +251,32 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             # health. Our graph check and notify readiness must both reject it.
             assert not logs_runtime.pipeline_healthy(metrics())
             assert bad.wait(timeout=10) != 0
-            try:
-                assert notifications.recv(256) != b'READY=1', 'Exited exporter was marked ready.'
-            except socket.timeout:
-                pass
+            assert ready_notifications.empty(), 'Exited exporter was marked ready.'
             process = launch()
             until(lambda: ready(process), 30)
             assert logs_runtime.pipeline_healthy(metrics())
             until(lambda: metric(metrics(), 'otelcol_exporter_enqueue_failed_log_records_total') > 0, 90)
             overflow = metric(metrics(), 'otelcol_exporter_enqueue_failed_log_records_total')
-            queue = metric(metrics(), 'otelcol_exporter_queue_size')
-            assert 0 < queue <= 67108864
+            queue_size = metric(metrics(), 'otelcol_exporter_queue_size')
+            assert 0 < queue_size <= 67108864
+            cache = root/'state/health.json'
+            state = until(lambda: (value if (value := logs_runtime.read_observation(cache, owner=account.pw_uid))[
+                'enqueue_failed_records'] > 0 else None), 10)
+            assert state['queue_size_bytes'] > 0 and cache.stat().st_mode & 0o777 == 0o640
+            # The root collector needs only a supplementary read group, with
+            # every capability removed. Other service identities cannot read it.
+            reader = ('from pathlib import Path; import sys; from lanrith.logs_runtime import read_observation; '
+                      'read_observation(Path(sys.argv[1]), owner=int(sys.argv[2])); '
+                      '\ntry: Path(sys.argv[3]).read_bytes()'
+                      '\nexcept PermissionError: pass'
+                      '\nelse: raise AssertionError("Observer can read the exporter credential")')
+            run('setpriv', '--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
+                '--groups='+str(account.pw_gid), sys.executable, '-c', reader, str(cache), str(account.pw_uid), str(root/'password'),
+                env=environment)
+            denied = subprocess.run(['setpriv', '--reuid=nobody', '--regid=nogroup', '--clear-groups',
+                sys.executable, '-c', reader, str(cache), str(account.pw_uid), str(root/'password')], env=environment,
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            assert denied.returncode != 0, 'Another service identity can read private exporter observations.'
             # Let the journal cursor commit before the forced process crash.
             time.sleep(12)
             assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
@@ -248,11 +285,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             assert (root/'alloy.log').stat().st_size < 2*1024*1024, 'Exporter outage amplified its own log.'
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
-            while True:
-                try:
-                    notifications.recv(256)
-                except socket.timeout:
-                    break
+            assert ready_notifications.empty(), 'Exporter emitted duplicate readiness.'
             process = launch()
             until(lambda: ready(process), 30)
             assert metric(metrics(), 'otelcol_exporter_queue_size') > 0, 'Persistent retry queue was lost.'
@@ -282,7 +315,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                 'overflow_records': overflow, 'delivered_batches': received['records'],
                 'physical_router_qualified': False}
             args.result.parent.mkdir(parents=True, exist_ok=True)
-            args.result.write_text(json.dumps(result, sort_keys=True)+'\n')
+            args.result.write_text(json.dumps(result, sort_keys=True, allow_nan=False)+'\n')
             print(json.dumps(result, sort_keys=True))
         except BaseException:
             # Only this test's synthetic process output; never a host journal.
@@ -300,6 +333,8 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait(timeout=5)
+            notification_stop.set()
+            notification_worker.join(timeout=2)
             notifications.close()
             if server:
                 server.shutdown()

@@ -61,7 +61,11 @@ Alloy retains its state under `/var/lib/lanrith/alloy`. Its unit exposes that
 directory at `/var/lib/lanrith-alloy` inside the service's mount namespace, so
 the unprivileged exporter can use it while `/var/lib/lanrith` remains root-only.
 The native test exercises that mount and permission boundary separately from
-the journal delivery pipeline.
+the journal delivery pipeline. It also verifies that the supervisor's queue and
+failure observations reach a capability-free reader through the exporter group,
+while that reader cannot read the exporter credential and unrelated service
+identities cannot read the observation. The health collector rejects stale or
+previous-boot observations; it does not replace unavailable counters with zero.
 
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and

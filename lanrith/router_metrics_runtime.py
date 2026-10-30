@@ -31,8 +31,8 @@ class QueryError(ValueError):
 
 def load(path=MANIFEST):
     value = json.loads(read(path, 64*1024), object_pairs_hook=unique)
-    require(isinstance(value, dict) and set(value) == {'schema', 'units', 'interfaces', 'clients', 'ntp'} and
-            value['schema'] == 1 and type(value['ntp']) is bool and
+    require(isinstance(value, dict) and set(value) == {'schema', 'units', 'interfaces', 'clients', 'ntp', 'logs'} and
+            value['schema'] == 1 and type(value['ntp']) is bool and type(value['logs']) is bool and
             isinstance(value['units'], list) and 1 <= len(value['units']) <= 256 and
             all(isinstance(name, str) and UNIT.fullmatch(name) for name in value['units']) and
             len(set(value['units'])) == len(value['units']) and
@@ -285,6 +285,14 @@ def collect(policy, *, previous_inventory=0):
     if policy['ntp']:
         metrics.emit('chrony_synchronised', query('chrony', ['chronyc', '-h', '/run/chrony/chronyd.sock',
                                                           '-n', '-c', 'tracking'], tracking) or 0)
+    if policy['logs']:
+        from .logs_runtime import read_observation
+        state = metrics.query('alloy', read_observation)
+        if state is not None:
+            metrics.emit('alloy_queue_capacity_bytes', state['queue_capacity_bytes'])
+            metrics.emit('alloy_queue_size_bytes', state['queue_size_bytes'])
+            metrics.emit('alloy_enqueue_failed_records_total', state['enqueue_failed_records'], counter=True)
+            metrics.emit('alloy_send_failed_records_total', state['send_failed_records'], counter=True)
     complete, budget = True, 1024
     for client in policy['clients']:
         entries = query('neighbors_'+client['interface'], ['ip', '-j', 'neigh', 'show', 'dev', client['interface']], neighbors)

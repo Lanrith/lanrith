@@ -28,7 +28,7 @@ class RouterHealthTests(unittest.TestCase):
             path.write_text(json.dumps(policy))
             self.assertEqual(runtime.load(path), policy)
             for change in ({'command': 'anything'}, {'interfaces': ['../interface']},
-                           {'units': ['anything.service\nother.service']}, {'ntp': 1},
+                           {'units': ['anything.service\nother.service']}, {'ntp': 1}, {'logs': 1},
                            {'clients': [{'network': name, 'interface': 'undeclared'}]}):
                 path.write_text(json.dumps({**policy, **change}))
                 with self.subTest(change=change), self.assertRaises(ReleaseError):
@@ -83,6 +83,27 @@ class RouterHealthTests(unittest.TestCase):
         self.assertIn('lanrith_router_client_inventory_collection_timestamp_seconds 1234567890\n', output)
         self.assertNotIn('lanrith_router_client_neighbor_count', output)
         self.assertNotIn('chrony_synchronised', output)
+        self.assertNotIn('alloy_', output)
+
+    def test_export_loss_observations_are_optional_and_unavailable_is_not_zero(self):
+        from lanrith import logs_runtime
+        policy = metrics.router_manifest(config.normalize(fixture()))
+        policy['logs'] = True
+        observed = {'queue_capacity_bytes': 67108864, 'queue_size_bytes': 1234,
+                    'enqueue_failed_records': 42, 'send_failed_records': 21}
+        with mock.patch.object(runtime, 'command', side_effect=runtime.QueryError), \
+                mock.patch.object(runtime, 'read', side_effect=runtime.QueryError), \
+                mock.patch.object(logs_runtime, 'read_observation', return_value=observed):
+            output = runtime.collect(policy)
+        self.assertIn('lanrith_router_alloy_enqueue_failed_records_total 42\n', output)
+        self.assertIn('lanrith_router_alloy_send_failed_records_total 21\n', output)
+        self.assertIn('lanrith_router_metrics_query_success{collector="alloy"} 1\n', output)
+        with mock.patch.object(runtime, 'command', side_effect=runtime.QueryError), \
+                mock.patch.object(runtime, 'read', side_effect=runtime.QueryError), \
+                mock.patch.object(logs_runtime, 'read_observation', side_effect=ValueError):
+            output = runtime.collect(policy)
+        self.assertNotIn('lanrith_router_alloy_enqueue_failed_records_total', output)
+        self.assertIn('lanrith_router_metrics_query_success{collector="alloy"} 0\n', output)
 
     def test_stop_after_success_preserves_observations_but_failure_invalidates_them(self):
         with mock.patch.object(runtime.os, 'geteuid', return_value=0), \

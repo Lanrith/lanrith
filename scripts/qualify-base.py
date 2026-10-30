@@ -37,7 +37,7 @@ CHECKS = {
 LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
     'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
     'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
-    'collector-return-delivery', 'private-state-directory-boundary'}
+    'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations'}
 
 
 def value(path):

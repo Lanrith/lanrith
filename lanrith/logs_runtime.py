@@ -4,10 +4,12 @@ import argparse
 import grp
 import http.client
 import ipaddress as ip
+import json
 import math
 import os
 from pathlib import Path
 import re
+import pwd
 import signal
 import socket
 import stat
@@ -29,6 +31,13 @@ GRAPH = re.compile(r'alloy_component_controller_running_components\{controller_i
                    r'controller_path="/",health_type="([a-z_]+)"\} ([^\s]+)\Z')
 EVALUATING = re.compile(r'alloy_component_controller_evaluating\{controller_id="",'
                         r'controller_path="/"\} ([^\s]+)\Z')
+OBSERVATION = RUNTIME/'health.json'
+COUNTERS = {
+    'queue_capacity_bytes': 'otelcol_exporter_queue_capacity',
+    'queue_size_bytes': 'otelcol_exporter_queue_size',
+    'enqueue_failed_records': 'otelcol_exporter_enqueue_failed_log_records_total',
+    'send_failed_records': 'otelcol_exporter_send_failed_log_records_total',
+}
 
 
 class LogsRuntimeError(ValueError):
@@ -129,10 +138,69 @@ def health():
         data = response.read(1024*1024+1)
         if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(data.decode('ascii')):
             raise LogsRuntimeError('Log component graph is not healthy.')
+        return observation(data.decode('ascii'))
     except (OSError, http.client.HTTPException, UnicodeError) as error:
         raise LogsRuntimeError('Log component graph is unavailable.') from error
     finally:
         connection.close()
+
+
+def observation(text):
+    values = {}
+    for field, metric in COUNTERS.items():
+        numbers = []
+        for line in text.splitlines():
+            if (line.startswith(metric+'{') and 'component_id="otelcol.exporter.otlphttp.router"' in line and
+                    ('data_type="logs"' in line or 'data_type=' not in line)):
+                try:
+                    number = float(line.rsplit(' ', 1)[1])
+                except (ValueError, IndexError) as error:
+                    raise LogsRuntimeError('Log metric value differs.') from error
+                if not math.isfinite(number) or not number.is_integer() or not 0 <= number < 2**63:
+                    raise LogsRuntimeError('Log metric value differs.')
+                numbers.append(int(number))
+        # Counters appear on the first event. Queue gauges must always exist.
+        if len(numbers) > 1 or field.startswith('queue_') and not numbers:
+            raise LogsRuntimeError('Log metric series differs.')
+        values[field] = numbers[0] if numbers else 0
+    if values['queue_capacity_bytes'] != 67108864 or values['queue_size_bytes'] > values['queue_capacity_bytes']:
+        raise LogsRuntimeError('Log queue bounds differ.')
+    return {'schema': 1, 'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+            'observed_monotonic_ns': time.monotonic_ns(), **values}
+
+
+def publish_observation(value, path=OBSERVATION):
+    data = json.dumps(value, separators=(',', ':'), allow_nan=False).encode('ascii')+b'\n'
+    if len(data) > 4096:
+        raise LogsRuntimeError('Log observation exceeds its bound.')
+    descriptor, temporary = tempfile.mkstemp(prefix='.health.', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            os.fchmod(stream.fileno(), 0o640)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def read_observation(path=OBSERVATION, *, owner=None, now=None, boot_id=None):
+    owner = pwd.getpwnam('alloy').pw_uid if owner is None else owner
+    boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip() if boot_id is None else boot_id
+    value = exact(decode(read(path, 4096, owner=owner), 4096),
+                  {'schema', 'boot_id', 'observed_monotonic_ns', *COUNTERS}, 'Log observation')
+    # A concurrent atomic publication can be newer than a clock sampled before
+    # opening the file. Compare against the time after this snapshot was read.
+    now = time.monotonic_ns() if now is None else now
+    if (type(value['schema']) is not int or value['schema'] != 1 or value['boot_id'] != boot_id or
+            type(value['observed_monotonic_ns']) is not int or
+            value['observed_monotonic_ns'] < 0 or
+            not 0 <= now-value['observed_monotonic_ns'] <= 15*10**9 or
+            not all(type(value[key]) is int and 0 <= value[key] < 2**63 for key in COUNTERS) or
+            value['queue_capacity_bytes'] != 67108864 or value['queue_size_bytes'] > value['queue_capacity_bytes']):
+        raise LogsRuntimeError('Log observation is stale or differs from the compiled queue.')
+    return value
 
 
 def notify(message):
@@ -144,7 +212,7 @@ def notify(message):
             stream.sendto(message.encode('ascii'), address)
 
 
-def supervise(command=ALLOY, *, startup_seconds=25, interval=3):
+def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION):
     stopping = False
 
     def stop(signum, frame):
@@ -163,7 +231,7 @@ def supervise(command=ALLOY, *, startup_seconds=25, interval=3):
             if child.poll() is not None:
                 raise LogsRuntimeError('Log exporter exited.')
             try:
-                health()
+                publish_observation(health(), observation_path)
             except LogsRuntimeError:
                 if ready or time.monotonic() >= deadline:
                     raise
