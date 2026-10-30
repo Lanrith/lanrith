@@ -309,10 +309,11 @@ class CredentialStoreTests(unittest.TestCase):
         with native.lock():
             native.begin({'snmpd.conf': changed}, {'snmpd.conf': values['snmp']})
             native.phase('writing')
-        with self.assertRaisesRegex(ReleaseError, 'native recovery'):
+        with self.assertRaisesRegex(ReleaseError, 'stopped consumers'):
             self.commit(store, staged)
         self.assertFalse(store.admitted())
-        self.assertEqual(native.read(native.root/'snmpd.conf'), changed)
+        self.assertEqual(native.read(native.root/'snmpd.conf'), values['snmp'])
+        self.assertTrue(native.pending.exists())
 
     def test_missing_prepared_file_is_not_ready_and_retry_can_restore_the_set(self):
         store = self.store()

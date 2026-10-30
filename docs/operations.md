@@ -75,6 +75,58 @@ candidate must return automatically to the previously accepted entry. Keep the
 matching factory image, public trust, recovery key and previous configuration
 offline. Exercise recovery with populated state before a production cutover.
 
+## Service credential provisioning
+
+An image with credential-dependent integrations emits a fixed catalog at
+`/usr/share/lanrith/credentials.json`. It contains references, native formats,
+paths and consumer units. Credential values and owner YAML stay outside the
+image. The installed metadata binds the catalog's digest; a missing or changed
+catalog cannot disable the boot requirement. Minimal profiles have no catalog,
+provisioning socket or credential wait.
+
+The configured operator can inspect provisioning through the existing SSH
+transport, including with `administration.root_access: disabled`:
+
+```sh
+ssh operator@router lanrith-credentials status
+```
+
+For initial installation or newly selected bindings, the owner's protected
+secret-manager runner supplies a JSON object on stdin. Each key is a catalog
+reference; each value is canonical Base64 of the complete native credential
+file. TSIG's native file already contains Base64, so the transport encodes that
+file again. Invoke `lanrith-credentials stage CONFIGURATION_SHA256` through SSH
+with that object as stdin. Never put values in arguments, environment variables,
+source files or temporary controller files. The server checks the socket peer's
+UID and validates the complete set before stopping any consumer.
+
+Staging returns a transaction ID and starts the selected consumers so the
+owner's automation can check actual authentication and permissions. Syntax
+validation alone does not establish backend agreement. After those checks pass,
+the same operator confirms that exact transaction:
+
+```sh
+ssh operator@router lanrith-credentials commit TRANSACTION_ID
+```
+
+Confirmation permits the normal image-health checks to run. It cannot bypass
+them. The service starts an inactive completion observer and leaves an active
+observer running. It never restarts that observer or stops mandatory firewall
+guards. SSH/OOB, recursive DNS and NTP have no dependency on the credential gate.
+
+Provisioning has a 600-second window before the ordinary image-readiness
+deadline; the completion service's outer deadline remains effective. A failed
+candidate returns to its accepted fallback. On an initial installation, a late
+successful confirmation can start completion again without reinstalling.
+Keep the separate recovery-key acknowledgement and other health requirements
+in the installation workflow.
+
+Unchanged admitted bindings carry through ordinary A/B updates automatically.
+Staging cannot change a value needed by an admitted fallback. Initial,
+uncommitted installation values can be corrected; each replacement gets a new
+transaction ID. Interrupted writes resume only for the same image and catalog.
+Credential rotation needs a separately qualified transition workflow.
+
 After any suspected root compromise, do not treat a successful reboot as
 credential recovery. Isolate the router, preserve external evidence, build from
 independently verified inputs, set a fresh `administration.host_key_rotation`,

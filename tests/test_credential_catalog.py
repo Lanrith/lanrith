@@ -80,8 +80,8 @@ class CredentialCatalogTests(unittest.TestCase):
         self.assertEqual(json.loads(files['usr/share/lanrith/credentials.json']),
                          credential_config.catalog(config.normalize(value)))
         self.assertNotIn('usr/share/lanrith/credentials.json', config.render(minimal()))
-        # This foundation emits no active provisioning endpoint or boot gate.
-        self.assertFalse(any('credential-provisioning' in name for name in files))
+        self.assertIn('usr/lib/systemd/system/lanrith-credentials.socket', files)
+        self.assertNotIn('usr/lib/systemd/system/lanrith-credentials.socket', config.render(minimal()))
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             base = root/'base.tar'

@@ -10,11 +10,12 @@ from .release import require, unique
 
 
 FORMAT_UNITS = {
-    'tsig-base64': {'named.service'},
+    'tsig-base64': {'named.service', 'lanrith-dns-state.service'},
     'bgp-token': {'frr.service', 'lanrith-routing-credentials.service'},
     'radius-secret': {'freeradius.service'},
     'directory-password': {'lanrith-policy-bootstrap.service', 'lanrith-policy-bindings.service',
-                           'lanrith-policy-helper.service', 'lanrith-policy-reader.service'},
+                           'lanrith-policy-helper.service', 'lanrith-policy-reader.service',
+                           'lanrith-policy-helper-requests.socket', 'lanrith-policy-helper-status.socket'},
     'log-password': {'alloy.service'}, 'snmp-user': {'snmpd.service'},
 }
 FORMATS = set(FORMAT_UNITS)

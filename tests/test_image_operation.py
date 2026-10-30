@@ -135,6 +135,34 @@ class OperatorTests(unittest.TestCase):
             operation.complete()
         fallback.assert_called_once_with(operation.INSTALLED)
 
+    def test_unprovisioned_candidate_exhausts_bounded_setup_then_takes_automatic_fallback(self):
+        from lanrith import credential_operation
+        value, record = self.fixture()
+        current = {**value, **record['candidate']}
+        with patch.object(operation, 'policy', return_value=current), \
+                patch.object(operation, 'load', return_value=record), patch.object(operation, 'operation_lock'), \
+                patch.object(credential_operation, 'wait_ready', return_value=False) as wait, \
+                patch.object(operation, 'fallback_boot') as fallback, \
+                patch.object(runtime, 'accept') as accept, self.assertRaisesRegex(ReleaseError, 'deadline'):
+            operation.complete()
+        wait.assert_called_once_with(current)
+        accept.assert_not_called()
+        fallback.assert_called_once_with(operation.INSTALLED)
+
+    def test_expired_initial_provisioning_stays_unaccepted_and_completion_can_be_started_again(self):
+        from lanrith import credential_operation
+        value, _ = self.fixture()
+        with patch.object(operation, 'policy', return_value=value), patch.object(operation, 'load', return_value=None), \
+                patch.object(operation, 'accepted_identity', return_value=None), \
+                patch.object(operation, 'operation_lock'), \
+                patch.object(credential_operation, 'wait_ready', side_effect=[False, True]), \
+                patch.object(operation, 'fallback_boot') as fallback, patch.object(runtime, 'accept') as accept:
+            with self.assertRaisesRegex(ReleaseError, 'deadline'):
+                operation.complete()
+            operation.complete()
+        fallback.assert_not_called()
+        accept.assert_called_once_with(value['deployment_sequence'])
+
     def test_unqualified_fallback_cannot_change_boot_selectors_or_reboot(self):
         value, record = self.fixture()
         current = {**value, **record['candidate']}

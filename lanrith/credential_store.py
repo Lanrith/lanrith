@@ -303,7 +303,7 @@ class Store:
                 os.close(fd)
 
     @contextmanager
-    def native_locks(self):
+    def native_locks(self, *, recover=True):
         """Serialize with SNMP's existing recoverable activation protocol."""
         with ExitStack() as stack:
             for item in sorted(self.items.values(), key=lambda i: i['path']):
@@ -322,6 +322,7 @@ class Store:
                 except BlockingIOError:
                     raise ValueError('Native credential activation is busy.') from None
                 if (parent/'.activation-pending').exists() or list(parent.glob('.activation-write.*')):
+                    require(recover, 'Native credential recovery requires stopped consumers.')
                     from credential_runtime import Activation
                     from snmp_service import State
                     Activation(State(parent, header=item['parameters']['header']), None, None).recover(boot=True)
@@ -425,8 +426,8 @@ class Store:
         pending = self.selected_pending()
         require(pending is not None and pending['transaction_id'] == transaction_id and self.prepared(),
                 'Credential confirmation is stale or the staged set differs.')
-        with self.native_locks():
-            require(self.prepared(), 'Staged credentials changed during native recovery.')
+        with self.native_locks(recover=False):
+            require(self.prepared(), 'Staged credentials changed during native confirmation.')
             previous = self.inventory('admitted.json', admitted=True)
             previous.update({binding(item): self.current(item) for item in self.items.values()})
             require(len(previous) <= HISTORY_LIMIT, 'Admitted credential inventory exceeds its bound.')

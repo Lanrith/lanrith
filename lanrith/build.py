@@ -115,6 +115,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'boot': value['hardware']['boot'], 'watchdog': value['hardware']['watchdog'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
+    credential_manifest = overlay/'usr/share/lanrith/credentials.json'
+    installed['credential_catalog_sha256'] = (hashlib.sha256(credential_manifest.read_bytes()).hexdigest()
+                                               if credential_manifest.is_file() else None)
     if certificate is not None:
         installed['image_contract'] = boot_policy.contract(value, base, certificate, public, integration['digests'])
         installed['image_contract']['recovery'] = ({'image_id': image_id, 'sequence': sequence,
@@ -146,7 +149,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
-                   'radius_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py', 'boot_health.py',
+                   'radius_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
+                   'credential_operation.py', 'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
                    'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',
                    'image_operation.py', 'steady_recovery.py'):
@@ -197,6 +201,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     operator_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                                 'from lanrith.image_operation import main\nsys.exit(main())\n')
     operator_wrapper.chmod(0o755)
+    credential_wrapper = overlay/'usr/bin/lanrith-credentials'
+    credential_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                  'from lanrith.credential_operation import main\nsys.exit(main())\n')
+    credential_wrapper.chmod(0o755)
     if serial_hash is not None:
         shutil.copyfile(serial_hash, overlay/'etc/security/admin.serial-passphrase.hash')
         (overlay/'etc/security/admin.serial-passphrase.hash').chmod(0o600)
@@ -256,6 +264,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         activation = units/target/unit
         activation.parent.mkdir(parents=True, exist_ok=True)
         activation.symlink_to('../'+unit)
+    if installed['credential_catalog_sha256'] is not None:
+        activation = units/'sockets.target.wants/lanrith-credentials.socket'
+        activation.symlink_to('../lanrith-credentials.socket')
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
         f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'
