@@ -23,7 +23,7 @@ import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import build, config, media, release
+from lanrith import build, config, media, release, update
 
 PROJECT = Path(__file__).resolve().parents[1]
 OWNER = '4d953754-9f66-43ac-b649-e576c951c8cb'
@@ -56,6 +56,83 @@ def stop(process):
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=15)
+
+
+class StagingFaultError(release.ReleaseError):
+    """Retain bounded transaction metadata without guest output or credentials."""
+
+    def __init__(self, diagnostic):
+        self.diagnostic = diagnostic
+        super().__init__('Inactive-slot interruption failed: '+json.dumps(diagnostic, sort_keys=True))
+
+
+def interrupt_staging(guest, disk, sequence, accepted, *, timeout=900):
+    """Cut guest power only after a real inactive-slot GPT write is visible."""
+    regular(disk)
+    release.require(type(sequence) is int and type(accepted) is int and sequence > accepted > 0,
+                    'Fault qualification requires increasing deployment sequences.')
+    release.require(0 < timeout <= 900, 'Fault observation exceeds the normal staging budget.')
+
+    def table():
+        return json.loads(run('sfdisk', '--json', str(disk), timeout=5))['partitiontable']
+
+    before = table()
+    partitions = {part['node']: part for part in before['partitions']}
+    release.require(len(partitions) == len(before['partitions']) and
+                    not any(part.get('name') == '_empty' for part in partitions.values()),
+                    'The fault fixture must begin with populated, unique slots.')
+    inactive = set()
+    for role, guid in update.GUIDS.items():
+        matching = [part for part in partitions.values() if part['type'].lower() == guid]
+        active_label = f'l_{accepted}_{role.replace("-", "_")}'
+        active = [part for part in matching if part.get('name') == active_label]
+        release.require(len(matching) == 2 and len(active) == 1,
+                        'Fault fixture lacks an unambiguous accepted slot.')
+        inactive.update(part['node'] for part in matching if part != active[0])
+    diagnostic = {'sequence': sequence, 'accepted_sequence': accepted,
+                  'observations': 0, 'inactive_write_observed': False, 'power_cut': False}
+    started = time.monotonic()
+    deadline = started+timeout
+    # A normal staging command can authenticate multiple full images before
+    # its first write. Use its existing budget, and inspect the disposable raw
+    # disk locally so polling does not create competing SSH/PAM work in TCG.
+    # Files drain both streams even if the child emits more than a pipe holds.
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(guest.ssh_arguments(
+            f'sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/{sequence}'),
+            stdin=subprocess.DEVNULL, stdout=output, stderr=errors, env=guest.environment)
+        try:
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    diagnostic.update(reason='staging-exited-before-fault', exit_code=process.returncode)
+                    raise StagingFaultError(diagnostic)
+                observed = table()
+                diagnostic['observations'] += 1
+                rows = {part['node']: part for part in observed['partitions']}
+                if (len(rows) != len(observed['partitions']) or rows.keys() != partitions.keys() or
+                        {k: v for k, v in observed.items() if k != 'partitions'} !=
+                        {k: v for k, v in before.items() if k != 'partitions'} or
+                        any(rows[node] != part for node, part in partitions.items() if node not in inactive) or
+                        any(any(rows[node].get(key) != partitions[node].get(key)
+                                for key in ('start', 'size', 'type')) for node in inactive)):
+                    diagnostic['reason'] = 'accepted-slot-or-geometry-changed'
+                    raise StagingFaultError(diagnostic)
+                if any(rows[node].get('name') == '_empty' for node in inactive):
+                    if process.poll() is not None:
+                        diagnostic.update(reason='staging-exited-before-fault', exit_code=process.returncode)
+                        raise StagingFaultError(diagnostic)
+                    diagnostic.update(inactive_write_observed=True,
+                                      elapsed_seconds=round(time.monotonic()-started, 3))
+                    guest.close()
+                    diagnostic['power_cut'] = True
+                    print('Native VM: interrupted a real inactive-slot write; accepted GPT unchanged.', flush=True)
+                    return diagnostic
+                time.sleep(0.1)
+            diagnostic.update(reason='staging-deadline-without-inactive-write',
+                              elapsed_seconds=round(time.monotonic()-started, 3))
+            raise StagingFaultError(diagnostic)
+        finally:
+            stop(process)
 
 
 def regular(path):
@@ -1130,28 +1207,7 @@ done''')
         # The admitted store must survive the earlier power cycles. Keep the
         # authorized foreground SSH session alive until the actual disk fault.
         root(guest, 'test -d /var/lib/lanrith/update-inbox/11')
-        process = subprocess.Popen(guest.ssh_arguments(
-            'sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/11'),
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=guest.environment)
-        deadline, interrupted = time.monotonic()+90, False
-        try:
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    _, errors = process.communicate(timeout=5)
-                    raise release.ReleaseError('Staging exited before the inactive-slot fault: '+
-                                               errors[-2048:].decode(errors='replace'))
-                table = json.loads(root(guest, 'sfdisk --json /dev/vda').stdout)['partitiontable']['partitions']
-                if any(part.get('name') == '_empty' for part in table):
-                    # Discard guest RAM and stop every writer at the observed
-                    # inactive-slot transaction, then boot the accepted image.
-                    guest.close()
-                    interrupted = True
-                    break
-                time.sleep(0.1)
-        finally:
-            stop(process)
-        release.require(interrupted, 'Did not observe the inactive-slot write before interruption.')
+        fault = interrupt_staging(guest, disk, 11, 10)
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'Accepted update did not persist.')
@@ -1175,7 +1231,7 @@ done''')
         # constructing the independent provisioning-failure probe.
         disk.unlink()
         provisioning_failure(value, base, initrd, work/'provisioning-failure', secret)
-        return {'profile': 'tpm2-ab', 'result': 'pass', 'checks': ['factory-install-readback',
+        return {'profile': 'tpm2-ab', 'result': 'pass', 'interrupted_staging': fault, 'checks': ['factory-install-readback',
             'secure-boot', 'dm-verity', 'tpm2-state-encryption', 'recovery-enrollment', 'ssh-pam-administration',
             'automatic-boot-observation',
             'optional-services-inactive', 'one-shot-upgrade', 'fallback-protection', 'unaccepted-reboot-fallback',
@@ -1318,6 +1374,9 @@ def main():
             print('Native VM profile rootless passed.', flush=True)
             shutil.rmtree(profile)
         report['result'] = 'pass'
+    except StagingFaultError as error:
+        report['failure'] = {'kind': 'inactive-slot-interruption', 'diagnostic': error.diagnostic}
+        raise
     except PrivilegeBoundaryError as error:
         report['failure'] = {'kind': 'unprivileged-control-boundary', 'diagnostic': error.diagnostic}
         raise
