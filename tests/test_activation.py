@@ -73,7 +73,8 @@ class OptionalActivationTests(unittest.TestCase):
                  'cron.service', 'systemd-hostnamed.service', 'systemd-hostnamed.socket',
                  'ssh.socket', 'sshd@.service',
                  'systemd-sysupdate.service', 'systemd-sysupdate.timer',
-                 'systemd-sysupdate-reboot.service', 'systemd-sysupdate-reboot.timer')
+                 'systemd-sysupdate-reboot.service', 'systemd-sysupdate-reboot.timer',
+                 'dpkg-db-backup.service', 'dpkg-db-backup.timer')
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name, text in {
@@ -88,12 +89,14 @@ class OptionalActivationTests(unittest.TestCase):
             units = root/'usr/lib/systemd/system'
             units.mkdir(parents=True)
             for name in names:
-                body = ('[Socket]\nListenStream=/run/'+name+'\n' if name.endswith('.socket') else
+                body = ('[Timer]\nOnCalendar=daily\nPersistent=true\n' if name == 'dpkg-db-backup.timer' else
+                        '[Socket]\nListenStream=/run/'+name+'\n' if name.endswith('.socket') else
                         '[Timer]\nOnBootSec=15min\n' if name.endswith('.timer') else
                         '[Service]\nType=oneshot\nExecStart=/bin/true\n')
+                target = 'timers.target' if name.endswith('.timer') else 'multi-user.target'
                 (units/name).write_text('[Unit]\nDescription=Synthetic optional unit\n'+body+
-                    '[Install]\nWantedBy=multi-user.target\n')
-                link = root/'etc/systemd/system/multi-user.target.wants'/name
+                    '[Install]\nWantedBy='+target+'\n')
+                link = root/'etc/systemd/system'/(target+'.wants')/name
                 link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to('/usr/lib/systemd/system/'+name)
             # systemd ships this vendor link; removing package-created /etc

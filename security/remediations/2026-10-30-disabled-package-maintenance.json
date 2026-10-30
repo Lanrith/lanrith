@@ -1,0 +1,92 @@
+{
+  "approval": "Fresh independent human approval is required for this source and runtime activation policy change. Request human review only after all exact-head required builds pass.",
+  "base_commit": "f1afc4a47a9eebdb7f2eb6d71abb0a5acfd9e020",
+  "boot_health_gate": "All failed-unit, signature, digest, native privilege and A/B rollback checks remain enforced. No service failure is ignored or reset to make qualification pass.",
+  "created_at": "2026-10-30T08:27:27.893645+00:00",
+  "deployment_status": "Prepared source only; no merge, release or completed hosted native qualification is claimed.",
+  "distribution_input": {
+    "files": {
+      "./etc/cron.daily/dpkg": {
+        "sha256": "9f2fdd4b4e7706dda74e8e443e1e1da0fbbb19c62a58e230e90d648b69177c35",
+        "size": 123
+      },
+      "./usr/lib/systemd/system/dpkg-db-backup.service": {
+        "sha256": "85249c5a74e9c47bf39d34e78612f0a0fe56cb8b35145482b40f8f73f08b2d5c",
+        "size": 147
+      },
+      "./usr/lib/systemd/system/dpkg-db-backup.timer": {
+        "sha256": "2e0dd766329313bfabd86b1acbd40069510afcfef3935cdea010168b503afde1",
+        "size": 154
+      },
+      "./usr/libexec/dpkg/dpkg-db-backup": {
+        "sha256": "fba28643afbd3f3cba56ce0ee9825271b233185f8fc4c9afca3e0eeaa04f10be",
+        "size": 2546
+      }
+    },
+    "package_sha256": "3e800c6d75e8e709007ed1c356e5fa8509a75c1694fb0a1183709abc9cfdc1f3",
+    "schema": 1,
+    "scope": "Official Debian package read as data; no package installation or package script execution.",
+    "source": "https://deb.debian.org/debian/pool/main/d/dpkg/dpkg_1.22.22_amd64.deb"
+  },
+  "distribution_timer": {
+    "OnCalendar": "daily",
+    "Persistent": true,
+    "activates": "dpkg-db-backup.service",
+    "unit": "dpkg-db-backup.timer"
+  },
+  "failure": {
+    "attempt": 2,
+    "failed_units": [
+      "dpkg-db-backup.service",
+      "systemd-boot-check-no-failures.service"
+    ],
+    "head": "76f8bd1529bb977d94eb75ed2cbf3bcd4dc64f87",
+    "job": 123791454463,
+    "log_sha256": "5dc9c54b0adfd8449a3907dc4381c79ce24031463a62ada8e38657e7d60f1309",
+    "preceding_proxy_failure": "Attempt1 Go proxy transport failure recovered; attempt2 package compilation succeeded. This is a separate native image defect.",
+    "pull_request": 35,
+    "run": 40948135784,
+    "time": "2026-10-30T00:08:49Z"
+  },
+  "kind": "immutable-appliance-package-maintenance-activation-repair",
+  "paid_ai": false,
+  "protection_bypass": false,
+  "reason": "Native qualification crossed midnight after an intentional power cut. The daily persistent dpkg database backup timer was available even though image minimization removes dpkg databases and its required helper library. Its failed service correctly failed the unchanged systemd boot-health gate.",
+  "related_automatic_proposal": {
+    "candidate_id": "be89adc28703cc7547a6eb025caca6912dba829ff736634276ee100f67d11be3",
+    "proposal_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-proposal-40947660638-1",
+    "pull_request": 35,
+    "status": "Separate input-only proposal remains blocked until the repair is on Main and it is freshly resolved and qualified."
+  },
+  "removed_dependency": "/usr/share/dpkg/sh/dpkg-error.sh, sourced unconditionally by the distribution backup helper; /var/lib/dpkg is also absent by existing image policy.",
+  "repair": [
+    "Mask dpkg-db-backup.service and dpkg-db-backup.timer before final assembly can apply package presets.",
+    "Remove their unused vendor units, helper directory and legacy cron entry while retaining package copyright notices.",
+    "Require both masks and inactive state in runtime host hardening.",
+    "Use native qualification to attempt both activation paths directly and require refusal, without waiting for a calendar boundary."
+  ],
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "validation": {
+    "before": {
+      "errors": 2,
+      "failures": 1,
+      "meaning": "Existing image fails the new paired-mask and helper-pruning invariants.",
+      "tests": 2
+    },
+    "focused": {
+      "existing_environment_skips": 1,
+      "result": "pass",
+      "tests": 6
+    },
+    "full_suite": {
+      "existing_environment_skips": 12,
+      "passed": 532,
+      "result": "pass",
+      "tests": 544
+    },
+    "hosted_native_qualification": "Required on the final PR head; not claimed by local tests.",
+    "native_offline_preset": "Real systemctl preset-all with an enable-all vendor preset cannot override the paired masks; fixtures include a daily persistent timer.",
+    "source_and_workflow_checks": "Passed check-source.py, check-workflows.py, pinned actionlint1.7.12 and git diff --check."
+  }
+}
