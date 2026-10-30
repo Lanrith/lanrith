@@ -38,13 +38,15 @@ def validate_catalog(value):
         require(str(path) == item['path'] and '..' not in path.parts and
                 str(path).startswith(('/var/lib/', '/var/cache/')) and
                 str(path.parent) not in ('/var/lib', '/var/cache', '/var/lib/lanrith') and
-                not path.is_relative_to('/var/lib/lanrith/credential-provisioning'),
+                not path.is_relative_to('/var/lib/lanrith/credential-provisioning') and
+                not path.name.startswith(('.provisioning-', '.activation')) and path.name != '.lock',
                 'Credential needs a dedicated directory outside provisioning control state.')
         if item['format'] in ('tsig-base64', 'bgp-token'):
             require(len(item['reference']) <= 48, 'Credential reference exceeds its native consumer limit.')
         if item['format'] == 'snmp-user':
             parameters = item['parameters']
-            require(set(parameters) == {'username', 'header'} and isinstance(parameters['username'], str) and
+            require(path.name == 'snmpd.conf' and set(parameters) == {'username', 'header'} and
+                    isinstance(parameters['username'], str) and
                     re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,31}', parameters['username']) and
                     isinstance(parameters['header'], str) and re.fullmatch(r'#[ -~]{1,125}\n', parameters['header']),
                     'SNMP provisioning identity differs.')
@@ -54,6 +56,7 @@ def validate_catalog(value):
         paths.append(path)
         units.update(FORMAT_UNITS[item['format']])
     require(names == sorted(set(names)) and len(paths) == len(set(paths)) and
+            sum(item['format'] == 'snmp-user' for item in value['credentials']) <= 1 and
             not any(a != b and a in b.parents for a in paths for b in paths) and
             value['units'] == sorted(units), 'Credential inventory is ambiguous or has unexpected service control.')
     return value

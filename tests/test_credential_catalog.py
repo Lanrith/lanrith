@@ -89,7 +89,10 @@ class CredentialCatalogTests(unittest.TestCase):
             build.assembly(minimal(), base, root/'work', version='0.1.0', sequence=12)
             tree = root/'work/mkosi.extra/usr/lib/lanrith'
             self.assertTrue((tree/'lanrith/credential_values.py').is_file())
+            self.assertTrue((tree/'lanrith/credential_store.py').is_file())
             self.assertTrue((tree/'snmp_credentials.py').is_file())
+            for name in ('snmp_service.py', 'credential_runtime.py', 'systemd_service.py'):
+                self.assertTrue((tree/name).is_file())
             self.assertFalse((tree/'lanrith/credential_config.py').exists())
 
     def test_runtime_catalog_refuses_extra_commands_units_and_format_parameters(self):
@@ -111,6 +114,8 @@ class CredentialCatalogTests(unittest.TestCase):
         self.assertEqual(item['path'], value['runtime']['credentials']['ingest'])
         for path in ('/var/lib/lanrith/image-operation.json', '/var/lib/secret',
                      '/var/lib/lanrith/credential-provisioning/committed.json',
+                     '/var/lib/arbitrary-owner/.lock', '/var/lib/arbitrary-owner/.activation.lock',
+                     '/var/lib/arbitrary-owner/.provisioning-write-credential',
                      '/var/lib/arbitrary-owner/../escape'):
             value['runtime']['credentials']['ingest'] = path
             with self.subTest(path=path), self.assertRaises(ReleaseError):

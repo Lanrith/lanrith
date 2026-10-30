@@ -146,18 +146,18 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
-                   'radius_runtime.py', 'logs_runtime.py', 'credential_values.py', 'boot_health.py',
+                   'radius_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py', 'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
                    'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',
                    'image_operation.py', 'steady_recovery.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)
-    # The provisioning grammar shares the image-owned SNMP parser. Keep that
-    # pure helper present even when no SNMP daemon is selected, so dormant
-    # imports never depend on a compiler checkout or third-party package.
-    grammar = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_credentials.py'
-    shutil.copyfile(grammar, overlay/'usr/lib/lanrith/snmp_credentials.py')
+    # Keep native transaction recovery imports available even without SNMP.
+    # None of these helpers activates a daemon or provisioning endpoint.
+    helpers = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/lanrith'
+    for name in ('snmp_credentials.py', 'snmp_service.py', 'credential_runtime.py', 'systemd_service.py'):
+        shutil.copyfile(helpers/name, overlay/'usr/lib/lanrith'/name)
     wrapper = overlay / 'usr/bin/lanrith-runtime'
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
