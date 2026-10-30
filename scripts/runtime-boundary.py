@@ -10,7 +10,8 @@ import sys
 COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config', 'bindings',
             'integrations', 'access', 'firewall', 'service_plane', 'authoritative', 'routing',
             'translation', 'nat46', 'nat64', 'ids', 'metrics', 'policy_agent', 'discovery',
-            'logs', 'radius', 'fancontrol_config'}
+            'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs',
+            'recovery_build', 'recovery_failure_build', 'state_formats'}
 
 
 def check(root):

@@ -12,11 +12,13 @@ import subprocess
 
 
 SCHEMA = 'lanrith-release-v1'
+OPERATION_SCHEMA = 'lanrith-release-v2'
 FIELDS = {'schema', 'purpose', 'image_id', 'platform_version', 'deployment_sequence',
           'configuration_sha256', 'architecture', 'artifacts'}
 ARTIFACT_FIELDS = {'role', 'name', 'size', 'sha256'}
 ROLES = {'update': {'uki', 'root', 'verity', 'verity-sig'},
          'factory': {'uki', 'root', 'verity', 'verity-sig', 'disk', 'initrd'},
+         'recovery': {'uki', 'root', 'verity', 'verity-sig', 'disk', 'initrd'},
          'base': {'filesystem', 'initrd-filesystem', 'inventory', 'sbom', 'security', 'inputs', 'tools'}}
 HEX = re.compile(r'[0-9a-f]{64}\Z')
 VERSION = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
@@ -48,8 +50,13 @@ def document(data):
                            parse_constant=lambda _: (_ for _ in ()).throw(ReleaseError('Invalid JSON number.')))
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise ReleaseError('Invalid release manifest.') from error
-    require(isinstance(value, dict) and set(value) == FIELDS, 'Release manifest fields differ.')
-    require(value['schema'] == SCHEMA, 'Unsupported release schema.')
+    require(isinstance(value, dict) and value.get('schema') in (SCHEMA, OPERATION_SCHEMA),
+            'Unsupported release schema.')
+    require(set(value) == FIELDS | ({'image_contract'} if value['schema'] == OPERATION_SCHEMA else set()),
+            'Release manifest fields differ.')
+    if value['schema'] == OPERATION_SCHEMA:
+        from .image_contract import validate
+        validate(value['image_contract'])
     purpose = value['purpose']
     require(isinstance(purpose, str) and purpose in ROLES, 'Unsupported release purpose.')
     require(isinstance(value['image_id'], str) and
@@ -80,8 +87,8 @@ def document(data):
     return value
 
 
-def read(path, maximum):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+def read(path, maximum, *, dir_fd=None):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     with os.fdopen(descriptor, 'rb') as stream:
         before = os.fstat(stream.fileno())
         require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
@@ -116,7 +123,7 @@ def canonical(value):
 
 
 def unsigned_manifest(root, *, purpose, version, sequence, configuration_sha256,
-                      files, image_id='lanrith', architecture='x86-64'):
+                      files, image_id='lanrith', architecture='x86-64', image_contract=None):
     require(set(files) == ROLES.get(purpose), 'Incomplete artifact role selection.')
     artifacts = []
     for role, name in sorted(files.items()):
@@ -126,6 +133,9 @@ def unsigned_manifest(root, *, purpose, version, sequence, configuration_sha256,
              'platform_version': version, 'deployment_sequence': sequence,
              'configuration_sha256': configuration_sha256, 'architecture': architecture,
              'artifacts': artifacts}
+    if image_contract is not None:
+        require(purpose in ('update', 'factory'), 'Only installed images declare an image contract.')
+        value.update(schema=OPERATION_SCHEMA, image_contract=image_contract)
     return document(canonical(value))
 
 

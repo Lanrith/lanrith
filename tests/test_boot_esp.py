@@ -13,7 +13,8 @@ from lanrith.release import ReleaseError
 
 class BootESPTests(unittest.TestCase):
     def observe(self, esp, *, parent='/dev/vda', kind='vfat', mounted=True, multiple=False, nested=False,
-                options='ro,nodev,nosuid,noexec'):
+                options='ro,nodev,nosuid,noexec',
+                parttype='c12a7328-f81f-11d2-ba4b-00a0c93ec93b', duplicate_partition=False):
         actual_stat = Path.stat
 
         def root_owned(path, **options):
@@ -31,14 +32,13 @@ class BootESPTests(unittest.TestCase):
                 rows = [{'source': '/dev/vda1', 'fstype': kind, 'target': str(esp/'EFI' if nested else esp),
                          'options': options}]
                 return json.dumps({'filesystems': rows*2 if multiple else rows})
-            if arguments[0] == 'lsblk':
-                return json.dumps({'blockdevices': [{'name': '/dev/vda1', 'type': 'part',
-                    'pkname': parent, 'parttype': 'C12A7328-F81F-11D2-BA4B-00A0C93EC93B'}]})
             raise AssertionError('Unexpected diagnostic command.')
 
         with patch.object(Path, 'stat', autospec=True, side_effect=root_owned), \
                 patch.object(Path, 'is_mount', return_value=mounted), \
-                patch.object(update, 'command', side_effect=command):
+                patch.object(update, 'command', side_effect=command), \
+                patch.object(update, 'geometry', return_value=[{'device': '/dev/vda1', 'disk': parent,
+                    'type': parttype}] * (2 if duplicate_partition else 1)):
             return update.boot_esp({'esp': 'auto'}, disk='/dev/vda')
 
     def test_automatic_esp_detection_supports_both_standard_mount_names(self):
@@ -54,7 +54,8 @@ class BootESPTests(unittest.TestCase):
             (esp/'EFI').mkdir(parents=True)
             for change in ({'parent': '/dev/vdb'}, {'kind': 'ext4'}, {'mounted': False},
                            {'multiple': True}, {'nested': True}, {'options': 'rw,nodev,nosuid,noexec'},
-                           {'options': 'ro,nodev,nosuid'}):
+                           {'options': 'ro,nodev,nosuid'}, {'parttype': 'other'},
+                           {'duplicate_partition': True}):
                 with self.subTest(change=change), self.assertRaises(ReleaseError):
                     self.observe(esp, **change)
 

@@ -129,12 +129,39 @@ def verify_root_access_disabled(root, username):
             raise ValueError('Disabled root access retained a file capability.')
 
 
+def protect_password_databases(root):
+    """Optional daemons authenticate through their integrations, not Unix hashes."""
+    for name in ('group', 'gshadow'):
+        def transform(fields):
+            if fields[0] == 'shadow':
+                if len(fields) != 4:
+                    raise ValueError('Shadow group record is malformed.')
+                fields[3] = ''
+                if name == 'gshadow':
+                    fields[2] = ''
+        _rewrite_database(root/'etc'/name, transform)
+    for path in (root/'usr/lib/sysusers.d').glob('*.conf'):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('System-user declaration is unsafe.')
+        lines = [line for line in path.read_text().splitlines()
+                 if not (len(fields := line.split()) >= 3 and fields[0] == 'm' and fields[2] == 'shadow')]
+        path.write_text('\n'.join(lines)+'\n')
+    for name in ('shadow', 'gshadow', 'shadow-', 'gshadow-'):
+        path = root/'etc'/name
+        if not path.exists() and not path.is_symlink():
+            continue
+        if not path.is_file() or path.is_symlink():
+            raise ValueError('Password database is unavailable or unsafe.')
+        path.chmod(0o600)
+
+
 def apply_root_access(root, username, mode):
     """Remove every general operator elevation path when selected at build time."""
+    if mode not in ('enabled', 'disabled'):
+        raise ValueError('Unknown root-access finalization policy.')
+    protect_password_databases(root)
     if mode == 'enabled':
         return
-    if mode != 'disabled':
-        raise ValueError('Unknown root-access finalization policy.')
     _lock_root(root)
     _remove_sudo_membership(root, username)
     for relative in REMOVED:

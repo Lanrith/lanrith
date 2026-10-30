@@ -124,7 +124,9 @@ class SerialReader:
 
 
 class Guest:
-    def __init__(self, work, secret, disk, *, medium=None, tpm=True):
+    def __init__(self, work, secret, disk, *, medium=None, tpm=True, hotplug_port=False,
+                 disk_readonly=False, extra_disk=None, extra_disk_readonly=False, secure_boot=True,
+                 backup_disk=None, backup_disk_readonly=True):
         self.work, self.secret = work, secret
         self.process = self.tpm = self.serial = self.qmp = None
         self.console = None
@@ -139,9 +141,19 @@ class Guest:
         work.mkdir(mode=0o700)
         self.firmware = regular(Path('/usr/share/OVMF/OVMF_CODE_4M.secboot.fd'))
         variables = regular(Path('/usr/share/OVMF/OVMF_VARS_4M.fd'))
-        run('virt-fw-vars', '--input', str(variables), '--output', str(work/'vars.fd'),
-            '--enroll-cert', str(secret/'test.crt'), '--add-mok', OWNER, str(secret/'test.crt'), '--secure-boot')
+        firmware = ['virt-fw-vars', '--input', str(variables), '--output', str(work/'vars.fd'),
+                    '--enroll-cert', str(secret/'test.crt'), '--add-mok', OWNER, str(secret/'test.crt')]
+        firmware += (['--secure-boot'] if secure_boot else
+                     ['--set-false', 'SecureBootEnable', '--set-fallback-no-reboot'])
+        run(*firmware)
         self.disk, self.medium, self.tpm_enabled = regular(disk), regular(medium) if medium else None, tpm
+        self.hotplug_port = hotplug_port
+        self.disk_readonly = disk_readonly
+        self.secure_boot = secure_boot
+        self.extra_disk = regular(extra_disk) if extra_disk else None
+        self.extra_disk_readonly = extra_disk_readonly
+        self.backup_disk = regular(backup_disk) if backup_disk else None
+        self.backup_disk_readonly = backup_disk_readonly
 
     @property
     def buffer(self):
@@ -164,14 +176,27 @@ class Guest:
         for name in ('qmp.sock', 'serial.sock', 'tpm.sock'):
             (self.work/name).unlink(missing_ok=True)
         arguments = ['qemu-system-x86_64', '-machine', 'q35,smm=on,accel=tcg', '-cpu', 'max',
-            '-smp', '2', '-m', '4096', '-nodefaults', '-display', 'none', '-no-reboot',
+            '-smp', '2', '-m', '4096', '-nodefaults', '-display', 'none',
             '-global', 'driver=cfi.pflash01,property=secure,value=on',
             '-drive', 'if=pflash,format=raw,unit=0,readonly=on,file='+str(self.firmware),
             '-drive', 'if=pflash,format=raw,unit=1,file='+str(self.work/'vars.fd'),
-            '-drive', 'if=none,id=installed,format=raw,file='+str(self.disk),
+            '-drive', 'if=none,id=installed,format=raw,file='+str(self.disk)+
+                      (',readonly=on' if self.disk_readonly else ''),
             '-device', 'virtio-blk-pci,drive=installed,serial=lanrith-qa-disk,bootindex=2',
             '-chardev', 'socket,id=serial,path='+str(self.work/'serial.sock')+',server=on,wait=off',
             '-serial', 'chardev:serial', '-qmp', 'unix:'+str(self.work/'qmp.sock')+',server=on,wait=off', '-S']
+        if self.secure_boot:
+            arguments.append('-no-reboot')
+        if self.hotplug_port:
+            arguments += ['-device', 'pcie-root-port,id=lanrith-hotplug-port,chassis=1']
+        if self.extra_disk:
+            arguments += ['-drive', 'if=none,id=recovery-target,format=raw,file='+str(self.extra_disk)+
+                          (',readonly=on' if self.extra_disk_readonly else ''),
+                          '-device', 'virtio-blk-pci,drive=recovery-target,serial=lanrith-state-test,bootindex=3']
+        if self.backup_disk:
+            arguments += ['-drive', 'if=none,id=backup-target,format=raw,file='+str(self.backup_disk)+
+                          (',readonly=on' if self.backup_disk_readonly else ''),
+                          '-device', 'virtio-blk-pci,drive=backup-target,serial=lanrith-backup-test,bootindex=4']
         if self.medium:
             arguments += ['-device', 'qemu-xhci', '-drive', 'if=none,id=medium,format=raw,file='+str(self.medium),
                           '-device', 'usb-storage,drive=medium,serial=lanrith-test-medium,bootindex=1']
@@ -206,8 +231,11 @@ class Guest:
         self.control('qmp_capabilities')
         self.control('cont')
 
-    def control(self, command):
-        self.qmp.sendall(json.dumps({'execute': command}).encode()+b'\n')
+    def control(self, command, arguments=None):
+        request = {'execute': command}
+        if arguments is not None:
+            request['arguments'] = arguments
+        self.qmp.sendall(json.dumps(request).encode()+b'\n')
         data, deadline = b'', time.monotonic()+15
         while time.monotonic() < deadline:
             try:
@@ -252,7 +280,17 @@ class Guest:
             ('bootloader-menu', b'Linux Boot Manager'), ('kernel-panic', b'Kernel panic'),
             ('guest-reboot', b'Rebooting'), ('guest-shutdown', b'systemd-shutdown'),
             ('pid1-freeze', b'Freezing execution'))}
-        if self.qmp:
+        for category in ('no-hostkey', 'hostkey-load', 'permission', 'operation', 'bad-config',
+                         'privsep', 'missing-file', 'status-203', 'status-226', 'namespace', 'status-255', 'core-dump',
+                         'upload-path', 'hostkey-path', 'sshd-path', 'sshd-runtime-path', 'config-path',
+                         'sshd-session', 'library', 'fatal', 'sandbox', 'seccomp', 'chroot',
+                         'rexec', 'exec-error', 'error', 'failed', 'closed', 'signal', 'not-found',
+                         'exit', 'refused', 'bad', 'uids', 'key-exchange', 'maxstartups',
+                         'broken-pipe', 'invalid', 'connection', 'preauth', 'ssh-auth', 'signal-31',
+                         'signal-11', 'signal-6', 'signal-4', 'signal-9', 'bad-syscall', 'sigsys',
+                         'monitor', 'authenticated', 'killed', 'recv-error'):
+            flags['qa-ssh-'+category] = ('LANRITH_QA_SSH_'+category).encode().lower() in buffer.lower()
+        if self.qmp and self.qmp.fileno() >= 0:
             while select.select([self.qmp], [], [], 0)[0]:
                 data = self.qmp.recv(65536)
                 if not data:
@@ -267,7 +305,9 @@ class Guest:
                         self.qmp_events.append({'event': event['event'],
                             'reason': reason if re.fullmatch(r'[a-z-]{0,64}', reason) else 'unknown'})
         literals = set()
-        for message in ('Factory installation failed closed.', 'Runtime operation failed.'):
+        for message in ('Factory installation failed closed.', 'Runtime operation failed.',
+                        'Automatic fallback unavailable; holding for recovery.',
+                        'Entering emergency mode. Boot verified signed recovery media.'):
             if message.encode() in buffer:
                 literals.add(message)
         for executable in ('bootctl', 'cryptsetup', 'dd', 'dmsetup', 'findmnt', 'ip', 'lsblk',
@@ -277,13 +317,32 @@ class Guest:
                 message = prefix+executable
                 if message.encode() in buffer:
                     literals.add(message)
-        for module in ('factory', 'update', 'release', 'runtime'):
+        for module in ('factory', 'update', 'release', 'runtime', 'early_failure', 'repair'):
             tree = ast.parse((PROJECT/'lanrith'/(module+'.py')).read_text())
             for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'require' and len(node.args)>1:
+                if (isinstance(node, ast.Call) and len(node.args) > 1 and
+                        (isinstance(node.func, ast.Name) and node.func.id == 'require' or
+                         isinstance(node.func, ast.Attribute) and node.func.attr == 'require' and
+                         isinstance(node.func.value, ast.Name) and node.func.value.id == 'release')):
                     message = node.args[1]
                     if isinstance(message, ast.Constant) and isinstance(message.value, str) and message.value.encode() in buffer:
                         literals.add(message.value)
+        for item in re.findall(rb'Automatic fallback diagnostic: (?:verification|os|value|key|subprocess|other) (?:unknown|(?:early_failure|repair|update|release|factory)\.py:[A-Za-z_][A-Za-z0-9_]{0,63}:[0-9]{1,6})', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic device backup diagnostic: (?:binding|credential|wrong-image|wrong-key|publish|verify) (?:release|os|other) (?:unknown|(?:recovery_backup_device|recovery_backup_preflight|recovery_backup_files|recovery_backup_verity|recovery_backup_auth|recovery_restore_layout|recovery_inputs|factory|update)\.py:[A-Za-z_][A-Za-z0-9_]{0,63}:[0-9]{1,6})(?: errno=[0-9]{1,4})?', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic offline restore diagnostic: (?:binding|credential|wrong-key|restore) (?:release|os|other) (?:unknown|(?:recovery_restore|recovery_restore_target|recovery_restore_transaction|recovery_restore_layout|recovery_backup_preflight|recovery_backup_files|recovery_backup_verity|recovery_backup_auth|recovery_inputs|factory|update)\.py:[A-Za-z_][A-Za-z0-9_]{0,63}:[0-9]{1,6}) errno=[0-9]{1,4}', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic target claim stage: (?:entry|import-failed|binding|readonly|gate|claim)', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic target claim diagnostic: (?:binding|readonly|gate|claim) (?:release|os|other) (?:unknown|(?:recovery_restore_target|recovery_restore_transaction|recovery_inputs|recovery_backup_preflight|factory|update)\.py:[A-Za-z_][A-Za-z0-9_]{0,63}:[0-9]{1,6}) errno=[0-9]{1,4}', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic target readonly observation: disk=[01] partition=[01]', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic serial selection diagnostic: (?:release|os|other) (?:unknown|(?:recovery_select|early_failure|recovery_inputs|repair|factory|update|release)\.py:[A-Za-z_][A-Za-z0-9_]{0,63}:[0-9]{1,6}) errno=[0-9]{1,4}(?: command=(?:unknown|bootctl|cryptsetup|dd|dmsetup|findmnt|lsblk|mount|sfdisk|sync|systemctl|udevadm|umount))?', buffer):
+            literals.add(item.decode())
+        for item in re.findall(rb'Synthetic fsverity errno: [0-9]{1,4}', buffer):
+            literals.add(item.decode())
         clean = re.sub(rb'\x1b\[[0-9;?]*[ -/]*[@-~]', b'', buffer)
         units = set()
         for line in clean.splitlines():
@@ -354,13 +413,14 @@ class Guest:
                             str(self.process.returncode)+'): '+self.diagnostic())
             release.require(not re.search(rb'(?:You are in|Entering) emergency mode', self.buffer, re.IGNORECASE),
                             'Installed boot entered emergency mode: '+self.diagnostic())
-            if healthy and root_access:
-                command = 'sudo sh -c '+shlex.quote(
-                    'test -s /run/lanrith/boot.json && lanrith-runtime health >/dev/null')
-            elif healthy:
-                command = 'test -s /run/lanrith/boot.json && lanrith-runtime status >/dev/null'
-            else:
-                command = 'sudo id -u' if root_access else 'id -u'
+            if not root_access and b'LANRITH_QA_SSH_' in self.buffer:
+                raise release.ReleaseError('Synthetic SSH diagnostic reported a failure: '+self.diagnostic())
+            command = (('sudo sh -c '+shlex.quote(
+                'test -s /run/lanrith/boot.json && lanrith-runtime health >/dev/null')
+                if healthy else 'sudo id -u') if root_access else
+                ("lanrith-image status | python3 -c 'import json,sys; "
+                 "assert isinstance(json.load(sys.stdin).get(\"accepted\"), dict)'"
+                 if healthy else 'id -u'))
             try:
                 if self.ssh(command, success=False, timeout=min(120, max(1, deadline-time.monotonic()))).returncode == 0:
                     return
@@ -387,10 +447,21 @@ class Guest:
 
 def image(value, base, initrd, work, secret, sequence):
     assembly = work/('image-'+str(sequence))
+    recovery = {}
+    disk = work/'installed.raw'
+    previous = sorted((p for p in work.glob('update-*') if p.name[7:].isdecimal() and int(p.name[7:]) < sequence),
+                      key=lambda p: int(p.name[7:]))
+    if previous and disk.is_file():
+        regular(disk)
+        table = json.loads(run('sfdisk', '--json', str(disk)))['partitiontable']
+        esps = [p for p in table['partitions'] if p.get('type', '').lower() == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b']
+        release.require(len(esps) == 1, 'Synthetic fallback ESP is ambiguous.')
+        recovery = {'fallback_release': previous[-1], 'fallback_disk_by_id': value['hardware']['storage']['target'],
+                    'fallback_esp_uuid': esps[0]['uuid'].lower()}
     identity = build.assembly(value, base, assembly, version='0.1.0', sequence=sequence,
         certificate=secret/'test.crt', private_key=secret/'test.key',
-        serial_hash=secret/'serial.hash' if value['administration']['serial']['enabled'] else None,
-        initrd_base=initrd)
+        serial_hash=secret/'serial.hash' if value['administration'].get('serial', {}).get('enabled') else None,
+        initrd_base=initrd, **recovery)
     build.run(assembly)
     update = work/('update-'+str(sequence))
     build.update_payload(assembly, identity, update)
@@ -428,8 +499,9 @@ def factory_medium(assembly, identity, update, work, secret):
     return target
 
 
-def upload(guest, directory):
-    target = '/var/tmp/lanrith-update/'+directory.name
+def upload(guest, directory, *, operator=False):
+    name = release.file_record(directory/'release.json')['sha256'] if operator else directory.name
+    target = '/var/tmp/lanrith-update/'+name
     guest.ssh('mkdir -m 0700 '+shlex.quote(target))
     with tempfile.TemporaryFile() as stream:
         with tarfile.open(fileobj=stream, mode='w') as archive:
@@ -911,7 +983,12 @@ def provisioning_failure(value, base, initrd, work, secret):
         guest.start()
         event = guest.expect_any([rb'(?:You are in|Entering) emergency mode',
                                  rb'Type RECOVERY-KEY-STORED[^\r\n]*: '])
-        release.require(event == 0, 'Failed provisioning reached root recovery enrollment.')
+        if event == 1:
+            # Measured images enroll recovery in the verified initrd before
+            # closing PCR 15. Complete that ceremony, then inject the post-start
+            # failure and prove that it still cannot switch to the root system.
+            guest.serial.sendall(b'RECOVERY-KEY-STORED\r')
+            guest.expect(rb'(?:You are in|Entering) emergency mode')
         # A failed target alone previously let the distribution's switch-root
         # service proceed. Observe beyond normal root startup, including sshd,
         # without authenticating or recording console payloads.
@@ -1209,7 +1286,7 @@ def main():
     try:
         with ExitStack() as resources:
             secret = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix='lanrith-vm-authority.', dir='/dev/shm')))
-            run('openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-days', '1',
+            run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
                 '-subj', '/CN=Lanrith Disposable VM Qualification Authority',
                 '-keyout', str(secret/'test.key'), '-out', str(secret/'test.crt'))
             (secret/'test.key').chmod(0o600)

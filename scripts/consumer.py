@@ -115,13 +115,17 @@ def preflight(owner, bundle):
     release.require(release.public_key(owner/'trust/boot.crt') != release.public_key(owner/'trust/evidence.crt'),
                     'Boot and evidence signing authorities must be separate.')
     pins = integration_pins(owner, value)
-    return {'schema': 1, 'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
+    result = {'schema': 1, 'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'integration_digests': {name: pin[1] for name, pin in pins.items()},
             'platform_lock_sha256': release.file_record(owner/'platform.lock')['sha256'],
             'boot_certificate_sha256': release.file_record(owner/'trust/boot.crt')['sha256'],
             'evidence_certificate_sha256': release.file_record(owner/'trust/evidence.crt')['sha256'],
             'source_commit': os.environ['GITHUB_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
             'workflow_commit': os.environ['LANRITH_WORKFLOW_COMMIT'], 'signing_profile': profile}
+    if (owner/'trust/pcr.crt').exists():
+        release.public_key(owner/'trust/pcr.crt')
+        result['pcr_certificate_sha256'] = release.file_record(owner/'trust/pcr.crt')['sha256']
+    return result
 
 
 def assemble(owner, bundle, request, output):
@@ -159,6 +163,23 @@ def assemble(owner, bundle, request, output):
         release.require((private/'boot.crt').read_bytes().strip() ==
                         release.read(owner/'trust/boot.crt', 65536).strip(),
                         'Boot certificate differs from reviewed owner trust.')
+        boot_options = {}
+        pcr_key = os.environ.pop('LANRITH_PCR_KEY', '')
+        pcr_certificate = os.environ.pop('LANRITH_PCR_CERTIFICATE', '')
+        release.require(bool(pcr_key) == bool(pcr_certificate), 'PCR signing material is incomplete.')
+        if pcr_key:
+            release.require(release.file_record(owner/'trust/pcr.crt')['sha256'] == actual.get('pcr_certificate_sha256') and
+                            pcr_certificate.strip().encode() == release.read(owner/'trust/pcr.crt', 65536).strip(),
+                            'PCR certificate differs from admitted owner trust.')
+            for name, data in (('pcr.key', pcr_key), ('pcr.crt', pcr_certificate)):
+                (private/name).write_text(data)
+                (private/name).chmod(0o600)
+            boot_options.update(pcr_key=private/'pcr.key', pcr_certificate=private/'pcr.crt')
+        recovery_hash = os.environ.pop('LANRITH_RECOVERY_PASSPHRASE_HASH', '')
+        if recovery_hash:
+            (private/'recovery.hash').write_text(recovery_hash.strip()+'\n')
+            (private/'recovery.hash').chmod(0o600)
+            boot_options['recovery_hash'] = private/'recovery.hash'
         value = config.load(owner/'config.yaml')
         floor = value.get('release', {}).get('sequence_floor', 0)
         serial_digest = None
@@ -168,7 +189,6 @@ def assemble(owner, bundle, request, output):
             (private/'serial.hash').write_text(data.strip()+'\n')
             (private/'serial.hash').chmod(0o600)
             serial_digest = release.file_record(private/'serial.hash')['sha256']
-        effective_digest = config.effective_digest(value, actual['integration_digests'], serial_digest)
         sequence = floor + int(os.environ['GITHUB_RUN_NUMBER'])
         release.require(sequence <= 999999999, 'Deployment sequence exceeds its supported bound.')
         release.require(sequence > 0, 'Invalid deployment sequence.')
@@ -188,11 +208,18 @@ def assemble(owner, bundle, request, output):
                    '--sequence', str(sequence)]
         # This receipt is made only by the trusted host after maintained verifier checks.
         # No download, package transaction or caller build hook runs with the keys present.
+        from lanrith import build_inputs
+        boot_record = build_inputs.record(boot_options, certificate=private/'boot.crt',
+            image_id=value.get('release', {}).get('image_id', 'lanrith'), sequence=sequence,
+            tpm_required=value['hardware']['boot'].get('tpm', 'required') == 'required')
+        effective_digest = config.effective_digest(value, actual['integration_digests'], serial_digest,
+                                                  boot_inputs=build_inputs.digest_fields(boot_record))
         (private/'admitted.json').write_bytes(release.canonical({'platform_lock_sha256':
             release.file_record(owner/'platform.lock')['sha256'], 'workflow_commit': actual['workflow_commit'],
             'configuration_sha256': actual['configuration_sha256'], 'files': selection['files'],
             'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
-            'integration_digests': actual['integration_digests'], 'assessment_sha256': receipt['assessment_sha256']}))
+            'integration_digests': actual['integration_digests'], 'assessment_sha256': receipt['assessment_sha256'],
+            'boot_inputs': boot_record}))
         (private/'admitted.json').chmod(0o600)
         run(*command)
         run('sudo', 'chown', '--recursive', str(os.getuid())+':'+str(os.getgid()), str(assembly_root))
@@ -217,6 +244,7 @@ def assemble(owner, bundle, request, output):
                 archive.add(path,arcname=path.name)
         (output/'deployment.json').write_bytes(release.canonical({**actual,
             'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
+            'boot_inputs': boot_record,
             'deployment_sequence': sequence, 'release': verified, 'factory': verified_factory}))
 
 

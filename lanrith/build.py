@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -14,7 +15,15 @@ from .release import require
 
 
 def assembly(value, base, destination, *, version, sequence, certificate=None, private_key=None,
-             integrations=None, serial_hash=None, initrd_base=None, target_facts=None, retained_allocations=None):
+             integrations=None, serial_hash=None, initrd_base=None,
+             fallback_release=None, fallback_disk_by_id=None, fallback_esp_uuid=None,
+             pcr_key=None, pcr_certificate=None, recovery_hash=None,
+             target_facts=None, retained_allocations=None):
+    for path in (base, destination, certificate, private_key, initrd_base, fallback_release,
+                 pcr_key, pcr_certificate, recovery_hash, serial_hash):
+        require(path is None or isinstance(path, Path) and path.is_absolute() and
+                re.fullmatch(r'/[A-Za-z0-9_./+-]{1,2047}', str(path)),
+                'Build paths must be absolute and contain only letters, digits, slash, dot, underscore, plus or hyphen.')
     require(not destination.exists() and not destination.is_symlink(), 'Build workspace already exists.')
     require(base.is_file() and not base.is_symlink() and base.resolve() == base.absolute(),
             'Base filesystem must be an admitted canonical archive.')
@@ -25,6 +34,28 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     # Fail before creating a workspace if hardware evidence or runtime support
     # is missing. Configuration and facts are independently bound in the digest.
     config.render(value, target_facts=target_facts, retained_allocations=retained_allocations)
+
+    from . import boot_policy
+    require((pcr_key is None) == (pcr_certificate is None), 'Both PCR signing inputs are required together.')
+    public = None
+    if certificate is not None and value['hardware']['boot'].get('tpm', 'required') == 'required':
+        pcr_key, pcr_certificate = pcr_key or private_key, pcr_certificate or certificate
+        public = boot_policy.public_key(pcr_key, pcr_certificate)
+    else:
+        require(pcr_key is None, 'PCR signing requires a signed TPM image.')
+    fallback_binding = None
+    fallback_inputs = (fallback_release, fallback_disk_by_id, fallback_esp_uuid)
+    if any(item is not None for item in fallback_inputs):
+        require(all(item is not None for item in fallback_inputs) and certificate is not None and
+                isinstance(fallback_release, Path) and fallback_release.is_absolute() and
+                fallback_release.resolve() == fallback_release and fallback_release.is_dir(),
+                'Fallback binding requires a signed release, disk and ESP.')
+        from . import early_failure, repair
+        image_id = value.get('release', {}).get('image_id', 'lanrith')
+        observation = repair.signed_fallback_binding(fallback_release, certificate, image_id=image_id)
+        fallback_binding = {'disk_by_id': fallback_disk_by_id, 'esp_uuid': fallback_esp_uuid,
+                            'release': observation['fallback']}
+        early_failure.validate_fallback_binding(fallback_binding, image=image_id, current_sequence=sequence)
     machine_id = value['hardware'].get('machine_id')
     require(machine_id is not None, 'Set hardware.machine_id once in owner configuration before building.')
     initrd_base = initrd_base or base
@@ -33,12 +64,16 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     if value['administration']['serial']['enabled']:
         require(serial_hash is not None and serial_hash.is_file() and not serial_hash.is_symlink() and
                 not serial_hash.stat().st_mode & 0o077, 'Serial administration requires a private provisioning hash.')
-        import re
         require(re.fullmatch(rb'scrypt:32768:8:1:[0-9a-f]{32}:[0-9a-f]{64}\n?', release.read(serial_hash, 512)),
                 'Invalid serial provisioning hash.')
+    if value['administration']['root_access'] == 'disabled':
+        require(serial_hash is None, 'Root-disabled images cannot include a serial-login credential.')
     destination.mkdir(mode=0o700, parents=True)
     overlay = destination / 'mkosi.extra'
     digest = config.write(value, overlay, target_facts=target_facts, retained_allocations=retained_allocations)
+    loader = overlay/'efi/loader/loader.conf'
+    loader.parent.mkdir(parents=True, exist_ok=True)
+    loader.write_text('timeout 5\neditor no\nauto-firmware no\n')
     base_files, accounts = set(), {}
     if integrations or value.get('runtime', {}).get('service_identities'):
         with tarfile.open(base) as archive:
@@ -54,15 +89,24 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
     bindings.verify_accounts(value, accounts, overlay)
     # The effective intent includes every admitted integration, even when it adds no network fields.
+    boot_inputs = {}
+    if public is not None:
+        boot_inputs['pcr_public_key_sha256'] = hashlib.sha256(public).hexdigest()
+    if recovery_hash is not None:
+        boot_inputs['recovery_credential_sha256'] = release.file_record(recovery_hash)['sha256']
+    if fallback_binding is not None:
+        boot_inputs['fallback_binding'] = fallback_binding
     digest = config.effective_digest(value, integration['digests'],
-                                     release.file_record(serial_hash)['sha256'] if serial_hash else None,
-                                     target_facts=target_facts, retained_allocations=retained_allocations)
+        release.file_record(serial_hash)['sha256'] if serial_hash else None,
+        target_facts=target_facts, retained_allocations=retained_allocations, boot_inputs=boot_inputs)
     (overlay / 'usr/share/lanrith/configuration.sha256').write_text(digest + '\n')
     image_id = value.get('release', {}).get('image_id', 'lanrith')
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,
                  'update_image_id': image_id, 'platform_version': version, 'deployment_sequence': sequence,
                  'uki_name': f'{image_id}_{sequence}.efi', 'state_directory': '/var/lib/lanrith',
                  'certificate': '/usr/share/lanrith/owner.crt', 'esp': 'auto',
+                 'operator': value['administration']['username'],
+                 'root_access': value['administration']['root_access'],
                  'integration_health_units': integration['health_units'],
                  'configuration_sha256': digest, 'storage': value['hardware']['storage'],
                  'payload_limits': {'root': value['hardware']['storage']['root_mib']*1024*1024,
@@ -71,6 +115,20 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'boot': value['hardware']['boot'], 'watchdog': value['hardware']['watchdog'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
+    if certificate is not None:
+        installed['image_contract'] = boot_policy.contract(value, base, certificate, public, integration['digests'])
+        installed['image_contract']['recovery'] = ({'image_id': image_id, 'sequence': sequence,
+            'binding': fallback_binding} if fallback_binding else None)
+    if public is not None:
+        installed['tpm_policy'] = boot_policy.install(overlay, public)
+    if fallback_binding is not None:
+        from . import image_contract
+        previous = release.verify(fallback_release, certificate, purpose='update', image_id=image_id)
+        require('image_contract' in previous, 'Recovery fallback lacks a state compatibility contract.')
+        image_contract.compatible(installed['image_contract'], previous['image_contract'])
+        installed['recovery_state'] = {'image_contract': image_contract.core(installed['image_contract']),
+            'fallback_contract': image_contract.core(previous['image_contract']), 'tpm_policy': installed.get('tpm_policy'),
+            'state_directory': installed['state_directory']}
     metadata = overlay / 'usr/share/lanrith'
     metadata.mkdir(parents=True, exist_ok=True)
     (metadata / 'installed.json').write_bytes(release.canonical(installed))
@@ -88,7 +146,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py',
-                   'fancontrol_runtime.py'):
+                   'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
+                   'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',
+                   'image_operation.py', 'steady_recovery.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)
@@ -116,6 +176,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         logs_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                                 'from lanrith.logs_runtime import main\nsys.exit(main())\n')
         logs_wrapper.chmod(0o755)
+
+    operator_wrapper = overlay/'usr/bin/lanrith-image'
+    operator_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                'from lanrith.image_operation import main\nsys.exit(main())\n')
+    operator_wrapper.chmod(0o755)
     if serial_hash is not None:
         shutil.copyfile(serial_hash, overlay/'etc/security/admin.serial-passphrase.hash')
         (overlay/'etc/security/admin.serial-passphrase.hash').chmod(0o600)
@@ -140,6 +205,37 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             target = overlay/'usr/lib/lanrith'/name
             shutil.copyfile(source, target)
             target.chmod(0o755 if name == 'snmp-runtime' else 0o644)
+    (units/'lanrith-image-operation.socket').write_text(
+        '[Unit]\nDescription=Operator image admission socket\n'
+        '\n[Socket]\nListenStream=/run/lanrith-image-operation.sock\n'
+        f'SocketUser={value["administration"]["username"]}\nSocketMode=0600\n'
+        'Accept=yes\nMaxConnections=4\nBacklog=4\nRemoveOnStop=yes\n'
+        '\n[Install]\nWantedBy=sockets.target\n')
+    (units/'lanrith-image-operation@.service').write_text(
+        '[Unit]\nDescription=Bounded operator image operation\n'
+        'RequiresMountsFor=/var/lib/lanrith /var/tmp/lanrith-update\n'
+        '\n[Service]\nType=exec\nExecStart=/usr/bin/lanrith-image serve\n'
+        'ExecStopPost=/usr/bin/lanrith-image cancel-request\n'
+        'StandardInput=socket\nStandardOutput=journal\nStandardError=journal\n'
+        'UMask=0077\nNoNewPrivileges=yes\nRestrictSUIDSGID=yes\nRestrictRealtime=yes\n'
+        'LockPersonality=yes\nMemoryDenyWriteExecute=yes\nRestrictAddressFamilies=AF_UNIX AF_NETLINK\n'
+        'SystemCallArchitectures=native\nTasksMax=16\nMemoryMax=256M\nLimitNOFILE=128\n'
+        'RuntimeMaxSec=1200\nTimeoutStopSec=30\nKillMode=control-group\n')
+    (units/'lanrith-image-completion.service').write_text(
+        '[Unit]\nDescription=Accept the authorized image or return to its accepted fallback\n'
+        'DefaultDependencies=no\nRequires=local-fs.target\nAfter=local-fs.target\n'
+        'After=lanrith-recovery-key.service\n'
+        'Before=shutdown.target\nConflicts=shutdown.target\n'
+        '\n[Service]\nType=exec\nExecStart=/usr/bin/lanrith-image complete\n'
+        'ExecStopPost=/usr/bin/lanrith-image fallback\n'
+        'UMask=0077\nNoNewPrivileges=yes\nTasksMax=16\nMemoryMax=128M\n'
+        'TimeoutStopSec=900\nRuntimeMaxSec=1200\n'
+        '\n[Install]\nWantedBy=multi-user.target\n')
+    for target, unit in (('sockets.target.wants', 'lanrith-image-operation.socket'),
+                         ('multi-user.target.wants', 'lanrith-image-completion.service')):
+        activation = units/target/unit
+        activation.parent.mkdir(parents=True, exist_ok=True)
+        activation.symlink_to('../'+unit)
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
         f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'
@@ -287,6 +383,15 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     initrd_overlay = initrd/'mkosi.extra'
     (initrd_overlay/'etc').mkdir(parents=True)
     (initrd_overlay/'etc/machine-id').write_text(machine_id+'\n')
+    # The failure identity is signed in the initrd; it does not depend on
+    # mounting the candidate root or include the owner's build-time YAML.
+    failure_path = initrd_overlay/'usr/share/lanrith/initrd-failure.json'
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    failure_identity = {key: installed[key] for key in ('image_id', 'deployment_sequence', 'uki_name')}
+    if fallback_binding is not None:
+        failure_identity['fallback_binding'] = fallback_binding
+        failure_identity['steady_state'] = installed['recovery_state']
+    failure_path.write_bytes(release.canonical(failure_identity))
     watchdog = value['hardware']['watchdog']
     timeout = 'off' if watchdog['mode'] == 'disabled' else str(watchdog['timeout_seconds'])+'s'
     for tree in (overlay, initrd_overlay):
@@ -309,13 +414,23 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     entry.chmod(0o755)
     (initrd_units/'lanrith-factory.service').write_text(
         '[Unit]\nDescription=Verify factory media and explicitly provision the selected disk\n'
-        'DefaultDependencies=no\nRequires=initrd-root-fs.target\nAfter=initrd-root-fs.target systemd-udev-trigger.service\n'
+        'DefaultDependencies=no\nRequires=initrd-root-fs.target\n'
+        'After=initrd-root-fs.target systemd-udev-trigger.service systemd-pcrphase-initrd.service\n'
         'Before=initrd-udevadm-cleanup-db.service initrd-cleanup.service initrd-switch-root.target shutdown.target\n'
         'Conflicts=shutdown.target\n'
-        'OnFailure=emergency.target\nOnFailureJobMode=isolate\n'
+        'OnFailure=lanrith-initrd-failure.service\nOnFailureJobMode=isolate\n'
         '\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/lanrith-factory provision\n'
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
-        'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n')
+        'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=300s\n')
+    (initrd_units/'lanrith-initrd-failure.service').write_text(
+        '[Unit]\nDescription=Return a failed candidate to its accepted default\nDefaultDependencies=no\nAllowIsolate=yes\n'
+        'OnFailure=emergency.target\nOnFailureJobMode=isolate\n'
+        '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-factory failed\n'
+        'TimeoutStartSec=900s\nStandardOutput=journal+console\nStandardError=journal+console\n')
+    emergency = initrd_units/'emergency.service.d/60-lanrith-recovery.conf'
+    emergency.parent.mkdir(parents=True)
+    emergency.write_text('[Service]\nType=exec\nExecStart=\nExecStart=/usr/bin/lanrith-factory emergency\n'
+                         'StandardInput=null\nStandardOutput=journal+console\nStandardError=journal+console\n')
     link = initrd_overlay/'usr/lib/systemd/system/initrd-switch-root.target.requires/lanrith-factory.service'
     link.parent.mkdir(parents=True)
     link.symlink_to('../lanrith-factory.service')
@@ -324,10 +439,22 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     boundary = initrd_units/'initrd-switch-root.service.d/60-lanrith-provisioning.conf'
     boundary.parent.mkdir(parents=True)
     boundary.write_text('[Unit]\nRequires=lanrith-factory.service\nAfter=lanrith-factory.service\n')
+    # Start before initrd cleanup stops the PCR phase service and extends
+    # leave-initrd. The switch-root dependency alone is too late.
+    early_boundary = initrd_units/'initrd.target.d/60-lanrith-provisioning.conf'
+    early_boundary.parent.mkdir(parents=True)
+    early_boundary.write_text('[Unit]\nRequires=lanrith-factory.service\nAfter=lanrith-factory.service\n')
     trust_path = initrd_overlay/'etc/verity.d'
     trust_path.mkdir(parents=True)
     if certificate:
         shutil.copyfile(certificate, trust_path/'owner.crt')
+    if public is not None:
+        for tree in (overlay, initrd_overlay):
+            for name in ('firmware-code', 'firmware-config', 'secureboot-policy', 'secureboot-authority',
+                         'machine-id', 'file-system', 'make-policy', 'kernel-code', 'kernel-config'):
+                guard = tree/f'etc/systemd/system/systemd-pcrlock-{name}.service.d/60-lanrith.conf'
+                guard.parent.mkdir(parents=True, exist_ok=True)
+                guard.write_text('[Unit]\nConditionPathExists=/usr/share/lanrith/enable-pcrlock-policy\n')
     acceleration = value['hardware'].get('acceleration')
     kernel = hardware.ownership_kernel(value, target_facts)
     if acceleration:
@@ -348,6 +475,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     else:
         text += (f'Verity=signed\nSecureBoot=yes\nSecureBootKey={private_key}\nSecureBootCertificate={certificate}\n'
                  f'VerityKey={private_key}\nVerityCertificate={certificate}\n')
+    if public is not None:
+        text += (f'SignExpectedPcr=yes\nSignExpectedPcrKey={pcr_key}\n'
+                 f'SignExpectedPcrCertificate={pcr_certificate}\nSignInitrdPCRs=no\n')
     (destination / 'mkosi.conf').write_text(text)
     finalize = Path(__file__).parents[1]/'scripts/finalize-image.py'
     require(finalize.is_file(), 'Native final-tree verification is missing.')
@@ -359,6 +489,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     (destination/'mkosi.finalize').write_text(
         boundary+'\n'+hardening+'\nROOT_ACCESS = '+selected+'\n'+finalize.read_text())
     (destination/'mkosi.finalize').chmod(0o755)
+    if recovery_hash is not None:
+        from . import recovery_failure_build
+        recovery_failure_build.prepare(destination, credential=recovery_hash,
+            tty=value['hardware']['boot']['recovery_console'], base=base, initrd_base=initrd_base,
+            steady=certificate is not None)
     return {'configuration_sha256': digest, 'platform_version': version,
             'deployment_sequence': sequence, 'image_id': image_id}
 
@@ -428,6 +563,23 @@ def normalize_factory_entry(destination):
 
 
 def update_payload(destination, identity, output):
+    return _payload(destination, identity, output, recovery=False)
+
+
+def recovery_payload(destination, identity, output):
+    return _payload(destination, identity, output, recovery=True)
+
+
+def _payload(destination, identity, output, *, recovery):
+    marker = destination/'RECOVERY-ASSEMBLY'
+    if recovery:
+        require(marker.is_file() and not marker.is_symlink() and
+                (destination/'mkosi.images/initrd/mkosi.extra/usr/share/lanrith/recovery-console.json').is_file() and
+                not (destination/'mkosi.images/initrd/mkosi.extra/usr/bin/lanrith-factory').exists(),
+                'Recovery export requires a dedicated recovery assembly.')
+    else:
+        require(not marker.exists() and not marker.is_symlink(),
+                'A recovery assembly cannot be exported as an update.')
     require(not output.exists(), 'Update output already exists.')
     files = list((destination / 'output').iterdir())
     image_id, sequence = identity['image_id'], identity['deployment_sequence']
@@ -457,12 +609,19 @@ def update_payload(destination, identity, output):
             name = f'{image_id}_{sequence}_{parts[0]["uuid"].lower()}.{role}.raw'
         shutil.copyfile(source, output / name)
         selected[role] = name
-    manifest = release.unsigned_manifest(output, purpose='update', version=identity['platform_version'],
+    if recovery:
+        for role, name in (('disk', disks[0].name), ('initrd', 'initrd.cpio.zst')):
+            source = destination/'output'/name
+            require(source.is_file() and not source.is_symlink(), 'Recovery artifact is missing.')
+            shutil.copyfile(source, output/name)
+            selected[role] = name
+    manifest = release.unsigned_manifest(output, purpose='recovery' if recovery else 'update', version=identity['platform_version'],
                                          sequence=sequence, configuration_sha256=identity['configuration_sha256'],
-                                         files=selected, image_id=image_id)
+                                         files=selected, image_id=image_id,
+                                         image_contract=None if recovery else json.loads((destination/'mkosi.extra/usr/share/lanrith/installed.json').read_bytes()).get('image_contract'))
     with disks[0].open('rb') as raw:
         for artifact in manifest['artifacts']:
-            if artifact['role']=='uki':
+            if artifact['role'] not in GUIDS:
                 continue
             part=next(p for p in table if p.get('name')==f'l_{sequence}_{artifact["role"].replace("-","_")}')
             raw.seek(part['start']*512)
@@ -479,6 +638,9 @@ def update_payload(destination, identity, output):
 
 
 def factory_payload(destination, identity, update, output, *, consume=False):
+    require(not (destination/'RECOVERY-ASSEMBLY').exists() and
+            not (destination/'RECOVERY-ASSEMBLY').is_symlink(),
+            'A recovery assembly cannot be exported as factory media.')
     require(not output.exists() and not output.is_symlink(), 'Factory output already exists.')
     output.mkdir(mode=0o700)
     value = release.document(release.read(update/'release.json', 65536))
@@ -501,6 +663,6 @@ def factory_payload(destination, identity, update, output, *, consume=False):
     value = release.unsigned_manifest(output, purpose='factory', version=identity['platform_version'],
                                      sequence=identity['deployment_sequence'],
                                      configuration_sha256=identity['configuration_sha256'],
-                                     files=files, image_id=identity['image_id'])
+                                     files=files, image_id=identity['image_id'], image_contract=value.get('image_contract'))
     (output/'release.json').write_bytes(release.canonical(value))
     return value

@@ -196,6 +196,8 @@ def main():
     platform = build/'mkosi.extra/usr/share/lanrith'
     platform.mkdir(parents=True,exist_ok=True)
     (platform/'platform-version').write_text(version+'\n')
+    from lanrith.state_formats import FORMATS
+    (platform/'state-formats.json').write_bytes(canonical(FORMATS))
     shutil.copytree(packages, build / 'mkosi.packages')
     pam = build / 'mkosi.extra/usr/lib/x86_64-linux-gnu/security/pam_rssh.so'
     pam.parent.mkdir(parents=True, exist_ok=True)

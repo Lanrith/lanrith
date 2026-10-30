@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from lanrith import build, config
 from lanrith.release import ReleaseError
@@ -25,6 +26,60 @@ class AssemblyTests(unittest.TestCase):
                 self.assertEqual((root/'work/mkosi.extra'/name).read_bytes(),
                                  (project/'mkosi/base/mkosi.extra'/name).read_bytes())
 
+
+    def test_initrd_failure_uses_signed_identity_and_fixed_recovery_hold(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'; base.write_bytes(b'synthetic-test-input')
+            output = root/'assembly'
+            build.assembly(value, base, output, version='0.1.0', sequence=9)
+            initrd = output/'mkosi.images/initrd/mkosi.extra'
+            identity = json.loads((initrd/'usr/share/lanrith/initrd-failure.json').read_bytes())
+            self.assertEqual(identity, {'image_id': 'lanrith', 'deployment_sequence': 9, 'uki_name': 'lanrith_9.efi'})
+            units = initrd/'usr/lib/systemd/system'
+            self.assertIn('OnFailure=lanrith-initrd-failure.service', (units/'lanrith-factory.service').read_text())
+            self.assertIn('ExecStart=/usr/bin/lanrith-factory failed', (units/'lanrith-initrd-failure.service').read_text())
+            self.assertIn('TimeoutStartSec=900s', (units/'lanrith-initrd-failure.service').read_text())
+            self.assertIn('ExecStart=/usr/bin/lanrith-factory emergency',
+                          (units/'emergency.service.d/60-lanrith-recovery.conf').read_text())
+            self.assertTrue((initrd/'usr/lib/lanrith/lanrith/early_failure.py').is_file())
+            self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in initrd.rglob('*')))
+
+    def test_failure_console_credential_does_not_enable_root_or_install_yaml(self):
+        from lanrith import recovery_failure_build
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        value['administration']['root_access'] = 'disabled'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            workspace = root/'assembly'
+            build.assembly(value, base, workspace, version='0.1.0', sequence=9)
+            secret = root/'failure.hash'
+            secret.write_text('scrypt:32768:8:1:'+'1'*32+':'+'2'*64+'\n')
+            secret.chmod(0o600)
+            with patch.object(recovery_failure_build, 'FAILURE_CONSOLE_BUILD_QUALIFIED', True), \
+                    patch.object(recovery_failure_build, 'admitted_bootctl', return_value=b'synthetic-bootctl'):
+                recovery_failure_build.prepare(workspace, credential=secret, tty='ttyS0', base=base, initrd_base=base)
+            initrd = workspace/'mkosi.images/initrd/mkosi.extra'
+            self.assertTrue((initrd/'usr/share/lanrith/failure-console.hash').is_file())
+            self.assertFalse((workspace/'mkosi.extra/etc/security/admin.serial-passphrase.hash').exists())
+            self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in initrd.rglob('*')))
+            self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in (workspace/'mkosi.extra').rglob('*')))
+
+    def test_contract_and_dormant_pcr_support_are_available_in_runtime_and_initrd(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            output = root/'assembly'
+            build.assembly(value, base, output, version='0.1.0', sequence=9)
+            for overlay in (output/'mkosi.extra', output/'mkosi.images/initrd/mkosi.extra'):
+                for module in ('image_contract.py', 'early_unlock.py', 'tpm_migration.py',
+                               'measured_boot.py', 'security_profile.py'):
+                    self.assertTrue((overlay/'usr/lib/lanrith/lanrith'/module).is_file())
     def test_watchdog_policy_survives_initrd_handover_and_explicit_disable(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
         with tempfile.TemporaryDirectory() as temporary:
@@ -150,9 +205,13 @@ class AssemblyTests(unittest.TestCase):
             boundary = (initrd_units/'initrd-switch-root.service.d/60-lanrith-provisioning.conf').read_text()
             self.assertIn('Requires=lanrith-factory.service\n', boundary)
             self.assertIn('After=lanrith-factory.service\n', boundary)
+            early = (initrd_units/'initrd.target.d/60-lanrith-provisioning.conf').read_text()
+            self.assertIn('Requires=lanrith-factory.service\n', early)
+            self.assertIn('After=lanrith-factory.service\n', early)
             provision = (initrd_units/'lanrith-factory.service').read_text()
             self.assertIn('OnFailureJobMode=isolate\n', provision)
             self.assertIn('RemainAfterExit=yes\n', provision)
+            self.assertIn('systemd-pcrphase-initrd.service', provision)
             with self.assertRaises(ReleaseError):
                 build.assembly(value, base, workspace, version='0.1.0', sequence=10)
 

@@ -61,6 +61,18 @@ class ConsoleTests(unittest.TestCase):
         self.assertTrue(value['flags']['recovery-prompt'])
         self.assertNotIn('disposable-recovery-key', encoded)
 
+    def test_serial_selection_diagnostic_keeps_only_allowlisted_command(self):
+        guest = Guest.__new__(Guest)
+        guest.console = SimpleNamespace(condition=threading.Condition(), data=(
+            b'Synthetic serial selection diagnostic: release update.py:command:32 errno=2 command=bootctl\n'
+            b'private-serial-input-do-not-log\n'))
+        guest.qmp = None
+        guest.qmp_events = []
+        guest.observed_diagnostics = {}
+        encoded = guest.diagnostic()
+        self.assertIn('errno=2 command=bootctl', encoded)
+        self.assertNotIn('private-serial-input', encoded)
+
     def test_console_drains_without_an_expect_call_and_retains_bounded_output(self):
         receiving, sending = socket.socketpair()
         receiving.settimeout(0.05)

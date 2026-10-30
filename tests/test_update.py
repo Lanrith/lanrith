@@ -16,6 +16,20 @@ from lanrith import release, update
 from lanrith.release import ReleaseError
 
 
+class ContractAdmissionPortTests(unittest.TestCase):
+    def test_legacy_updates_are_unchanged_but_unqualified_transitions_are_rejected(self):
+        update.contract_admission({}, {})
+        with self.assertRaises(ReleaseError): update.contract_admission({}, {'image_contract': {}})
+        with self.assertRaises(ReleaseError): update.contract_admission({'image_contract': {}}, {})
+
+    def test_two_contracts_delegate_to_the_compatibility_gate(self):
+        with patch('lanrith.image_contract.admission') as admission:
+            installed = {'image_contract': {'synthetic': 'installed'}}
+            candidate = {'synthetic': 'candidate'}
+            update.contract_admission(installed, {'image_contract': candidate})
+            admission.assert_called_once_with(installed, candidate)
+
+
 class UpdatePlanTests(unittest.TestCase):
     def test_no_static_transfer_definition_can_bypass_the_authenticated_planner(self):
         definitions = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/sysupdate.d'

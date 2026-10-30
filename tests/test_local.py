@@ -163,10 +163,12 @@ class LocalBuildTests(unittest.TestCase):
                 normalized = config.load(owner/'config.yaml')
                 serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
                 with patch.object(local.trust, 'lock', return_value=selection), \
-                        patch.object(local.release, 'public_key'), \
+                        patch.object(local.release, 'public_key', return_value=b'synthetic-public-key'), \
                         patch.object(local, 'consumer', return_value=SimpleNamespace(
                             integration_pins=lambda *_: {})):
                     actual = local.inputs(owner, platform, 1, serial_hash)
                 self.assertEqual(actual['serial_provisioning_sha256'], serial_digest)
                 self.assertEqual(actual['effective_configuration_sha256'],
-                                 config.effective_digest(normalized, {}, serial_digest))
+                                 config.effective_digest(normalized, {}, serial_digest,
+                                     boot_inputs={k: v for k, v in actual.get('boot_inputs', {}).items()
+                                                  if k == 'pcr_public_key_sha256'}))

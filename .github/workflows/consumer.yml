@@ -15,6 +15,12 @@ on:
         required: false
       LANRITH_SERIAL_PASSPHRASE_HASH:
         required: false
+      LANRITH_PCR_KEY:
+        required: false
+      LANRITH_PCR_CERTIFICATE:
+        required: false
+      LANRITH_RECOVERY_PASSPHRASE_HASH:
+        required: false
       LANRITH_EVIDENCE_KEY:
         required: false
       LANRITH_EVIDENCE_CERTIFICATE:
@@ -120,6 +126,9 @@ jobs:
           LANRITH_BOOT_KEY: ${{ secrets.LANRITH_BOOT_KEY }}
           LANRITH_BOOT_CERTIFICATE: ${{ secrets.LANRITH_BOOT_CERTIFICATE }}
           LANRITH_SERIAL_PASSPHRASE_HASH: ${{ secrets.LANRITH_SERIAL_PASSPHRASE_HASH }}
+          LANRITH_PCR_KEY: ${{ secrets.LANRITH_PCR_KEY }}
+          LANRITH_PCR_CERTIFICATE: ${{ secrets.LANRITH_PCR_CERTIFICATE }}
+          LANRITH_RECOVERY_PASSPHRASE_HASH: ${{ secrets.LANRITH_RECOVERY_PASSPHRASE_HASH }}
         run: |
           python3 tools/scripts/consumer.py assemble --owner owner --bundle "$RUNNER_TEMP/platform" \
             --request request/request.json --output "$RUNNER_TEMP/release"

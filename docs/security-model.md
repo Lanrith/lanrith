@@ -39,8 +39,12 @@ compiled into the image: root has a locked password and non-login shell, the
 administrator has no sudo membership, SSH agent forwarding is disabled, and
 sudo, su, set-user-ID and file-capability elevation paths are absent. UID 0 and
 narrow capabilities still exist inside the operating-system trusted computing
-base for services that cannot perform their function without them. Recovery or
-re-enabling operator root access requires independently verified signed media.
+base for services that cannot perform their function without them. The operator
+can upload and trigger an independently verified signed image through a fixed,
+privileged service. That service grants no shell or arbitrary command access.
+A separately authenticated serial menu can select a verified fallback; signed
+independent recovery media can repair slots or restore explicitly bound state.
+Re-enabling operator root access requires a new signed image.
 
 Network daemons should parse untrusted traffic as non-root identities wherever
 their protocol permits it. A daemon that must retain a capability is part of a
@@ -75,6 +79,10 @@ other ordinary non-root account must be unable to:
 - signal or inspect processes outside the access allowed by its identity;
 - acquire root through a set-user-ID/file-capability path or an unattended
   administrative credential.
+
+The explicitly authorized image operator can request status and trigger the
+fixed signed-image workflow. That exception does not grant general service
+control, writable policy, access to root-owned state or arbitrary boot selection.
 
 Service isolation and firewall identity checks remain security controls, not
 substitutes for the kernel's user and capability boundary. An owner access rule
