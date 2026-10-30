@@ -51,6 +51,7 @@ RUN apt-get update \
       reprepro \
       sbsigntool \
       suricata \
+      systemd-journal-remote \
       swtpm \
       shim-signed \
       tayga \

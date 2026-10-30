@@ -37,6 +37,7 @@ def assess(directory, selection, now=None):
             'Platform qualification is not bound to its authenticated source and build platform.')
     for field, name in (('native_sha256', 'native-qualification.json'),
                         ('storage_sha256', 'storage-qualification.json'),
+                        ('logs_sha256', 'logs-qualification.json'),
                         ('filesystem_sha256', 'lanrith-base.tar.gz'),
                         ('initrd_sha256', 'lanrith-initrd-base.tar.gz')):
         require(record.get(field) == selection['files'].get(name) == file_record(directory/name)['sha256'],

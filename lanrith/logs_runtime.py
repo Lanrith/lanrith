@@ -1,13 +1,19 @@
-"""Stage the log exporter password from a systemd credential."""
+"""Stage log credentials and supervise the compiled exporter component graph."""
 
 import argparse
 import grp
+import http.client
 import ipaddress as ip
+import math
 import os
 from pathlib import Path
 import re
+import signal
+import socket
 import stat
+import subprocess
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 from .policy_runtime import decode, exact, read
@@ -16,6 +22,13 @@ from .policy_runtime import decode, exact, read
 MANIFEST = Path('/usr/share/lanrith/logs.json')
 RUNTIME = Path('/run/lanrith-logs')
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
+ALLOY = ('/usr/bin/alloy', 'run', '--stability.level=public-preview', '--disable-reporting',
+         '--server.http.listen-addr=127.0.0.1:12345', '--storage.path=/var/lib/lanrith/alloy/state',
+         '/etc/alloy/config.alloy')
+GRAPH = re.compile(r'alloy_component_controller_running_components\{controller_id="",'
+                   r'controller_path="/",health_type="([a-z_]+)"\} ([^\s]+)\Z')
+EVALUATING = re.compile(r'alloy_component_controller_evaluating\{controller_id="",'
+                        r'controller_path="/"\} ([^\s]+)\Z')
 
 
 class LogsRuntimeError(ValueError):
@@ -83,14 +96,108 @@ def stage(path=MANIFEST):
     write(RUNTIME/'password', credential(policy['credential_name']), account.pw_uid, group.gr_gid)
 
 
+def pipeline_healthy(text):
+    """Alloy's HTTP health endpoints also succeed for an exited exporter.
+
+    Require the complete generated graph (nine components), no evaluation in
+    progress, and no failed/unknown/exited component. Extra admitted components
+    must also be healthy; metrics from nested controllers cannot substitute.
+    """
+    counts = {}
+    evaluating = []
+    try:
+        for line in text.splitlines():
+            if match := GRAPH.fullmatch(line):
+                name, number = match.groups()
+                value = float(number)
+                if name in counts or not math.isfinite(value) or not value.is_integer() or not 0 <= value <= 4096:
+                    return False
+                counts[name] = int(value)
+            elif match := EVALUATING.fullmatch(line):
+                evaluating.append(float(match[1]))
+        return (evaluating == [0] and counts.get('healthy', 0) >= 9 and
+                all(number == 0 for name, number in counts.items() if name != 'healthy'))
+    except (ValueError, OverflowError):
+        return False
+
+
+def health():
+    connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=2)
+    try:
+        connection.request('GET', '/metrics', headers={'Connection': 'close'})
+        response = connection.getresponse()
+        data = response.read(1024*1024+1)
+        if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(data.decode('ascii')):
+            raise LogsRuntimeError('Log component graph is not healthy.')
+    except (OSError, http.client.HTTPException, UnicodeError) as error:
+        raise LogsRuntimeError('Log component graph is unavailable.') from error
+    finally:
+        connection.close()
+
+
+def notify(message):
+    address = os.environ.get('NOTIFY_SOCKET')
+    if address:
+        if address.startswith('@'):
+            address = '\0'+address[1:]
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as stream:
+            stream.sendto(message.encode('ascii'), address)
+
+
+def supervise(command=ALLOY, *, startup_seconds=25, interval=3):
+    stopping = False
+
+    def stop(signum, frame):
+        nonlocal stopping
+        stopping = True
+
+    previous = {name: signal.signal(name, stop) for name in (signal.SIGTERM, signal.SIGINT)}
+    child = None
+    try:
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ('NOTIFY_SOCKET', 'WATCHDOG_PID', 'WATCHDOG_USEC')}
+        child = subprocess.Popen(command, stdin=subprocess.DEVNULL, env=environment)
+        deadline = time.monotonic()+startup_seconds
+        ready = False
+        while not stopping:
+            if child.poll() is not None:
+                raise LogsRuntimeError('Log exporter exited.')
+            try:
+                health()
+            except LogsRuntimeError:
+                if ready or time.monotonic() >= deadline:
+                    raise
+            else:
+                if not ready:
+                    notify('READY=1')
+                    ready = True
+                notify('WATCHDOG=1')
+            time.sleep(interval)
+    finally:
+        try:
+            if child is not None and child.poll() is None:
+                child.terminate()
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(timeout=2)
+        finally:
+            for name, handler in previous.items():
+                signal.signal(name, handler)
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('stage',))
+    parser.add_argument('operation', choices=('stage', 'run'))
     args = parser.parse_args(arguments)
     try:
         if args.operation == 'stage':
             stage()
-    except (OSError, KeyError, TypeError, ValueError) as error:
+        else:
+            load()
+            supervise()
+    except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print('logs-runtime: '+type(error).__name__+'; delivery remains closed', file=os.sys.stderr)
         return 1
     return 0

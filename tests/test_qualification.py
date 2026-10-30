@@ -43,6 +43,20 @@ class QualificationTests(unittest.TestCase):
         (directory/'native-qualification.json').write_bytes(release.canonical(native))
         (directory/'storage-qualification.json').write_bytes(release.canonical({'schema': 1, 'result': 'pass',
             'test': 'factory-slot-expansion', 'initial_partitions': 4, 'expanded_partitions': 8}))
+        implementation = {}
+        for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'tests/logs_native.py'):
+            path = project/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('synthetic logging source: '+name)
+            implementation[name] = release.file_record(path)['sha256']
+        (directory/'custom-security.json').write_bytes(release.canonical({
+            'components': {'alloy': {'binary_sha256': 'e'*64}}}))
+        (directory/'logs-qualification.json').write_bytes(release.canonical({
+            'schema': 1, 'result': 'pass', 'test': 'offline-journal-https-outage', 'assessed_at': now.isoformat(),
+            'source_sha256': implementation.pop('tests/logs_native.py'), 'implementation_sha256': implementation,
+            'alloy_sha256': 'e'*64, 'checks': sorted(qualification.LOG_CHECKS),
+            'queue_capacity_bytes': 67108864, 'queue_physical_bytes': 80*1024*1024,
+            'overflow_records': 1000, 'delivered_batches': 8}))
         workflows = {}
         for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
                      '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
@@ -85,6 +99,7 @@ class QualificationTests(unittest.TestCase):
             security = json.loads((directory/'security.json').read_text())
             record = json.loads((directory/'qualification.json').read_text())
             self.assertEqual(record['native_sha256'], release.file_record(directory/'native-qualification.json')['sha256'])
+            self.assertEqual(record['logs_sha256'], release.file_record(directory/'logs-qualification.json')['sha256'])
             self.assertEqual(security['qualification']['record_sha256'], release.file_record(directory/'qualification.json')['sha256'])
             artifact = next(item for item in release.document((directory/'release.json').read_bytes())['artifacts']
                             if item['role'] == 'security')
@@ -171,3 +186,35 @@ class QualificationTests(unittest.TestCase):
             (project/'.github/workflows/build-base.yml').write_text('unreviewed signing authority change')
             with self.assertRaises(release.ReleaseError):
                 qualification.qualify(directory, project, {}, now=now)
+
+    def test_missing_stale_altered_and_wrong_subject_log_results_are_rejected(self):
+        for alteration in ('missing', 'binary', 'test-source', 'runtime-source', 'missing-check', 'stale',
+                           'no-overflow', 'no-delivery', 'storage-limit', 'changed-capacity'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                path = directory/'logs-qualification.json'
+                logs = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    path.unlink()
+                else:
+                    if alteration == 'binary':
+                        logs['alloy_sha256'] = 'b'*64
+                    elif alteration == 'test-source':
+                        logs['source_sha256'] = 'b'*64
+                    elif alteration == 'runtime-source':
+                        (project/'lanrith/logs_runtime.py').write_text('changed after qualification')
+                    elif alteration == 'missing-check':
+                        logs['checks'].remove('own-journal-exclusion')
+                    elif alteration == 'stale':
+                        logs['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
+                    elif alteration == 'no-overflow':
+                        logs['overflow_records'] = 0
+                    elif alteration == 'no-delivery':
+                        logs['delivered_batches'] = 0
+                    elif alteration == 'storage-limit':
+                        logs['queue_physical_bytes'] = 161*1024*1024
+                    elif alteration == 'changed-capacity':
+                        logs['queue_capacity_bytes'] = 65536
+                    path.write_bytes(release.canonical(logs))
+                with self.assertRaises((release.ReleaseError, OSError)):
+                    qualification.qualify(directory, project, {}, now=now)

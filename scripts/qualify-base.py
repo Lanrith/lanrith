@@ -34,6 +34,10 @@ CHECKS = {
         'elevation-tools-absent', 'privileged-file-paths-absent', 'source-configuration-absent',
         'unprivileged-upload-staging'},
 }
+LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
+    'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
+    'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
+    'collector-return-delivery'}
 
 
 def value(path):
@@ -78,6 +82,23 @@ def qualify(directory, project, environment, *, now=None):
     require(storage.get('result') == 'pass' and storage.get('test') == 'factory-slot-expansion' and
             storage.get('initial_partitions') == 4 and storage.get('expanded_partitions') == 8,
             'Matching-builder signed storage expansion did not pass.')
+    logs = value(directory/'logs-qualification.json')
+    custom = value(directory/'custom-security.json')
+    require(logs.get('schema') == 1 and logs.get('result') == 'pass' and
+            logs.get('test') == 'offline-journal-https-outage' and set(logs.get('checks', [])) == LOG_CHECKS and
+            logs.get('source_sha256') == file_record(project/'tests/logs_native.py')['sha256'] and
+            logs.get('alloy_sha256') == custom.get('components', {}).get('alloy', {}).get('binary_sha256') and
+            logs.get('queue_capacity_bytes') == 67108864 and 0 < logs.get('overflow_records', 0) and
+            0 < logs.get('queue_physical_bytes', 0) <= 160*1024*1024 and
+            logs.get('delivered_batches', 0) > 0,
+            'Native journal delivery qualification is incomplete or describes another exporter.')
+    stamp = datetime.datetime.fromisoformat(logs['assessed_at'])
+    require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
+            'Native journal delivery qualification is stale or future-dated.')
+    implementation = logs.get('implementation_sha256', {})
+    require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py'} and
+            all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
+            'Log delivery implementation changed after native qualification.')
     assessment = value(project/'security/slsa-assessment.json')
     require(assessment.get('schema') == 1 and assessment.get('specification') == 'SLSA v1.2' and
             assessment.get('target') == 'Build L3' and assessment.get('result') == 'design-assessed' and
@@ -119,6 +140,7 @@ def qualify(directory, project, environment, *, now=None):
         'assessed_at': now.isoformat(), 'assessment': assessment,
         'native_sha256': file_record(directory/'native-qualification.json')['sha256'],
         'storage_sha256': file_record(directory/'storage-qualification.json')['sha256'],
+        'logs_sha256': file_record(directory/'logs-qualification.json')['sha256'],
         'filesystem_sha256': file_record(directory/'lanrith-base.tar.gz')['sha256'],
         'initrd_sha256': file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
         'requires_consumer_verified_file_and_oci_provenance': True}

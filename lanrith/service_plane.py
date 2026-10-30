@@ -334,6 +334,14 @@ def local_output(value, plane):
     from .firewall import values
     endpoints = plane['endpoints']
     lines = ['oifname "lo" meta skuid 0 accept']
+    if 'logs' in endpoints:
+        # The supervisor observes Alloy's local component graph. The API is
+        # neither a LAN listener nor a dependency available to other services.
+        lines += [
+            'oifname "lo" meta skuid "alloy" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport 12345 accept',
+            'oifname "lo" meta skuid "alloy" ip saddr 127.0.0.1 ip daddr 127.0.0.1 '
+            'ct direction reply ct state { established, related } tcp sport 12345 accept',
+        ]
     if 'dns' in endpoints and 'ntp' in endpoints:
         for family, spelling, target in ((4, 'ip', '127.0.0.1'), (6, 'ip6', '::1')):
             for protocol in ('tcp', 'udp'):

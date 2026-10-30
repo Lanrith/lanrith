@@ -41,6 +41,22 @@ state appear without moving or changing signed data, hashes or signatures.
 It uses regular files and a disposable test authority. TPM and encrypted-state
 boot behavior remain separate qualification requirements.
 
+`tests/logs_native.py` qualifies the selected Alloy binary in an offline
+namespace. It imports a synthetic systemd journal, checks redaction and
+self-log exclusion, exceeds the production 64 MiB logical queue, kills and
+restarts the exporter, then verifies delivery to an authenticated HTTPS
+collector with a disposable CA. Overflow rejects records; this test does not
+promise lossless delivery. Physical queue storage has a separate tested bound
+of 160 MiB. The result records the binary and implementation digests and is a
+required, provenance-bound input to base qualification and consumer admission.
+
+The generated `alloy.service` uses notify readiness and a watchdog. Its
+supervisor requires every root graph component to be healthy before reporting
+readiness and exits if a component fails later. Alloy's HTTP readiness and
+health endpoints alone are insufficient: they can return success after the
+exporter component has exited. An unavailable remote collector uses the retry
+queue and does not by itself make the component graph unhealthy.
+
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only
