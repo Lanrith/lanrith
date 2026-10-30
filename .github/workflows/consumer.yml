@@ -15,6 +15,12 @@ on:
         required: false
       LANRITH_SERIAL_PASSPHRASE_HASH:
         required: false
+      LANRITH_PCR_KEY:
+        required: false
+      LANRITH_PCR_CERTIFICATE:
+        required: false
+      LANRITH_RECOVERY_PASSPHRASE_HASH:
+        required: false
       LANRITH_EVIDENCE_KEY:
         required: false
       LANRITH_EVIDENCE_CERTIFICATE:
