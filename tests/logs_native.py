@@ -29,7 +29,7 @@ from test_intent import minimal
 CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
           'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
           'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
-          'collector-return-delivery'}
+          'collector-return-delivery', 'private-state-directory-boundary'}
 MARKER = b'LANRITH_SYNTHETIC_QUEUED_RECORD'
 SELF = b'LANRITH_SYNTHETIC_EXPORTER_SELF_RECORD'
 SECRET = b'lanrith-disposable-secret-value'
@@ -118,6 +118,28 @@ def main():
         accounts.write_text('u alloy - "Synthetic exporter" /\n')
         run('systemd-sysusers', str(accounts))
         account = pwd.getpwnam('alloy')
+        # Reproduce the StateDirectory/BindPaths contract in a child mount
+        # namespace. Never relax the parent control directory's 0700 mode.
+        private, visible = root/'private-control', root/'alloy-view'
+        private.mkdir(mode=0o700)
+        backing = private/'alloy'
+        backing.mkdir(mode=0o750)
+        os.chown(backing, account.pw_uid, account.pw_gid)
+        visible.mkdir()
+        proof = '''
+import os,pathlib,subprocess,sys
+backing,visible,uid,gid=sys.argv[1:]
+subprocess.run(['mount','--bind',backing,visible],check=True)
+os.setgroups([]);os.setgid(int(gid));os.setuid(int(uid))
+pathlib.Path(visible,'proof').write_text('synthetic state')
+try:pathlib.Path(backing,'proof').read_text()
+except PermissionError:pass
+else:raise AssertionError('Exporter can traverse the private control directory')
+'''
+        run('unshare', '--mount', '--propagation', 'private', sys.executable, '-c', proof,
+            str(backing), str(visible), str(account.pw_uid), str(account.pw_gid))
+        assert (backing/'proof').read_text() == 'synthetic state'
+        assert private.stat().st_mode & 0o777 == 0o700
         journal(root)
         run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
             '-subj', '/CN=logs.example.test', '-addext', 'subjectAltName=DNS:logs.example.test',
@@ -139,7 +161,7 @@ def main():
         files = config.render(value)
         original = files['etc/alloy/config.alloy']
         content = original.replace('/var/log/journal', str(root/'journal')).replace(
-            '/var/lib/lanrith/alloy/queue', str(root/'queue')).replace(
+            '/var/lib/lanrith-alloy/queue', str(root/'queue')).replace(
             '/run/lanrith-logs/password', str(root/'password'))
         (root/'config.alloy').write_text(content)
         (root/'bad.alloy').write_text(content.replace('min_version = "1.2"', 'min_version = "TLS1.2"').replace(

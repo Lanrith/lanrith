@@ -114,7 +114,7 @@ otelcol.processor.groupbyattrs "router" {
 }
 
 otelcol.storage.file "router" {
-  directory             = "/var/lib/lanrith/alloy/queue"
+  directory             = "/var/lib/lanrith-alloy/queue"
   directory_permissions = "0700"
   fsync                  = true
   compaction {
@@ -187,11 +187,12 @@ def render(value):
         'LoadCredential='+credential+':'+bindings.credential_path(value, credential)+'\n'
         'ExecStartPre=+/usr/lib/lanrith/logs-runtime stage\n'
         'ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\nExecReload=\n'
-        'EnvironmentFile=\nWorkingDirectory=/var/lib/lanrith/alloy\n'
+        'EnvironmentFile=\nWorkingDirectory=/var/lib/lanrith-alloy\n'
         'TimeoutStartSec=35s\nTimeoutStopSec=20s\nWatchdogSec=30s\n'
         'StateDirectory=lanrith/alloy\nStateDirectoryMode=0750\n'
+        'BindPaths=/var/lib/lanrith/alloy:/var/lib/lanrith-alloy\n'
         'RuntimeDirectory=lanrith-logs\nRuntimeDirectoryMode=0750\nUMask=0027\n'
-        'ReadWritePaths=/var/lib/lanrith/alloy /run/lanrith-logs\n'
+        'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs\n'
         'IPAddressDeny=any\nIPAddressAllow='+policy['target']+'\nIPAddressAllow=127.0.0.1/32\n'
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nNoNewPrivileges=yes\n'
         'PrivateTmp=yes\nPrivateDevices=yes\nProtectHome=yes\nProtectSystem=strict\n'

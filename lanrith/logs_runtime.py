@@ -23,7 +23,7 @@ MANIFEST = Path('/usr/share/lanrith/logs.json')
 RUNTIME = Path('/run/lanrith-logs')
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 ALLOY = ('/usr/bin/alloy', 'run', '--stability.level=public-preview', '--disable-reporting',
-         '--server.http.listen-addr=127.0.0.1:12345', '--storage.path=/var/lib/lanrith/alloy/state',
+         '--server.http.listen-addr=127.0.0.1:12345', '--storage.path=/var/lib/lanrith-alloy/state',
          '/etc/alloy/config.alloy')
 GRAPH = re.compile(r'alloy_component_controller_running_components\{controller_id="",'
                    r'controller_path="/",health_type="([a-z_]+)"\} ([^\s]+)\Z')

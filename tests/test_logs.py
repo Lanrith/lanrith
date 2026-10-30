@@ -45,6 +45,9 @@ class LogsContractTests(unittest.TestCase):
         self.assertIn('ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\n', unit)
         self.assertIn('Type=notify\nNotifyAccess=main\n', unit)
         self.assertIn('WatchdogSec=30s\n', unit)
+        self.assertIn('StateDirectory=lanrith/alloy\n', unit)
+        self.assertIn('BindPaths=/var/lib/lanrith/alloy:/var/lib/lanrith-alloy\n', unit)
+        self.assertIn('WorkingDirectory=/var/lib/lanrith-alloy\n', unit)
         heartbeat = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.service']
         timer = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer']
         self.assertIn('User=alloy\n', heartbeat)

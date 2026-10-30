@@ -57,6 +57,12 @@ health endpoints alone are insufficient: they can return success after the
 exporter component has exited. An unavailable remote collector uses the retry
 queue and does not by itself make the component graph unhealthy.
 
+Alloy retains its state under `/var/lib/lanrith/alloy`. Its unit exposes that
+directory at `/var/lib/lanrith-alloy` inside the service's mount namespace, so
+the unprivileged exporter can use it while `/var/lib/lanrith` remains root-only.
+The native test exercises that mount and permission boundary separately from
+the journal delivery pipeline.
+
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only
