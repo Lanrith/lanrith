@@ -4,28 +4,28 @@
   "component_releases": {
     "discovery-bridge": {
       "files": {
-        "discovery-bridge_0.1.6_amd64.deb": "1aea8786ae2a84172b76f8e92e3f99d1ab4c9e1c6f85dd71a0670f372ad59211",
-        "release.json": "e6a4983acace76907f0a8e0ac8dc43d7917918f31c66e0503cf9e13f2f01eae6",
-        "update-record.json": "3c436a4610d93a3ccc7b44ed982ae25f3525d2ffab5e30baca62da3e4cc9c3ce"
+        "discovery-bridge_0.1.7_amd64.deb": "597c57cd77a50165fd46ba873e1338b05aaaebff433c27494cd623c1e43cf1fe",
+        "release.json": "21d1c107d32eb6b7bf841301dc5bdda4d29aa2ee5aba27a9e7bad98e30be1473",
+        "update-record.json": "a8e99f504a7385d5afd3023144ab99dfc0e3f337b85835436b2afed21dc593f8"
       },
       "repository": "Lanrith/discovery-bridge",
-      "source_commit": "a88d3fc9bb940775fa93a5ae5328c8621f585f64",
-      "tag": "v0.1.6",
-      "workflow_commit": "a88d3fc9bb940775fa93a5ae5328c8621f585f64"
+      "source_commit": "63bc01abb29c33806761d20e20c49b563af2e87c",
+      "tag": "v0.1.7",
+      "workflow_commit": "63bc01abb29c33806761d20e20c49b563af2e87c"
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "5a16280ec90e305d9cb6c8b4d98e8cb6bb8c45de4a93e9f86d10df6e2710e8d7",
-        "router-policy-collector_0.1.8_amd64.deb": "f6c3f13759e3af8da520d68f267bbaafa4b53fbd9783ed5462b098ab117c75f1",
-        "router-policy-helper_0.1.8_amd64.deb": "1131954eece417b629465068cfe87546a3ce7c09e0f8893fd3a5cca63e431828",
-        "router-policy-reader_0.1.8_amd64.deb": "52054337b2570491be048f956a9ff475ca150ca0e665077db99568d07623f027",
-        "security.txt": "ac7b7b77d843eac6578f718108aebb45900404f4564962663032c6c3d2a7d3b8",
-        "update-record.json": "7532049c0198dfeaab9cc3f491f0bd85cc18705d6fd58bfa041411ba1cf9450e"
+        "component-release.json": "dd94f6b66be19a1268eaf7165f924f0266de03b383f5c0bccd5cd73f85dec8c3",
+        "router-policy-collector_0.1.9_amd64.deb": "90880b13806358a7ff78812e5e61558d890002ea943bb2c7887e8928b54cfe95",
+        "router-policy-helper_0.1.9_amd64.deb": "bc21ba3f0e9c1e780c4c33285bc1164f491faea581e3eb3ddb897eac7d3d194e",
+        "router-policy-reader_0.1.9_amd64.deb": "7bb0e5a37eb6b00e4a2fac7616a988787152bb4328c2cdd9046eed12fe8e0d58",
+        "security.txt": "ef8ec994b93d74e4ecca59d1da7750abf863b7ae002ed9ae59eb2253f22aaa89",
+        "update-record.json": "b46b712cc9591c72b582931f4ed53baf43f1eff9e191acf793b2b4bdb408268c"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "16f113d68fda4cecc1d0208d210038dfab4ab339",
-      "tag": "v0.1.8",
-      "workflow_commit": "16f113d68fda4cecc1d0208d210038dfab4ab339"
+      "source_commit": "da6343248d32c578b662b129d4dd2393d655a089",
+      "tag": "v0.1.9",
+      "workflow_commit": "da6343248d32c578b662b129d4dd2393d655a089"
     }
   },
   "custom_package_inputs": {
@@ -38,7 +38,7 @@
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
     "builders/alloy/source.json": "3652dbeab2d9389ecba86133c979a4d5ab756c97d1691c8d9a2189536ba0fd31",
     "builders/alloy/ui-dependencies.patch": "b4e4b9c13b0f496fee061a6a1341b7e93dd73ba8e823cf648f5058f68f8dc9c7",
-    "builders/build-inputs.lock": "353e3430cffb30a78a6482968dc8daf044ad73bc571f861df584c7dc55e49a34",
+    "builders/build-inputs.lock": "f1e89e5f5e61b1453f7f66e6f849b00066d1de721494b3bc3ed901b7c6139f14",
     "builders/mkosi/Containerfile": "55e4e902a27db01837d7f88a69d4ad8e53887c4f93c08b0de0982e2795a40736",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18",
@@ -53,10 +53,10 @@
     "builders/vpp/Containerfile": "8e83ccd74bd7c747a3429e7fd76f685f3f15218bbd48ebab55fca270957b25fa"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261024T080000Z",
+  "debian_snapshot": "20261030T190000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "64686a820745e0732f2bcdad5fc6538835750977ec209b52916924df27dce59a",
-  "security_snapshot": "20261024T080000Z"
+  "security_release_sha256": "94fdc651523572c6d2c8994a95d8754d5f7143a589261e914f7d6f30fdbc8c5c",
+  "security_snapshot": "20261030T190000Z"
 }
