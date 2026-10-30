@@ -35,6 +35,14 @@ class MetricsTests(unittest.TestCase):
         proxy = files['usr/lib/systemd/system/lanrith-metrics.service']
         self.assertIn('NetworkNamespacePath=/run/netns/lanrith-services', proxy)
         self.assertIn('CapabilityBoundingSet=\n', proxy)
+        collector = files['usr/lib/systemd/system/lanrith-router-metrics.service']
+        self.assertIn('CapabilityBoundingSet=CAP_NET_ADMIN\n', collector)
+        self.assertIn('RestrictAddressFamilies=AF_UNIX AF_NETLINK\n', collector)
+        self.assertIn('Unit=lanrith-router-metrics.service\n',
+                      files['usr/lib/systemd/system/lanrith-router-metrics.timer'])
+        self.assertIn('0755 root root', files['usr/lib/tmpfiles.d/80-lanrith-metrics.conf'])
+        self.assertEqual(json.loads(files['usr/share/lanrith/router-metrics.json'])['interfaces'], ['lan', 'wan'])
+        self.assertFalse((Path(__file__).parents[1]/'mkosi/base/mkosi.extra/usr/lib/systemd/system/lanrith-metrics.timer').exists())
 
     def test_selected_metrics_units_and_runtime_are_required_for_boot_acceptance(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -48,6 +56,10 @@ class MetricsTests(unittest.TestCase):
                 self.assertIn(name, health)
                 self.assertTrue((overlay/'etc/systemd/system'/name).is_symlink())
             self.assertTrue((overlay/'usr/lib/lanrith/lanrith/metrics_runtime.py').is_file())
+            self.assertEqual(json.loads((overlay/'usr/share/lanrith/router-metrics.json').read_bytes())['units'],
+                             json.loads((overlay/'usr/share/lanrith/health.json').read_bytes())['units'])
+            self.assertTrue((overlay/'usr/lib/lanrith/router-metrics').is_file())
+            self.assertTrue((overlay/'usr/lib/lanrith/lanrith/router_metrics_runtime.py').is_file())
 
     def test_client_and_backend_rules_keep_interface_endpoint_port_and_uid(self):
         files = config.render(fixture())

@@ -64,6 +64,17 @@ def manifest(value):
             'source': intent.service_addresses(value, 'metrics')[0]}
 
 
+def router_manifest(value):
+    from .runtime_plan import required_units
+    return {'schema': 1, 'units': required_units(value),
+            'interfaces': sorted({item['name'] for item in value['hardware']['interfaces'].values()
+                                  if item.get('owner') != 'vpp'} |
+                                 {item['name'] for item in value['networks'].values() if 'namespace' not in item}),
+            'clients': [{'network': name, 'interface': item['name']} for name, item in value['networks'].items()
+                        if item.get('forwarding', True) and 'namespace' not in item],
+            'ntp': value['services']['ntp']['enabled']}
+
+
 def render(value):
     if not active(value):
         return {}
@@ -71,8 +82,27 @@ def render(value):
     sources(value)
     return {
         'usr/share/lanrith/metrics.json': canonical(settings).decode(),
+        'usr/share/lanrith/router-metrics.json': canonical(router_manifest(value)).decode(),
         'usr/lib/sysusers.d/80-lanrith-metrics.conf': 'u lanrith-metrics - "Metrics proxy" /\n',
-        'usr/lib/tmpfiles.d/80-lanrith-metrics.conf': 'd /var/lib/node_exporter/textfile_collector 0755 prometheus prometheus -\n',
+        'usr/lib/tmpfiles.d/80-lanrith-metrics.conf': 'd /var/lib/node_exporter/textfile_collector 0755 root root -\n',
+        'usr/lib/systemd/system/lanrith-router-metrics.service': (
+            '[Unit]\nDescription=Collect bounded router health in the host namespace\n'
+            'Requires=var.mount\nAfter=var.mount nftables.service systemd-networkd.service\n'
+            '[Service]\nType=oneshot\nUser=root\nGroup=root\nUMask=0022\n'
+            'ExecStart=/usr/lib/lanrith/router-metrics\n'
+            'ExecStopPost=/usr/lib/lanrith/router-metrics --on-stop\n'
+            'TimeoutStartSec=25s\nTimeoutStopSec=2s\nKillMode=control-group\n'
+            'CapabilityBoundingSet=CAP_NET_ADMIN\nNoNewPrivileges=yes\n'
+            'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
+            'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            'ReadWritePaths=/var/lib/node_exporter/textfile_collector\n'
+            'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\n'
+            'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
+            'MemoryMax=64M\nMemorySwapMax=0\nTasksMax=16\nLimitNOFILE=128\n'),
+        'usr/lib/systemd/system/lanrith-router-metrics.timer': (
+            '[Unit]\nDescription=Refresh bounded router health\n\n'
+            '[Timer]\nOnBootSec=15s\nOnUnitActiveSec=30s\nRandomizedDelaySec=5s\nAccuracySec=1s\n'
+            'Unit=lanrith-router-metrics.service\n\n[Install]\nWantedBy=timers.target\n'),
         'usr/lib/systemd/system/prometheus-node-exporter.service': (
             '[Unit]\nDescription=Collect host network and system metrics\n'
             'PartOf=lanrith-metrics.service\nRequires=lanrith-services.service nftables.service\n'

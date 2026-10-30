@@ -154,6 +154,9 @@ attacker with unrestricted root can forge local events.
 
 ## Hardware and optional integrations
 
+See [router health metrics](metrics.md) for collector units, metric names,
+query and inventory bounds, and source-admission behavior.
+
 Defaults allocate a 1 GiB ESP, two 4 GiB root slots and 64 GiB encrypted state.
 Surplus storage stays unallocated. Factory installation requires an eligible
 512-byte logical-sector disk and explicit destructive confirmation. TPM is

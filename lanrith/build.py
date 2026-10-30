@@ -145,7 +145,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
-                   'metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py',
+                   'metrics_runtime.py', 'router_metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
                    'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',
                    'image_operation.py', 'steady_recovery.py'):
@@ -161,6 +161,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     fan_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                            'from lanrith.fancontrol_runtime import main\nsys.exit(main())\n')
     fan_wrapper.chmod(0o755)
+    if value.get('observability', {}).get('metrics', {}).get('enabled'):
+        metrics_wrapper = overlay/'usr/lib/lanrith/router-metrics'
+        metrics_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                   'from lanrith.router_metrics_runtime import main\nsys.exit(main())\n')
+        metrics_wrapper.chmod(0o755)
     if value.get('identity', {}).get('policy', {}).get('enabled'):
         policy_wrapper = overlay / 'usr/lib/lanrith/policy-runtime'
         policy_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
@@ -190,6 +195,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                                            integrations=integration['health_units'])
     (metadata/'health.json').write_bytes(release.canonical(
         runtime_plan.health(value, target_facts=target_facts, integrations=integration['health_units'])))
+    if value.get('observability', {}).get('metrics', {}).get('enabled'):
+        metric_policy = json.loads((metadata/'router-metrics.json').read_bytes())
+        metric_policy['units'] = required
+        (metadata/'router-metrics.json').write_bytes(release.canonical(metric_policy))
     # These helpers may come from an older admitted base. Replace every consumer
     # together with its generated administration contract.
     for name in ('ensure-ssh-host-key', 'verify-serial-passphrase', 'serial-idle-watchdog'):
