@@ -169,9 +169,7 @@ def runtime_contract(value):
         admission = value['networks'][admission_key]
         ipv4 = next(ip.ip_interface(address).network for address in admission['addresses']
                     if ip.ip_interface(address).version == 4)
-        subnet_id = next(index for index, (key, _) in enumerate(
-            ((key, network) for key, network in value['networks'].items() if 'dhcp4' in network), 1)
-                         if key == admission_key)
+        subnet_id = intent.dhcp4_ids(value)[admission_key]
         attachment = value['hardware']['interfaces'][admission['interface']]['name']
         collector = {
             'radius_user': 'freerad',

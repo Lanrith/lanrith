@@ -38,6 +38,14 @@ by another UID, undeclared egress and removal of new-connection permission. Thes
 results cover the generic compiler policy. Advanced integrations and physical
 hardware still need their own candidate-specific tests.
 
+The required native parser check also runs `tests/dhcp_native.py`. In private
+mount/network namespaces it loads an older-schema synthetic Kea lease file with
+an explicit subnet ID, checks native assigned-address counts before renewal,
+receives DHCPACK, restarts Kea and repeats. It verifies that the lease retains
+its ID, that canonical owner snapshots preserve it and that Kea accepts the
+supported upper bound. Actual owner lease import and populated-image upgrade/
+rollback still require the corresponding owner artifacts and state.
+
 `tests/extensions_native.py --result /output/extension-systemd.json` requires an
 uninitialized, offline container with systemd as PID 1. It verifies the generated
 optional starter, the observer's actual oneshot lifecycle and systemd's unchanged

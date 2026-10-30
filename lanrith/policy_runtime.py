@@ -144,7 +144,7 @@ def load_contract(path=CONTRACT, *, owner=0):
                 collector['kea_socket'] != '/run/kea/kea4-ctrl-socket' or prefix.version != 4 or
                 str(prefix) != collector['ipv4_prefix'] or not isinstance(collector['nas_prefixes'], list) or
                 not 1 <= len(nas) <= 64 or collector['nas_prefixes'] != sorted(set(map(str, nas))) or
-                type(collector['subnet_id']) is not int or not 1 <= collector['subnet_id'] <= 2**32-1 or
+                type(collector['subnet_id']) is not int or not 1 <= collector['subnet_id'] <= 2**32-2 or
                 type(collector['vlan']) is not int or not 1 <= collector['vlan'] <= 4094 or
                 type(collector['maximum_devices']) is not int or
                 not 1 <= collector['maximum_devices'] <= 256 or

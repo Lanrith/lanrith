@@ -23,6 +23,19 @@ selectors and undeclared management networks fail validation. See the
 | `extensions` | IDs of separately reviewed integration manifests |
 | `release` | Owner image identity and monotonic `sequence_floor` |
 
+Use `networks.<name>.dhcp4.id` to retain a DHCPv4 subnet identity, for example
+`dhcp4: {id: 1024, pools: [192.168.10.100-192.168.10.200]}`. IDs must be unique
+integers from 1 to 4294967294. They are independent of VLAN numbers. Kea uses
+these IDs to associate leases with subnets, so retain the existing IDs when
+importing a lease file. See the [Kea subnet identifier contract](https://kea.readthedocs.io/en/kea-3.0.0/arm/dhcp4-srv.html#ipv4-subnet-identifier).
+
+Omitting `id` assigns the first unused positive number in network order, reserving
+explicit IDs first. The normalized build input records every assigned ID so
+canonical snapshots and native policy admission agree with Kea. Pin IDs in the
+owner file before reordering existing networks or changing a persisted layout.
+Disabled scopes reserve no ID. IDs are compiled into native configuration and
+bounded runtime contracts; owner YAML remains build-only.
+
 ## Access rules
 
 Use the same rules for every routed destination. Network names come from your
@@ -55,6 +68,7 @@ case. Names are preserved in the image's resolved configuration for inspection
 and future console display. They are metadata: renaming a rule does not change
 its match, position or permissions, and the compiler does not insert names into
 firewall code. Unnamed rules remain valid.
+
 
 The first matching rule decides. A selector with both `network` and `addresses`
 requires both to match; a host exception therefore stays restricted to its

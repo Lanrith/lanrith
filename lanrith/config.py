@@ -469,7 +469,7 @@ def render(value, *, target_facts=None, retained_allocations=None):
             if 'dhcp4' not in network:
                 continue
             address = next(ipaddress.ip_interface(a) for a in network['addresses'] if ':' not in a)
-            scopes.append({'id': len(scopes) + 1, 'subnet': str(address.network), 'interface': network['name'],
+            scopes.append({'id': network['dhcp4']['id'], 'subnet': str(address.network), 'interface': network['name'],
                            'pools': [{'pool': pool} for pool in network['dhcp4']['pools']],
                            'reservations': [{('hw-address' if k == 'mac' else 'ip-address' if k == 'address' else k): v
                                              for k, v in entry.items()} for entry in network['dhcp4'].get('reservations', [])],
