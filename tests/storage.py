@@ -60,8 +60,16 @@ def main():
         run('openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-days', '1',
             '-subj', '/CN=Lanrith Disposable Storage Test Authority', '-keyout', str(key), '-out', str(certificate))
         key.chmod(0o600)
+        # Retain the larger verity authority while using the supported TPM signer.
+        pcr_key, pcr_certificate = authority/'pcr.key', authority/'pcr.crt'
+        run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+            '-subj', '/CN=Lanrith Disposable Storage PCR Authority',
+            '-keyout', str(pcr_key), '-out', str(pcr_certificate))
+        pcr_key.chmod(0o600)
         assembly = work/'assembly'
-        build.assembly(value, base, assembly, version='0.1.0', sequence=9, certificate=certificate, private_key=key)
+        build.assembly(value, base, assembly, version='0.1.0', sequence=9,
+                       certificate=certificate, private_key=key,
+                       pcr_key=pcr_key, pcr_certificate=pcr_certificate)
         source = work/'source'
         for name in ('efi', 'boot', 'usr/share/fixture'):
             (source/name).mkdir(parents=True)
