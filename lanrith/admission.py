@@ -39,6 +39,7 @@ def assess(directory, selection, now=None):
                         ('storage_sha256', 'storage-qualification.json'),
                         ('logs_sha256', 'logs-qualification.json'),
                         ('directory_sha256', 'directory-qualification.json'),
+                        ('credentials_sha256', 'credential-qualification.json'),
                         ('filesystem_sha256', 'lanrith-base.tar.gz'),
                         ('initrd_sha256', 'lanrith-initrd-base.tar.gz')):
         require(record.get(field) == selection['files'].get(name) == file_record(directory/name)['sha256'],

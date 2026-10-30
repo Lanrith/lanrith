@@ -89,6 +89,7 @@ def render(value):
             '\n[Install]\nWantedBy=sockets.target\n'),
         'usr/lib/systemd/system/lanrith-credentials@.service': (
             '[Unit]\nDescription=Bounded operator credential provisioning\n'
+            'CollectMode=inactive-or-failed\n'
             'Requires=lanrith-credential-setup.service\nAfter=lanrith-credential-setup.service\n'
             '\n[Service]\nType=exec\nExecStart=/usr/bin/lanrith-credentials serve\n'
             'StandardInput=socket\nStandardOutput=journal\nStandardError=journal\n'

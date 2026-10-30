@@ -79,6 +79,27 @@ The result binds the test, fixture, compiler and runtime digests, and is require
 by base qualification and consumer admission. Actual directory authentication,
 grants and the owner's complete image remain separate qualification work.
 
+`scripts/qualify-credentials.py` runs the generated credential socket and units
+under systemd in an offline disposable container. It resolves the reviewed local
+builder to an immutable image ID, mounts public source read-only, and supplies
+no owner input, key, physical disk, daemon socket or host cgroup bind. Readiness
+polls the same container through transient observation failures; the runner
+does not restart it. A timeout or failed cleanup cannot publish a passing result.
+
+`tests/credentials_native.py` checks operator staging/confirmation, rejected
+root and unrelated users, unchanged consumers after malformed input, native
+LoadCredential bytes, an empty capability set, no-new-privileges, INET/write
+denial and an uninterrupted completion observer. Completed failed requests are
+collected. Its consumer and completion observer are synthetic; actual SSH,
+encryption, backend authentication and full owner-image update/recovery still
+need their own evidence.
+
+Base qualification requires `credential-qualification.json` with all checks,
+matching test/runtime/runner digests, confirmed cleanup and an assessment no older
+than six hours. The qualification record and consumer admission bind its digest
+to the authenticated release asset. Local or pull-request results cannot set the
+production qualification flag.
+
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only

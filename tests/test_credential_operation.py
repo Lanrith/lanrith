@@ -127,6 +127,7 @@ class CredentialProtocolTests(unittest.TestCase):
                     self.assertEqual(credential_store.digest(source), installed['credential_catalog_sha256'])
                     manifest = json.loads(source)
                     endpoint = (units/'lanrith-credentials@.service').read_text()
+                    self.assertIn('CollectMode=inactive-or-failed', endpoint)
                     for control in ('NoNewPrivileges=yes', 'CapabilityBoundingSet=\n', 'PrivateNetwork=yes',
                                     'RestrictAddressFamilies=AF_UNIX', 'LimitCORE=0', 'ProtectSystem=strict'):
                         self.assertIn(control, endpoint)

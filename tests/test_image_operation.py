@@ -291,6 +291,8 @@ class OperatorTests(unittest.TestCase):
                 self.assertIn('SocketUser=admin\nSocketMode=0600', unit.read_text())
                 self.assertNotIn('ListenStream=0.', unit.read_text())
                 self.assertIn('Accept=yes', unit.read_text())
+                self.assertIn('CollectMode=inactive-or-failed',
+                    (tree/'usr/lib/systemd/system/lanrith-image-operation@.service').read_text())
                 self.assertIn(' -I\n', (tree/'usr/bin/lanrith-image').read_text())
                 self.assertTrue((tree/'usr/lib/systemd/system/multi-user.target.wants/lanrith-image-completion.service').is_symlink())
                 self.assertFalse(any(p.suffix in ('.yml', '.yaml') for p in tree.rglob('*')))

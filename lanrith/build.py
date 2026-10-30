@@ -241,6 +241,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=sockets.target\n')
     (units/'lanrith-image-operation@.service').write_text(
         '[Unit]\nDescription=Bounded operator image operation\n'
+        'CollectMode=inactive-or-failed\n'
         'RequiresMountsFor=/var/lib/lanrith /var/tmp/lanrith-update\n'
         '\n[Service]\nType=exec\nExecStart=/usr/bin/lanrith-image serve\n'
         'ExecStopPost=/usr/bin/lanrith-image cancel-request\n'

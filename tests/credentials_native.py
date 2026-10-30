@@ -7,11 +7,13 @@ are synthetic; this is not full-image, encryption, SSH or backend acceptance.
 
 import argparse
 import base64
+import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -58,6 +60,7 @@ def main():
         base.write_bytes(b'synthetic assembly input')
         build.assembly(value, base, root/'assembly', version='0.1.0', sequence=12)
         run('useradd', '--uid', '1701', '--no-create-home', '--shell', '/bin/sh', 'fixture-operator')
+        run('useradd', '--uid', '1702', '--no-create-home', '--shell', '/bin/sh', 'fixture-other')
         tree = root/'assembly/mkosi.extra'
         shutil.copytree(tree/'usr/lib/lanrith', '/usr/lib/lanrith', dirs_exist_ok=True)
         shutil.copytree(tree/'usr/share/lanrith', '/usr/share/lanrith', dirs_exist_ok=True)
@@ -91,6 +94,15 @@ def main():
         run('systemctl', 'start', '--no-block', 'alloy.service')
         wait(lambda: Path('/run/lanrith-credentials.sock').exists())
         assert not active('alloy.service') and active('lanrith-image-completion.service')
+        info = Path('/run/lanrith-credentials.sock').stat()
+        assert info.st_uid == 1701 and stat.S_IMODE(info.st_mode) == 0o600
+        for command in (['/usr/bin/lanrith-credentials', 'status'],
+                        ['runuser', '-u', 'fixture-other', '--', '/usr/bin/lanrith-credentials', 'status']):
+            denied = subprocess.run(command, capture_output=True, timeout=20)
+            assert denied.returncode != 0 and not denied.stdout, 'Unauthorized identity reached credential status.'
+        assert not Path('/var/lib/lanrith/credentials/ingest').exists()
+        wait(lambda: not run('systemctl', 'list-units', '--failed', '--no-pager', '--no-legend',
+                             'lanrith-credentials@*').strip())
         pid = run('systemctl', 'show', '--property=MainPID', '--value', 'lanrith-image-completion.service').strip()
         installed = json.loads((tree/'usr/share/lanrith/installed.json').read_bytes())
         raw = b'synthetic-native-credential'
@@ -99,6 +111,14 @@ def main():
             'stage', installed['configuration_sha256'], input=payload))
         assert staged['phase'] == 'prepared'
         wait(lambda: active('alloy.service'))
+        assert Path('/run/fixture-consumer.sha').read_text() == hashlib.sha256(raw).hexdigest()
+        invocation = run('systemctl', 'show', '--property=InvocationID', '--value', 'alloy.service')
+        invalid = subprocess.run(['runuser', '-u', 'fixture-operator', '--', '/usr/bin/lanrith-credentials',
+            'stage', installed['configuration_sha256']],
+            input=release.canonical({'ingest': base64.b64encode(b'invalid\nvalue').decode()}),
+            capture_output=True, timeout=20)
+        assert invalid.returncode != 0 and not invalid.stdout
+        assert active('alloy.service') and invocation == run('systemctl', 'show', '--property=InvocationID', '--value', 'alloy.service')
         assert Path('/run/fixture-consumer.sha').read_text() == hashlib.sha256(raw).hexdigest()
         # Apply exactly the generated executor sandbox to a disposable probe;
         # no request can select this probe or its command.
@@ -129,13 +149,22 @@ def main():
         assert not Path('/run/fixture-completion-stopped').exists()
         assert active('alloy.service')
         result = {'schema': 1, 'result': 'pass', 'test': 'offline-systemd-credential-provisioning',
+            'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'implementation_sha256': {name: hashlib.sha256((Path(__file__).parents[1]/name).read_bytes()).hexdigest()
                 for name in ('lanrith/credential_operation.py', 'lanrith/credential_config.py',
-                             'lanrith/credential_store.py', 'lanrith/credential_values.py', 'lanrith/build.py')},
+                             'lanrith/credential_store.py', 'lanrith/credential_values.py', 'lanrith/build.py',
+                             'lanrith/runtime.py', 'lanrith/image_operation.py', 'lanrith/config.py',
+                             'tests/test_intent.py', 'scripts/qualify-credentials.py',
+                             'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_credentials.py',
+                             'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',
+                             'mkosi/base/mkosi.extra/usr/lib/lanrith/credential_runtime.py',
+                             'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py')},
             'systemd_version': run('systemctl', '--version').decode().splitlines()[0],
             'external_network': False, 'private_image_qualified': False,
             'checks': ['generated-unit-verification', 'operator-uid-socket-stage-and-commit',
+                       'unauthorized-uid-and-root-denied', 'malformed-input-preserves-consumers',
+                       'failed-requests-collected',
                        'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
                        'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
                        'active-completion-observer-not-stopped'],
