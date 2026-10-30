@@ -10,7 +10,7 @@ import sys
 COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config', 'bindings',
             'integrations', 'access', 'firewall', 'service_plane', 'authoritative', 'routing',
             'translation', 'nat46', 'nat64', 'ids', 'metrics', 'policy_agent', 'discovery',
-            'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs',
+            'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs', 'owner_inputs',
             'recovery_build', 'recovery_failure_build', 'state_formats'}
 
 
@@ -23,7 +23,8 @@ def check(root):
     if build_inputs.exists() or build_inputs.is_symlink():
         raise ValueError('The image contains an unconsumed build-only policy input.')
     for directory in (library, root/'etc/lanrith', root/'usr/share/lanrith'):
-        if any(path.suffix in ('.yaml', '.yml') or path.name in ('resolved.json', 'configuration.json')
+        if any(path.suffix in ('.yaml', '.yml') or path.name in (
+                'resolved.json', 'configuration.json', 'hardware-facts.json', 'translation-allocations.json')
                for path in directory.rglob('*')):
             raise ValueError('The image contains source configuration input.')
     # Check dormant imports too. No site-package or compiler module may become

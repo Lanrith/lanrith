@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import admission, archive as handoff, config, evidence, extensions, release, trust
+from lanrith import admission, archive as handoff, config, evidence, extensions, owner_inputs, release, trust
 
 
 def run(*argv, **kwargs):
@@ -115,6 +115,7 @@ def preflight(owner, bundle):
     release.require(release.public_key(owner/'trust/boot.crt') != release.public_key(owner/'trust/evidence.crt'),
                     'Boot and evidence signing authorities must be separate.')
     pins = integration_pins(owner, value)
+    _, owner_records = owner_inputs.load(owner, value)
     result = {'schema': 1, 'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'integration_digests': {name: pin[1] for name, pin in pins.items()},
             'platform_lock_sha256': release.file_record(owner/'platform.lock')['sha256'],
@@ -125,6 +126,8 @@ def preflight(owner, bundle):
     if (owner/'trust/pcr.crt').exists():
         release.public_key(owner/'trust/pcr.crt')
         result['pcr_certificate_sha256'] = release.file_record(owner/'trust/pcr.crt')['sha256']
+    if owner_records:
+        result['owner_inputs'] = owner_records
     return result
 
 
@@ -142,6 +145,8 @@ def assemble(owner, bundle, request, output):
     release.require(release.file_record(owner/'platform.lock')['sha256'] == actual['platform_lock_sha256'] and
                     hashlib.sha256(release.canonical(config.load(owner/'config.yaml'))).hexdigest() ==
                     actual['configuration_sha256'], 'Signing inputs changed after admission.')
+    owner_options, owner_records = owner_inputs.load(owner, config.load(owner/'config.yaml'))
+    release.require(owner_records == actual.get('owner_inputs', {}), 'Owner build inputs changed after admission.')
     selection = trust.lock(owner/'platform.lock')
     reference = selection['builder']+'@sha256:'+selection['builder_digest']
     for name, expected_digest in selection['files'].items():
@@ -213,12 +218,13 @@ def assemble(owner, bundle, request, output):
             image_id=value.get('release', {}).get('image_id', 'lanrith'), sequence=sequence,
             tpm_required=value['hardware']['boot'].get('tpm', 'required') == 'required')
         effective_digest = config.effective_digest(value, actual['integration_digests'], serial_digest,
-                                                  boot_inputs=build_inputs.digest_fields(boot_record))
+                                                  boot_inputs=build_inputs.digest_fields(boot_record), **owner_options)
         (private/'admitted.json').write_bytes(release.canonical({'platform_lock_sha256':
             release.file_record(owner/'platform.lock')['sha256'], 'workflow_commit': actual['workflow_commit'],
             'configuration_sha256': actual['configuration_sha256'], 'files': selection['files'],
             'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
             'integration_digests': actual['integration_digests'], 'assessment_sha256': receipt['assessment_sha256'],
+            **({'owner_inputs': owner_records} if owner_records else {}),
             'boot_inputs': boot_record}))
         (private/'admitted.json').chmod(0o600)
         run(*command)

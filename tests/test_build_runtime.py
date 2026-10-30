@@ -125,9 +125,12 @@ with patch.object(boot_health, 'command', command): boot_health.check(plan)
             boundary.check(tree)
             for name, data in (
                     ('usr/share/lanrith/resolved.json', '{}'),
+                    ('usr/share/lanrith/hardware-facts.json', '{}'),
+                    ('etc/lanrith/translation-allocations.json', '{}'),
                     ('etc/lanrith/config.yaml', 'schema: 1'),
                     ('usr/lib/lanrith-build/policy-baseline.json', '{}'),
                     ('usr/lib/lanrith/lanrith/config.py', 'pass'),
+                    ('usr/lib/lanrith/lanrith/owner_inputs.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/discovery.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/logs.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/radius.py', 'pass'),
