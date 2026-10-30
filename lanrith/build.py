@@ -210,6 +210,21 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         (overlay/'etc/security/admin.serial-passphrase.hash').chmod(0o600)
     units = overlay / 'usr/lib/systemd/system'
     units.mkdir(parents=True, exist_ok=True)
+    if integration['start_units']:
+        (units/'lanrith-extension-start.service').write_text(
+            '[Unit]\nDescription=Start admitted optional integrations after core acceptance\n'
+            'DefaultDependencies=no\nRequires=boot-complete.target lanrith-observation.service\n'
+            'After=boot-complete.target lanrith-observation.service\n'
+            'Conflicts=shutdown.target\nBefore=shutdown.target\n'
+            '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+            'ExecStart=/usr/bin/systemctl --no-block start -- '+' '.join(integration['start_units'])+'\n'
+            'TimeoutStartSec=10s\nCapabilityBoundingSet=\nNoNewPrivileges=yes\n'
+            'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
+            'RestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\n'
+            'MemoryMax=32M\nTasksMax=8\nLimitNOFILE=64\n')
+        activation = units/'multi-user.target.wants/lanrith-extension-start.service'
+        activation.parent.mkdir(parents=True, exist_ok=True)
+        activation.symlink_to('../lanrith-extension-start.service')
     required = runtime_plan.required_units(value, target_facts=target_facts,
                                            integrations=integration['health_units'])
     (metadata/'health.json').write_bytes(release.canonical(

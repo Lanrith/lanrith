@@ -237,6 +237,47 @@ size and numeric mode. The private repository pins the manifest digest in
 maintainer scripts or build hooks run during signing. Health units become boot
 acceptance requirements.
 
+Use `start_units` for extension-owned services, sockets, timers or targets that
+should start after core boot acceptance. Each unit must be inventoried under
+`usr/lib/systemd/system/`. Lanrith starts them after the accepted boot observation;
+their failure does not become a core boot requirement. Units also listed in
+`health_units` remain mandatory. Extension units must keep their own dependency
+and resource limits; `start_units` does not add a restart policy.
+
+An optional `network` object declares host listeners and managed-service clients.
+Both refer to users in the extension's `identities.users` list. For example:
+
+```json
+{
+  "listeners": [{
+    "user": "example-agent", "network": "home", "address": "192.168.10.1",
+    "sources": ["192.168.10.0/24"], "protocol": "tcp", "port": 8443
+  }],
+  "services": [{"user": "example-agent", "service": "metrics", "family": 4}]
+}
+```
+
+Listeners require an exact gateway address on the named network, explicit
+same-family source prefixes within that attachment, TCP or UDP, and a port from
+1024 to 65535. The configured SSH port is reserved. Management-network listeners
+remain reachable only through their own attachment. These declarations add no
+forwarding permission and cannot bypass source validation, OOB isolation or
+translation guards.
+
+Managed-service access currently supports the selected metrics API over TCP 9100,
+using family `4` or `6`. It requires metrics to be enabled. Lanrith derives the
+host-link source and service destination, admits the matching namespace input,
+and checks the extension UID before accepting tracked output. Other unprivileged
+UIDs cannot reuse those tuples. Declared UIDs receive no other external output
+permission; existing host loopback policy and privileged-root authority remain.
+This contract supplies network admission, not application authentication or a
+sandbox for untrusted extension code. The owner must review the extension's units,
+helpers and credentials.
+
+Typed network declarations cannot be combined with a complete firewall
+replacement. The build emits native rules only; no runtime extension parser or
+owner YAML is needed. Removing a declaration removes its new-connection grant.
+
 An optional `replaces` list explicitly admits replacement of compiler-generated
 firewall, networkd, Kea, Unbound, Chrony or routing-sysctl files. This is for
 reviewed advanced policy, including service namespaces. Conflicts without that

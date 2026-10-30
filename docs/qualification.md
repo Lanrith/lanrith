@@ -31,9 +31,20 @@ Do not transplant qualification claims from an earlier repository or release.
 `tests/packets.py` exercises the generated firewall using real IPv4 and IPv6
 connections in disposable namespaces. It checks management access, unsolicited
 uplink traffic, inter-network isolation, directional port grants, disabled
-service ports, spoof rejection, NAT44 and IPv6 source preservation. These
+service ports, spoof rejection, NAT44 and IPv6 source preservation.
+It also checks arbitrary extension listeners, managed metrics access by UID,
+wrong ingress, OOB boundaries, a forged managed-host source, stale-tuple reuse
+by another UID, undeclared egress and removal of new-connection permission. These
 results cover the generic compiler policy. Advanced integrations and physical
 hardware still need their own candidate-specific tests.
+
+`tests/extensions_native.py --result /output/extension-systemd.json` requires an
+uninitialized, offline container with systemd as PID 1. It verifies the generated
+optional starter, the observer's actual oneshot lifecycle and systemd's unchanged
+global failed-unit check. A synthetic optional service fails after core acceptance;
+a separate core failure still prevents acceptance. The fixture resets only four
+allow-listed container-only kernel mount failures and records any such resets.
+It does not qualify an extension application, full-image startup or physical boot.
 
 `tests/storage.py` creates a signed synthetic EROFS image and expands it with
 the matching builder's `systemd-repart`. It verifies that the second slot and
