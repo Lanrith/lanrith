@@ -156,13 +156,7 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
     release.require(Path('/dev/shm').is_mount(), 'Signing requires a private tmpfs.')
     work.mkdir(mode=0o700, parents=True)
     snapshot, tools = work/'owner', work/'tools'
-    snapshot.mkdir(mode=0o700)
-    for name, record in actual['files'].items():
-        target = snapshot/name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(owner/name, target)
-        target.chmod(record['mode'])
-        release.require(release.file_record(target)['sha256'] == record['sha256'], 'Owner input changed during snapshot.')
+    owner_inputs.snapshot(owner, snapshot, actual['files'])
     tools.mkdir(mode=0o700)
     tools_archive = work/'platform-tools.tar.gz'
     shutil.copyfile(platform/'tools.tar.gz', tools_archive)

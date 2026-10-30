@@ -190,6 +190,12 @@ Changed, missing or substituted companion files invalidate the request before
 signing. Independent private evidence checks them again. The signing snapshot
 contains these build inputs; the deployed root and initrd do not.
 
+The shared snapshot helper opens each source through directory handles and
+rejects file or parent symlinks, hard links, changed modes and changed bytes.
+It copies only the admitted file sizes, preserves reviewed modes, and removes
+its own partial destination on failure. Controllers revalidate the resulting
+snapshot before opening signing material and mount that snapshot for assembly.
+
 Signing uses private tmpfs and an owned container. Cleanup stops that container
 before removing keys; an unavailable container engine retains the owned tmpfs
 for recovery. The local path does not claim hosted SLSA qualification for the

@@ -39,6 +39,74 @@ def write_inputs(owner, options):
 
 
 class OwnerInputTests(unittest.TestCase):
+    def snapshot_fixture(self, root):
+        owner = root/'owner'
+        (owner/'nested').mkdir(parents=True)
+        path = owner/'nested/config.json'
+        path.write_bytes(b'{"synthetic":true}\n')
+        path.chmod(0o640)
+        return owner, path, {'nested/config.json': {**release.file_record(path), 'mode': 0o640}}
+
+    def test_snapshot_preserves_reviewed_bytes_and_mode_and_does_not_adopt_destinations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owner, path, records = self.snapshot_fixture(root)
+            destination = owner_inputs.snapshot(owner, root/'snapshot', records)
+            self.assertEqual((destination/'nested/config.json').read_bytes(), path.read_bytes())
+            self.assertEqual((destination/'nested/config.json').stat().st_mode & 0o777, 0o640)
+            with self.assertRaises(release.ReleaseError):
+                owner_inputs.snapshot(owner, destination, records)
+            self.assertEqual((destination/'nested/config.json').read_bytes(), path.read_bytes())
+
+    def test_snapshot_rejects_changed_bytes_or_mode_and_removes_its_own_partial_copy(self):
+        for alteration in ('bytes', 'mode'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                owner, path, records = self.snapshot_fixture(root)
+                if alteration == 'bytes':
+                    path.write_bytes(b'{"synthetic":null}\n')
+                else:
+                    path.chmod(0o600)
+                with self.assertRaises(release.ReleaseError):
+                    owner_inputs.snapshot(owner, root/'snapshot', records)
+                self.assertFalse((root/'snapshot').exists())
+                self.assertTrue(path.exists())
+
+    def test_snapshot_rejects_linked_files_and_parents_even_when_the_bytes_match(self):
+        for alteration in ('file-link', 'parent-link', 'hardlink'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                owner, path, records = self.snapshot_fixture(root)
+                original = path.read_bytes()
+                if alteration == 'parent-link':
+                    (owner/'nested').rename(root/'outside')
+                    (owner/'nested').symlink_to(root/'outside', target_is_directory=True)
+                else:
+                    path.rename(root/'outside-file')
+                    if alteration == 'file-link':
+                        path.symlink_to(root/'outside-file')
+                    else:
+                        os.link(root/'outside-file', path)
+                with self.assertRaises((OSError, release.ReleaseError)):
+                    owner_inputs.snapshot(owner, root/'snapshot', records)
+                self.assertFalse((root/'snapshot').exists())
+                self.assertEqual(path.read_bytes(), original)
+
+    def test_snapshot_rejects_escaping_paths_and_invalid_record_identity(self):
+        for name, field, value in (('../escape', None, None), ('/absolute', None, None),
+                                   ('nested/config.json', 'name', 'different.json'),
+                                   ('nested/config.json', 'mode', 0o4755),
+                                   ('nested/config.json', 'size', -1)):
+            with self.subTest(name=name, field=field), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                owner, _, records = self.snapshot_fixture(root)
+                record = records['nested/config.json']
+                if field:
+                    record[field] = value
+                with self.assertRaises(release.ReleaseError):
+                    owner_inputs.snapshot(owner, root/'snapshot', {name: record})
+                self.assertFalse((root/'snapshot').exists())
+
     def test_optional_files_preserve_the_small_router(self):
         with tempfile.TemporaryDirectory() as temporary:
             value = config.load(PROJECT/'examples/minimal.yaml')
