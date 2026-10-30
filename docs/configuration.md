@@ -144,6 +144,39 @@ through native and translated paths. Enabling a package or component grants no
 trust to a cluster, directory or backend. Temporary broad permissions remain
 explicit owner rules.
 
+Directory policy generates host egress for the policy reader's UID, exact
+server addresses, TCP port, interface and assigned router sources. Targets need
+an unambiguous declared ordinary attachment or a route through one. Router,
+management, managed-service and translator identities are excluded. This
+connectivity exception supplies no client forwarding permission.
+
+An IP-literal directory URL uses that address directly. A named URL requires
+`addresses` with one to eight unique IP pins. Lanrith emits the corresponding
+host entries at build time and retains the URL hostname for TLS verification.
+This avoids a dependency on DNS while enforcing exact destinations. Changing a
+pin requires a new image. For example, with matching declared networks:
+
+```yaml
+identity:
+  directories:
+    devices:
+      enabled: true
+      url: ldap+starttls://directory.example.test:389
+      addresses: [192.0.2.30, 'fd42:1234:5678:10::30']
+      base_dn: dc=example,dc=test
+      bind_dn: cn=router,dc=example,dc=test
+      credential: directory_bind  # Protected runtime credential reference.
+      ca_file: trust/directory.pem  # Reviewed public CA in runtime.trust.
+  policy:
+    enabled: true
+    directory: devices
+    networks: [devices]
+```
+
+With metrics enabled, a separate credential-free identity observes verified
+directory TLS. Its results describe transport health; authenticated collection
+and fresh grants have separate requirements. See [router health metrics](metrics.md).
+
 When authenticated log delivery is enabled, Lanrith also emits a one-minute
 heartbeat containing the accepted boot ID, selected entry, release sequence and
 effective configuration digest. The timer is part of boot health and the event

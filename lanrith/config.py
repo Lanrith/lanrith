@@ -460,6 +460,8 @@ def render(value, *, target_facts=None, retained_allocations=None):
         files[f'etc/systemd/network/25-{parent}-trunk.network'] = (
             f'[Match]\nName={parent}\n\n[Network]\nLinkLocalAddressing=no\n' +
             ''.join(f'VLAN={vlan}\n' for vlan in vlans))
+    from . import directory_config
+    files['etc/hosts'] += directory_config.hosts(value)
     files['etc/nftables.conf'] = firewall.render(value)
     if value['services'].get('dhcp4', {}).get('enabled'):
         scopes = []
@@ -490,6 +492,7 @@ def render(value, *, target_facts=None, retained_allocations=None):
     files.update(nat64.render(value, retained_allocations))
     files.update(ids.render(value))
     files.update(metrics.render(value))
+    files.update(directory_config.render(value))
     files.update(radius.render(value))
     files.update(logs.render(value))
     files.update(discovery.render(value, retained_allocations))

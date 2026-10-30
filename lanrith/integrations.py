@@ -206,14 +206,16 @@ def identity(value):
     intent.fields(identity, {'directories', 'radius', 'policy'})
     directories = intent.named(identity.get('directories', {}), 16)
     for directory in directories.values():
-        intent.fields(directory, {'enabled', 'url', 'base_dn', 'bind_dn', 'credential', 'ca_file'},
+        intent.fields(directory, {'enabled', 'url', 'addresses', 'base_dn', 'bind_dn', 'credential', 'ca_file'},
                       {'url', 'base_dn', 'bind_dn', 'credential', 'ca_file'})
         enabled(directory)
         url = urlsplit(text(directory['url']))
         require(url.scheme in ('ldap+starttls', 'ldaps') and url.hostname and not url.username and
                 not url.password and not url.query and not url.fragment and url.path in ('', '/'),
                 'Directory requires verified StartTLS or LDAPS without embedded credentials.')
-        integer(url.port or (636 if url.scheme == 'ldaps' else 389), 1, 65535)
+        integer(url.port if url.port is not None else (636 if url.scheme == 'ldaps' else 389), 1, 65535)
+        from .directory_config import endpoint
+        endpoint(directory)
         text(directory['base_dn'])
         text(directory['bind_dn'])
         credential(directory['credential'])

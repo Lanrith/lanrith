@@ -211,6 +211,8 @@ def render(value):
         lines.append(f'  oifname "{wan}" ip6 hoplimit 255 icmpv6 type nd-router-solicit icmpv6 code 0 accept')
     lines += routing.control_rules(value, 'output')
     lines += discovery.firewall_rules(value, 'output')
+    from .directory_config import output_rules as directory_output
+    lines += directory_output(value)
     for network in networks.values():
         if network.get('ra'):
             lines.append(f'  oifname "{network["name"]}" ip6 saddr fe80::/10 ip6 hoplimit 255 '

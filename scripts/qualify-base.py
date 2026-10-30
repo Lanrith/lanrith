@@ -38,6 +38,14 @@ LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-jo
     'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
     'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
     'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations'}
+DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
+    'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
+    'reader-and-observer-exact-egress', 'other-identities-destination-port-source-interface-denied',
+    'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
+DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
+    'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
+    'lanrith/config.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
+    'tests/test_directory.py', 'tests/test_policy_agent.py', 'tests/test_intent.py'}
 
 
 def value(path):
@@ -99,6 +107,20 @@ def qualify(directory, project, environment, *, now=None):
     require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py'} and
             all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
             'Log delivery implementation changed after native qualification.')
+    directory_tls = value(directory/'directory-qualification.json')
+    require(directory_tls.get('schema') == 1 and directory_tls.get('result') == 'pass' and
+            directory_tls.get('test') == 'offline-directory-tls-egress' and
+            set(directory_tls.get('checks', [])) == DIRECTORY_CHECKS and
+            directory_tls.get('external_network') is False and
+            directory_tls.get('source_sha256') == file_record(project/'tests/directory_native.py')['sha256'],
+            'Native directory qualification is incomplete or describes different tests.')
+    stamp = datetime.datetime.fromisoformat(directory_tls['assessed_at'])
+    require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
+            'Native directory qualification is stale or future-dated.')
+    implementation = directory_tls.get('implementation_sha256', {})
+    require(set(implementation) == DIRECTORY_IMPLEMENTATION and
+            all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
+            'Directory implementation changed after native qualification.')
     assessment = value(project/'security/slsa-assessment.json')
     require(assessment.get('schema') == 1 and assessment.get('specification') == 'SLSA v1.2' and
             assessment.get('target') == 'Build L3' and assessment.get('result') == 'design-assessed' and
@@ -141,6 +163,7 @@ def qualify(directory, project, environment, *, now=None):
         'native_sha256': file_record(directory/'native-qualification.json')['sha256'],
         'storage_sha256': file_record(directory/'storage-qualification.json')['sha256'],
         'logs_sha256': file_record(directory/'logs-qualification.json')['sha256'],
+        'directory_sha256': file_record(directory/'directory-qualification.json')['sha256'],
         'filesystem_sha256': file_record(directory/'lanrith-base.tar.gz')['sha256'],
         'initrd_sha256': file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
         'requires_consumer_verified_file_and_oci_provenance': True}

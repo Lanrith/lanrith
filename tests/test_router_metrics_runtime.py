@@ -28,7 +28,7 @@ class RouterHealthTests(unittest.TestCase):
             path.write_text(json.dumps(policy))
             self.assertEqual(runtime.load(path), policy)
             for change in ({'command': 'anything'}, {'interfaces': ['../interface']},
-                           {'units': ['anything.service\nother.service']}, {'ntp': 1}, {'logs': 1},
+                           {'units': ['anything.service\nother.service']}, {'ntp': 1}, {'logs': 1}, {'directory': 1},
                            {'clients': [{'network': name, 'interface': 'undeclared'}]}):
                 path.write_text(json.dumps({**policy, **change}))
                 with self.subTest(change=change), self.assertRaises(ReleaseError):

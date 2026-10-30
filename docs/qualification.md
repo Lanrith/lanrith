@@ -67,6 +67,18 @@ while that reader cannot read the exporter credential and unrelated service
 identities cannot read the observation. The health collector rejects stale or
 previous-boot observations; it does not replace unavailable counters with zero.
 
+`tests/directory_native.py` qualifies the directory reader's generated host
+egress and the separate TLS observer in an offline namespace. Synthetic peers
+exercise both address families, LDAPS, StartTLS, incorrect names and authorities,
+expired certificates, plaintext refusal and slow peers. Working alternate
+listeners and interfaces provide positive controls before enforcement denies
+other users, sources, destinations, ports and egress interfaces. The probe sends
+no LDAP Bind request. StartTLS framing follows
+[RFC 4511 section 4.14](https://www.rfc-editor.org/rfc/rfc4511#section-4.14).
+The result binds the test, fixture, compiler and runtime digests, and is required
+by base qualification and consumer admission. Actual directory authentication,
+grants and the owner's complete image remain separate qualification work.
+
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only

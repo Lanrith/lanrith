@@ -31,8 +31,9 @@ class QueryError(ValueError):
 
 def load(path=MANIFEST):
     value = json.loads(read(path, 64*1024), object_pairs_hook=unique)
-    require(isinstance(value, dict) and set(value) == {'schema', 'units', 'interfaces', 'clients', 'ntp', 'logs'} and
+    require(isinstance(value, dict) and set(value) == {'schema', 'units', 'interfaces', 'clients', 'ntp', 'logs', 'directory'} and
             value['schema'] == 1 and type(value['ntp']) is bool and type(value['logs']) is bool and
+            type(value['directory']) is bool and
             isinstance(value['units'], list) and 1 <= len(value['units']) <= 256 and
             all(isinstance(name, str) and UNIT.fullmatch(name) for name in value['units']) and
             len(set(value['units'])) == len(value['units']) and
@@ -293,6 +294,15 @@ def collect(policy, *, previous_inventory=0):
             metrics.emit('alloy_queue_size_bytes', state['queue_size_bytes'])
             metrics.emit('alloy_enqueue_failed_records_total', state['enqueue_failed_records'], counter=True)
             metrics.emit('alloy_send_failed_records_total', state['send_failed_records'], counter=True)
+    if policy['directory']:
+        from .directory_runtime import read_observation
+        state = metrics.query('directory', read_observation)
+        if state is not None:
+            metrics.emit('directory_tls_verified', int(state['tls_verified']))
+            metrics.emit('directory_tls_observation_timestamp_seconds', state['observed_timestamp_seconds'])
+            metrics.emit('directory_tls_endpoints_total', state['endpoints_total'])
+            metrics.emit('directory_tls_endpoints_verified', state['endpoints_verified'])
+            metrics.emit('directory_tls_certificate_not_after_seconds', state['certificate_not_after_seconds'])
     complete, budget = True, 1024
     for client in policy['clients']:
         entries = query('neighbors_'+client['interface'], ['ip', '-j', 'neigh', 'show', 'dev', client['interface']], neighbors)

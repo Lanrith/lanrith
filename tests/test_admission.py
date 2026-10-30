@@ -28,6 +28,7 @@ class AdmissionTests(unittest.TestCase):
             for field, name in (('filesystem_sha256', 'lanrith-base.tar.gz'),
                                 ('initrd_sha256', 'lanrith-initrd-base.tar.gz'),
                                 ('logs_sha256', 'logs-qualification.json'),
+                                ('directory_sha256', 'directory-qualification.json'),
                                 ('storage_sha256', 'storage-qualification.json')):
                 (root/name).write_bytes(b'synthetic unit-test evidence')
                 record[field] = selection['files'][name] = release.file_record(root/name)['sha256']

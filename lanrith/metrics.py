@@ -73,7 +73,8 @@ def router_manifest(value):
             'clients': [{'network': name, 'interface': item['name']} for name, item in value['networks'].items()
                         if item.get('forwarding', True) and 'namespace' not in item],
             'ntp': value['services']['ntp']['enabled'],
-            'logs': value.get('observability', {}).get('logs', {}).get('enabled', False)}
+            'logs': value.get('observability', {}).get('logs', {}).get('enabled', False),
+            'directory': value.get('identity', {}).get('policy', {}).get('enabled', False)}
 
 
 def render(value):
@@ -81,6 +82,11 @@ def render(value):
         return {}
     settings = manifest(value)
     sources(value)
+    groups = []
+    if value.get('observability', {}).get('logs', {}).get('enabled'):
+        groups.append('alloy')
+    if value.get('identity', {}).get('policy', {}).get('enabled'):
+        groups.append('lanrith-directory-health')
     return {
         'usr/share/lanrith/metrics.json': canonical(settings).decode(),
         'usr/share/lanrith/router-metrics.json': canonical(router_manifest(value)).decode(),
@@ -90,7 +96,7 @@ def render(value):
             '[Unit]\nDescription=Collect bounded router health in the host namespace\n'
             'Requires=var.mount\nAfter=var.mount nftables.service systemd-networkd.service\n'
             '[Service]\nType=oneshot\nUser=root\nGroup=root\nUMask=0022\n'
-            + ('SupplementaryGroups=alloy\n' if value.get('observability', {}).get('logs', {}).get('enabled') else '') +
+            + ('SupplementaryGroups='+' '.join(groups)+'\n' if groups else '') +
             'ExecStart=/usr/lib/lanrith/router-metrics\n'
             'ExecStopPost=/usr/lib/lanrith/router-metrics --on-stop\n'
             'TimeoutStartSec=25s\nTimeoutStopSec=2s\nKillMode=control-group\n'

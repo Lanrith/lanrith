@@ -261,6 +261,9 @@ def main():
         'exec python3 /source/tests/logs_native.py --alloy /tmp/logs-binary/usr/bin/alloy '
         '--alloy-sha256 "$2" --result /output/logs-qualification.json',
         'logging-qualification', '/packages/'+alloy_packages[0].name, alloy['binary_sha256'])
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.output)+':/output',
+        builder, 'python3', '/source/tests/directory_native.py', '--result', '/output/directory-qualification.json')
     # Qualification has its own disposable authority and regular-file disks.
     # No production key or owner configuration enters the public build.
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',

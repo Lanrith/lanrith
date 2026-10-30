@@ -12,7 +12,7 @@ directory is root-owned; the exporter has read access. This timer never targets
 the long-running `lanrith-metrics.service` proxy.
 
 The immutable `router-metrics.json` contract contains selected units, host
-interfaces, client attachments and whether NTP and logging are enabled. It contains no source
+interfaces, client attachments and whether NTP, logging and directory policy are enabled. It contains no source
 YAML, owner groups, access rules or credentials. VPP-owned ports and interfaces
 in another namespace are excluded from host observations.
 
@@ -29,6 +29,8 @@ All router health families use the `lanrith_router_` prefix:
 | `nftables_loaded`, `chrony_synchronised` | Core table presence and upstream clock synchronization |
 | `alloy_queue_capacity_bytes`, `alloy_queue_size_bytes` | Configured logical log queue capacity and current occupancy |
 | `alloy_enqueue_failed_records_total`, `alloy_send_failed_records_total` | Rejected enqueue records and failed send attempts |
+| `directory_tls_verified`, `directory_tls_endpoints_total`, `directory_tls_endpoints_verified` | Verified TLS across every pinned directory endpoint |
+| `directory_tls_observation_timestamp_seconds`, `directory_tls_certificate_not_after_seconds` | Probe time and the earliest certificate expiry when all endpoints verify |
 | `client_neighbor_count`, `client_neighbor_info` | Usable ARP/NDP observations on configured ordinary LANs |
 | `client_inventory_complete`, `client_inventory_collection_timestamp_seconds` | Inventory completeness and time of the last complete collection |
 | `metrics_query_success`, `metrics_collection_success`, `metrics_collection_timestamp_seconds`, `metrics_collection_duration_seconds` | Measurement availability and age |
@@ -56,5 +58,23 @@ can be retried and must not be interpreted as a count of permanently lost
 records. Both counters reset when the exporter process restarts. These are
 observations supplied by the exporter, not evidence of policy enforcement.
 
-Directory TLS families remain outstanding. Console inventories, private
-dashboard mappings and backend alert configuration belong to the owner's setup.
+When directory policy and metrics are both enabled, a separate
+`lanrith-directory-health.timer` runs a credential-free TLS probe every
+30 seconds. Its dedicated identity can reach only the selected directory
+addresses and TCP port through their declared attachment. It has no policy-reader
+credential, policy IPC access or capabilities. LDAPS and StartTLS both require
+the supplied CA, matching server identity and TLS 1.2 or newer. Each pinned
+address has a two-second deadline, within a 16-second total budget.
+
+The probe publishes `/run/lanrith-directory-health/health.json` atomically with
+mode 0640. The collector receives only its read group and rejects observations
+older than 90 seconds or from a previous boot. A failed handshake produces
+`directory_tls_verified` zero; an unavailable observation sets
+`metrics_query_success{collector="directory"}` to zero and omits the TLS
+families. Certificate expiry is zero until every selected endpoint verifies.
+Directory authentication, authoritative policy data and fresh grants need their
+own acceptance checks. A remote outage leaves existing policy failure behavior
+in place; TLS success is not a boot-acceptance probe.
+
+Console inventories, private dashboard mappings and backend alert configuration
+belong to the owner's setup.

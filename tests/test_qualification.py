@@ -57,6 +57,17 @@ class QualificationTests(unittest.TestCase):
             'alloy_sha256': 'e'*64, 'checks': sorted(qualification.LOG_CHECKS),
             'queue_capacity_bytes': 67108864, 'queue_physical_bytes': 80*1024*1024,
             'overflow_records': 1000, 'delivered_batches': 8}))
+        implementation = {}
+        for name in qualification.DIRECTORY_IMPLEMENTATION | {'tests/directory_native.py'}:
+            path = project/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text('synthetic directory source: '+name)
+            implementation[name] = release.file_record(path)['sha256']
+        (directory/'directory-qualification.json').write_bytes(release.canonical({
+            'schema': 1, 'result': 'pass', 'test': 'offline-directory-tls-egress', 'assessed_at': now.isoformat(),
+            'source_sha256': implementation.pop('tests/directory_native.py'), 'implementation_sha256': implementation,
+            'external_network': False, 'checks': sorted(qualification.DIRECTORY_CHECKS)}))
         workflows = {}
         for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
                      '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
@@ -100,6 +111,7 @@ class QualificationTests(unittest.TestCase):
             record = json.loads((directory/'qualification.json').read_text())
             self.assertEqual(record['native_sha256'], release.file_record(directory/'native-qualification.json')['sha256'])
             self.assertEqual(record['logs_sha256'], release.file_record(directory/'logs-qualification.json')['sha256'])
+            self.assertEqual(record['directory_sha256'], release.file_record(directory/'directory-qualification.json')['sha256'])
             self.assertEqual(security['qualification']['record_sha256'], release.file_record(directory/'qualification.json')['sha256'])
             artifact = next(item for item in release.document((directory/'release.json').read_bytes())['artifacts']
                             if item['role'] == 'security')
@@ -216,5 +228,37 @@ class QualificationTests(unittest.TestCase):
                     elif alteration == 'changed-capacity':
                         logs['queue_capacity_bytes'] = 65536
                     path.write_bytes(release.canonical(logs))
+                with self.assertRaises((release.ReleaseError, OSError)):
+                    qualification.qualify(directory, project, {}, now=now)
+
+    def test_directory_results_bind_failure_coverage_freshness_and_all_implementation_inputs(self):
+        for alteration in ('missing', 'test-source', 'runtime-source', 'fixture-source', 'missing-check',
+                           'extra-input', 'missing-input', 'stale', 'future', 'external-network'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                path = directory/'directory-qualification.json'
+                report = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    path.unlink()
+                else:
+                    if alteration == 'test-source':
+                        report['source_sha256'] = 'b'*64
+                    elif alteration == 'runtime-source':
+                        (project/'lanrith/directory_runtime.py').write_text('changed after qualification')
+                    elif alteration == 'fixture-source':
+                        (project/'tests/test_directory.py').write_text('changed after qualification')
+                    elif alteration == 'missing-check':
+                        report['checks'].remove('expired-certificate-rejection')
+                    elif alteration == 'extra-input':
+                        report['implementation_sha256']['unreviewed.py'] = 'b'*64
+                    elif alteration == 'missing-input':
+                        report['implementation_sha256'].pop('lanrith/firewall.py')
+                    elif alteration == 'stale':
+                        report['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
+                    elif alteration == 'future':
+                        report['assessed_at'] = (now+datetime.timedelta(seconds=1)).isoformat()
+                    elif alteration == 'external-network':
+                        report['external_network'] = True
+                    path.write_bytes(release.canonical(report))
                 with self.assertRaises((release.ReleaseError, OSError)):
                     qualification.qualify(directory, project, {}, now=now)

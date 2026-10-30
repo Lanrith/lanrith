@@ -40,6 +40,8 @@ def required_units(value, *, target_facts=None, integrations=()):
         units.append('lanrith-ids.service')
     if value.get('observability', {}).get('metrics', {}).get('enabled'):
         units += ['lanrith-metrics.service', 'prometheus-node-exporter.service', 'lanrith-router-metrics.timer']
+        if value.get('identity', {}).get('policy', {}).get('enabled'):
+            units.append('lanrith-directory-health.timer')
     if value.get('observability', {}).get('snmp', {}).get('enabled'):
         units.append('snmpd.service')
     if value.get('observability', {}).get('logs', {}).get('enabled'):

@@ -11,7 +11,7 @@ COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config
             'integrations', 'access', 'firewall', 'service_plane', 'authoritative', 'routing',
             'translation', 'nat46', 'nat64', 'ids', 'metrics', 'policy_agent', 'discovery',
             'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs', 'owner_inputs',
-            'recovery_build', 'recovery_failure_build', 'state_formats'}
+            'recovery_build', 'recovery_failure_build', 'state_formats', 'directory_config'}
 
 
 def check(root):
