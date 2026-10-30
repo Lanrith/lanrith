@@ -302,10 +302,17 @@ Review any ownership conversion of existing state separately.
 
 Private migration inputs may supply an optional `runtime` object. Its
 `credentials` map binds declared credential names to canonical files beneath
-`/var/lib` or `/var/cache`. BIND and FRR use those paths with `LoadCredential`;
-assembly does not read or copy their contents. Other components remain subject
-to their runtime support gates. Without a binding, a credential uses
-`/var/lib/lanrith/credentials/<name>`.
+`/var/lib` or `/var/cache`. DNS, routing, directory policy, RADIUS and logging
+stage selected inputs through `LoadCredential`. SNMP uses its managed activation
+helper. Assembly does not read or copy credential values. The default path is
+`/var/lib/lanrith/credentials/<name>`, except the SNMP input at
+`/var/lib/lanrith/snmp/snmpd.conf`.
+
+For active consumers, `/usr/share/lanrith/credentials.json` records the selected
+references, paths, native formats and service units. Disabled integrations add
+no requirement. It contains metadata only. The protected first-install writer,
+operator protocol and boot gate are still under implementation; this catalog
+does not seed an empty state filesystem.
 
 `runtime.service_identities` maps account names to required numeric `uid` and
 `gid`, with optional `home` and `shell`. Assembly checks the admitted base and

@@ -499,6 +499,8 @@ def render(value, *, target_facts=None, retained_allocations=None):
     from . import snmp
     files.update(snmp.render(value))
     files.update(bindings.render(value))
+    from . import credential_config
+    files.update(credential_config.render(value))
     files.update(hardware_policy.ownership_files(value, target_facts))
     files.update(fancontrol_config.render(value))
     if value.get('identity', {}).get('policy', {}).get('enabled', False):

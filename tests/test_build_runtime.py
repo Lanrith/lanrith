@@ -22,6 +22,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CompiledRuntimeTests(unittest.TestCase):
+    def test_obsolete_helpers_are_removed_without_following_links_or_removing_credential_state(self):
+        source = ROOT/'scripts/finalize-image.py'
+        import ast
+        tree = ast.parse(source.read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and
+                        node.name == 'remove_obsolete_helpers')
+        namespace = {'Path': Path}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), namespace)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            library = root/'usr/lib/lanrith'
+            library.mkdir(parents=True)
+            retained = root/'retained-state'
+            retained.write_text('synthetic protected state')
+            (library/'bind-runtime').symlink_to(retained)
+            (library/'bind_runtime.py').write_text('obsolete helper')
+            (library/'credential_runtime.py').write_text('retained activation engine')
+            namespace['remove_obsolete_helpers'](root)
+            self.assertEqual(retained.read_text(), 'synthetic protected state')
+            self.assertFalse((library/'bind-runtime').exists())
+            self.assertFalse((library/'bind_runtime.py').exists())
+            self.assertTrue((library/'credential_runtime.py').is_file())
+            namespace['remove_obsolete_helpers'](root)
+            (library/'bind-runtime').mkdir()
+            with self.assertRaises(ValueError):
+                namespace['remove_obsolete_helpers'](root)
+
     def test_policy_runtime_uses_only_private_compiled_json_and_systemd_credentials(self):
         from test_policy_agent import declaration
         value = declaration()
@@ -128,12 +155,17 @@ with patch.object(boot_health, 'command', command): boot_health.check(plan)
                     ('usr/share/lanrith/hardware-facts.json', '{}'),
                     ('etc/lanrith/translation-allocations.json', '{}'),
                     ('etc/lanrith/config.yaml', 'schema: 1'),
+                    ('usr/lib/lanrith/owner.yaml', 'schema: 1'),
                     ('usr/lib/lanrith-build/policy-baseline.json', '{}'),
                     ('usr/lib/lanrith/lanrith/config.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/owner_inputs.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/discovery.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/logs.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/radius.py', 'pass'),
+                    ('usr/lib/lanrith/config.py', 'pass'),
+                    ('usr/lib/lanrith/credential_config.py', 'pass'),
+                    ('usr/lib/lanrith/yaml.py', 'pass'),
+                    ('usr/lib/lanrith/helper.py', 'def dormant():\n    import yaml\n'),
                     ('usr/lib/lanrith/lanrith/other.py', 'def dormant():\n    import yaml\n'),
                     ('usr/lib/lanrith/lanrith/other.py', 'def dormant():\n    from . import config\n')):
                 path = tree/name

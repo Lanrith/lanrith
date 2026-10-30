@@ -27,6 +27,22 @@ def enabled_socket_units(root):
     return result
 
 
+def remove_obsolete_helpers(root):
+    """Old bases can retain unused Bind entrypoints with a missing TSIG module.
+
+    Authoritative DNS now uses the compiled DNS runtime and systemd credentials.
+    Remove only these retired files, including when assembling on an older base.
+    """
+    for name in ('bind-runtime', 'bind_runtime.py'):
+        path = root/'usr/lib/lanrith'/name
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            if not path.is_file():
+                raise ValueError('Obsolete runtime path is not a regular file.')
+            path.unlink()
+
+
 def finalize_policy(root):
     """Compile and consume the policy baseline inside an isolated netns."""
     source = root/'usr/lib/lanrith-build/policy-baseline.json'
@@ -102,6 +118,7 @@ root = Path(os.environ['BUILDROOT']).resolve()
 root.chmod(0o755)
 # Assembly embeds the build-owned boundary function in this script. mkosi
 # remounts a finalize script as /work/finalize, without its siblings.
+remove_obsolete_helpers(root)
 finalize_policy(root)
 check(root)
 administration = json.loads((root/'usr/share/lanrith/administration.json').read_text())
