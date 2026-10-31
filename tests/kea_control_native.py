@@ -24,7 +24,12 @@ from test_radius import declaration
 
 
 def command(*args):
-    return subprocess.run(args, check=True, capture_output=True, timeout=20).stdout
+    result = subprocess.run(args, capture_output=True, timeout=20)
+    if result.returncode:
+        # Only this isolated fixture's synthetic data reaches the diagnostic.
+        sys.stderr.buffer.write((result.stdout+b'\n'+result.stderr)[-4096:])
+    result.check_returncode()
+    return result.stdout
 
 
 def query(name, arguments):
@@ -50,7 +55,7 @@ def query(name, arguments):
 
 
 def collector_access():
-    """Exercise the declared root collector without DAC or other capabilities."""
+    """Exercise the base collector and private observer's capability-empty role."""
     account = pwd.getpwnam('_kea')
     program = '''
 import json,os,pathlib,socket,struct,sys
@@ -81,6 +86,38 @@ with socket.socket(socket.AF_UNIX) as connection:
             'Declared capability-empty collector access differs: '+str(result.returncode)+' expected '+str(expected))
 
 
+def generated_collector_access(unit):
+    """Check the generated RADIUS collector's distinct existing DAC envelope.
+
+    The generated unit replaces the base unit and retains DAC access for its
+    journal/host evidence. A capability-empty observer test does not qualify
+    that different service. This check covers its socket access only.
+    """
+    lines = unit.splitlines()
+    for field in ('User=root', 'Group=root', 'NoNewPrivileges=yes',
+                  'CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH'):
+        assert lines.count(field) == 1
+    assert not any(line.startswith('SupplementaryGroups=') for line in lines)
+    program = '''
+import json,os,pathlib,socket
+assert os.getuid()==os.geteuid()==0 and os.getgid()==os.getegid()==0 and os.getgroups()==[]
+status=dict(line.split(':',1) for line in pathlib.Path('/proc/self/status').read_text().splitlines())
+assert int(status['CapEff'],16)==int(status['CapBnd'],16)==6 and status['NoNewPrivs'].strip()=='1'
+with socket.socket(socket.AF_UNIX) as connection:
+ connection.settimeout(2);connection.connect('/run/kea/kea4-ctrl-socket')
+ connection.sendall(b'{"command":"lease4-get-page","arguments":{"from":"0.0.0.0","limit":128}}')
+ connection.shutdown(socket.SHUT_WR);raw=bytearray()
+ while True:
+  block=connection.recv(4096)
+  if not block: break
+  raw.extend(block);assert len(raw)<=65536
+ value=json.loads(raw);assert value['result']==0 and len(value['arguments']['leases'])==1
+'''
+    command('setpriv', '--reuid=0', '--regid=0', '--clear-groups',
+            '--bounding-set=-all,+dac_override,+dac_read_search',
+            '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs', sys.executable, '-c', program)
+
+
 def qualify(output):
     assert os.geteuid() == 0
     assert not Path('/usr/share/lanrith/installed.json').exists(), 'Refuse an installed router.'
@@ -97,12 +134,19 @@ def qualify(output):
     value['networks']['devices']['dhcp4']['id'] = 79
     value = config.normalize(value)
     files = config.render(value)
+    generated_unit = files['usr/lib/systemd/system/lanrith-policy-bindings.service']
     raw = files['etc/kea/kea-dhcp4.conf'].encode()
     post = files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf']
     assert 'ExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n' in post
     collector_unit = ROOT/'mkosi/base/mkosi.extra/usr/lib/systemd/system/lanrith-policy-bindings.service'
     assert all(line in collector_unit.read_text().splitlines() for line in
                ('User=root', 'Group=root', 'SupplementaryGroups=_kea', 'CapabilityBoundingSet=', 'NoNewPrivileges=yes'))
+    # Hosted checkouts can have non-traversable home directories. Stage the
+    # exact runtime bytes on this private /run mount; do not change checkout or
+    # home permissions to let the service identity read build-time sources.
+    helper = Path('/run/lanrith-kea-readiness.py')
+    helper.write_bytes((ROOT/'lanrith/kea_runtime.py').read_bytes())
+    helper.chmod(0o644)
     hardening = ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/30-lanrith-hardening.conf'
     mask, = [line.split('=', 1)[1] for line in hardening.read_text().splitlines() if line.startswith('UMask=')]
     checks, names = [], []
@@ -167,11 +211,13 @@ def qualify(output):
                         '--clear-groups', '--bounding-set=-all,+net_bind_service,+net_raw',
                         '--inh-caps=-all,+net_bind_service,+net_raw',
                         '--ambient-caps=-all,+net_bind_service,+net_raw', '--no-new-privs',
-                        sys.executable, str(ROOT/'lanrith/kea_runtime.py'), str(process.pid))
+                        sys.executable, str(helper), str(process.pid))
                     collector_access()
+                    generated_collector_access(generated_unit)
                     if not iteration:
                         checks.extend(['capability-empty root collector with declared _kea group can read',
-                                       'capability-empty root without _kea group denied'])
+                                       'capability-empty root without _kea group denied',
+                                       'generated RADIUS collector retains its declared DAC socket access'])
                     for name, arguments in query_types:
                         leases = query(name, arguments)
                         assert len(leases) == 1 and leases[0]['ip-address'] == lease['address']
@@ -214,9 +260,14 @@ def qualify(output):
             'no_new_privileges': True, 'full_systemd_sandbox_qualified': False,
             'socket_mode': '0660', 'generated_post_start_operation': True,
             'collector_dac_capabilities': [], 'collector_supplementary_group': '_kea',
+            'generated_collector_socket_access': {
+                'capabilities': ['CAP_DAC_OVERRIDE', 'CAP_DAC_READ_SEARCH'],
+                'supplementary_groups': [],
+                'unit_sha256': hashlib.sha256(generated_unit.encode()).hexdigest(),
+                'complete_binding_producer_qualified': False},
             'source_sha256': {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in
                 ('lanrith/config.py', 'lanrith/build.py', 'lanrith/kea_runtime.py', 'tests/kea_control_native.py',
-                 'tests/test_radius.py', 'tests/native.py',
+                 'lanrith/policy_agent.py', 'tests/test_radius.py', 'tests/native.py',
                  'mkosi/base/mkosi.extra/usr/lib/systemd/system/lanrith-policy-bindings.service',
                  'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/30-lanrith-hardening.conf')},
             'private_image_qualified': False, 'production_changed': False}

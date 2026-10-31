@@ -18,7 +18,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT/'tests')]
 from lanrith import config
-from kea_control_native import command, query, collector_access
+from kea_control_native import command, query, collector_access, generated_collector_access
 from test_radius import declaration
 
 
@@ -83,6 +83,7 @@ def qualify(output):
             assert status['NoNewPrivs'].strip() == '1'
             assert stat.S_IMODE(Path('/run/kea/kea4-ctrl-socket').stat().st_mode) == 0o660
             collector_access()
+            generated_collector_access(files['usr/lib/systemd/system/lanrith-policy-bindings.service'])
             for name, arguments in [('lease4-get-by-hw-address', {'hw-address': lease['hwaddr']}),
                                     ('lease4-get-page', {'from': '0.0.0.0', 'limit': 128})]:
                 rows = query(name, arguments)
@@ -91,7 +92,8 @@ def qualify(output):
             observations.append({'main_pid': pid, 'socket_mode': '0660', 'uid': account.pw_uid,
                                  'original_expiry': expire, 'lease_queries': 'pass',
                                  'capability_empty_collector_with_declared_group': 'pass',
-                                 'capability_empty_root_without_group': 'denied'})
+                                 'capability_empty_root_without_group': 'denied',
+                                 'generated_radius_collector_dac_socket_access': 'pass'})
         assert path.read_bytes() == raw
     except Exception:
         diagnostic = subprocess.run(['journalctl', '--no-pager', '-u', 'kea-dhcp4-server.service', '-n', '25'],
@@ -110,7 +112,8 @@ def qualify(output):
         'generated_post_start': files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'],
         'source_sha256': {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in
             ('lanrith/config.py', 'lanrith/build.py', 'lanrith/kea_runtime.py', hardening,
-             'tests/kea_control_native.py', 'tests/kea_control_systemd_native.py', 'tests/test_radius.py')},
+             'lanrith/policy_agent.py', 'tests/kea_control_native.py',
+             'tests/kea_control_systemd_native.py', 'tests/test_radius.py')},
         'full_systemd_sandbox_applied': True, 'boot_dependency_order_qualified': False,
         'external_network': False, 'private_image_qualified': False, 'production_changed': False}
     with output.open('x') as stream:
