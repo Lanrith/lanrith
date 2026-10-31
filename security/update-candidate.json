@@ -1,43 +1,197 @@
 {
-  "base_sha": "90b88b65950375f75d331d67dd21da4f2a108018",
-  "candidate_id": "82464860ed6584eed6c45a8ff38d6a9a354928000baf0976c20e7e23140cdc6e",
+  "base_sha": "0a327da3518620393a328997e193681a6de40a5c",
+  "candidate_id": "278291ee4c56850530677bf3ffc1466289dc25522657001621aefa597cb2bfa0",
   "changes": {
     "build-inputs.json": {
-      "after_sha256": "d89ea6658b5fe5fa6a64e1b56bd364ab4e4ae16b96806a6445856bbf336c52d9",
-      "before_sha256": "b99ef9e01f1809f862d807403b7edfc248db1f89855561b55818381b5ee89c8f"
+      "after_sha256": "d1ab20a66f1151a7425a1d4cd9dfd1785e9392738ca7c45ab617b3eead71544c",
+      "before_sha256": "d89ea6658b5fe5fa6a64e1b56bd364ab4e4ae16b96806a6445856bbf336c52d9"
+    },
+    "builders/build-inputs.lock": {
+      "after_sha256": "7397f1592be15bd44343c2c5a3f0b6fe2e81e3041c63384ec5584ced960177f8",
+      "before_sha256": "353e3430cffb30a78a6482968dc8daf044ad73bc571f861df584c7dc55e49a34"
     },
     "security/policy.json": {
-      "after_sha256": "663a457d02ada2c401f9fc9318b7c22c93aec3124325bbeab1053d25841240f6",
-      "before_sha256": "7b4a1a05f019eb90b55db37b58472b096ad64380173ce2aae2ead472cfa2fc5d"
+      "after_sha256": "90134df41556dbe997b7914ee127f221eda35ca16d5df79eda3ae740f7d193a5",
+      "before_sha256": "663a457d02ada2c401f9fc9318b7c22c93aec3124325bbeab1053d25841240f6"
     }
   },
-  "created_at": "2026-10-29T13:24:21.184792+00:00",
+  "created_at": "2026-10-30T22:31:54.833294+00:00",
   "kind": "security-update-candidate",
   "policy_sha256": "254735198ea8f209b956870f9748b32123de831fc20dcd3c8a46fb44a1561cf8",
-  "producer_sha": "90b88b65950375f75d331d67dd21da4f2a108018",
+  "producer_sha": "0a327da3518620393a328997e193681a6de40a5c",
   "reasons": [
     {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7c0cac5ed936984d972e51e6628c32cecfd13ddbef47262b4b6c4a0dec1a7ce7",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-100236",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7b692c21eaa6c767ec0c98f35f76ec15617b09d28193f06687ff9460e1f3fdf7",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86561",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "bdd6637d622ee3f06904f8fcc2a7eac7fdcbf82c8ce40fe7a7dd6e502acccc21",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86562",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d2fe18ba0f6651b3439fcf94f63004ec1aa234cf8b030fd7447b1a6eb0fdbb79",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86563",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ab832057789019eb4bccc2781cd8516de75f064c558aa2f1597774936a65471d",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86564",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dc424bcb0a731f21ac7a33e89e06c4cf9f55334f11b69abd5f7ac3a624a78ad4",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86565",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "cce3c1dd18eb963e843779200909a27b9985ce8cb433e37c17c9dd25ca0a838a",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86566",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "de171e4a32b1e999a4aa6fd7ec4531e9b29cea55b59eaae5d7f7b014a087b2af",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86567",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8654de35b89c45582d2c7583c48124ef702c8d8b66ab67d75f528de87f6eeabc",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86845",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d1ef8572e35dd74c854a21aff844bc2b02158a70eea6db2dbd8e60ce8a59cd07",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86846",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1de97128498c4ec54acc878b26a0efa537aa188d10d3103faf9016b768fae92d",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86847",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d69160e8cc09353b7e7fe78ecdc47adb39d749e258e6bc1aef8c9b694960cf5a",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86848",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "45a4061ca7e7f02f2a4c9f4b0a27384bec34e8a8d96079640ef7c556f9c5e1b2",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86849",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "22b0fa56adbb8cdca68be0fbb00f38f8dcf1743086d5f826a2a1dac41b0998c4",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-86856",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f0142e04758474571a30266c7e4d69d606c930f708327e2520a99ad7a3d6a5b3",
+      "fixed": "24.11.8-0+deb13u1",
+      "id": "CVE-2026-93683",
+      "installed": "24.11.4-0+deb13u1",
+      "package": "dpdk",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
       "ecosystem": "Lanrith",
-      "evidence_sha256": "cafe8b529690e6edbe23b200c1646697021e0530a7c184d6f132b4be063ea89e",
-      "fixed": "v0.1.6",
-      "id": "Lanrith/discovery-bridge@v0.1.6",
-      "installed": "v0.1.5",
+      "evidence_sha256": "d8aad37d75e35611859cc4177980c674d003daad822da86cefb7e47151632d06",
+      "fixed": "v0.1.7",
+      "id": "Lanrith/discovery-bridge@v0.1.7",
+      "installed": "v0.1.6",
       "package": "discovery-bridge",
-      "source": "https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.6",
+      "source": "https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.7",
       "type": "qualified-component-update"
     },
     {
       "ecosystem": "Lanrith",
-      "evidence_sha256": "4b7446db6bf0fe20448de484043897744a2ac1f119b86515bf5d6af1b2b93a0b",
-      "fixed": "v0.1.8",
-      "id": "Lanrith/router-policy-agent@v0.1.8",
-      "installed": "v0.1.7",
+      "evidence_sha256": "b7330efe25bbfff3a5b3eacc9fe89dbc154b134dc9791243498c32d218acbd3f",
+      "fixed": "v0.1.9",
+      "id": "Lanrith/router-policy-agent@v0.1.9",
+      "installed": "v0.1.8",
       "package": "router-policy-agent",
-      "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.8",
+      "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.9",
       "type": "qualified-component-update"
     }
   ],
-  "remediation_id": "security-32aa44743e95e3daff8c",
+  "remediation_id": "security-d558de62f750aac8b9a4",
   "repository": "Lanrith/lanrith",
   "requires_human": false,
   "schema": 1
