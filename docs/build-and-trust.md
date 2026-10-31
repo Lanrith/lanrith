@@ -126,6 +126,13 @@ packages have separate exact source and artifact pins. Avoid treating ordinary
 archive packages as local overrides: that would freeze security revisions and
 misidentify the source examined by the vulnerability gate.
 
+The pinned mkosi tool download uses HTTPS with certificate validation, HTTPS-only
+redirects and HTTP/1.1. Each transfer has a 20-second connection limit and a
+60-second total limit; at most three retries start within a 180-second retry
+window. Interrupted transfers are retried, then the unchanged exact SHA-256
+must pass before extraction. Exhausted retries, untrusted TLS and complete but
+corrupt content fail the build. The recipe digest is bound in `build-inputs.json`.
+
 Owner builds run network and provenance checks before keys are materialized.
 Assembly runs offline in the admitted builder with keys in private tmpfs.
 Compiler inputs cannot install packages or execute owner hooks. GitHub owner

@@ -68,7 +68,11 @@ RUN apt-get update \
 # uses the reviewed interface without an unpinned tool download.
 # Keep the tool artifact on its own immutable snapshot: a runtime security
 # snapshot can stop listing mkosi 27. The package checksum still pins its bytes.
-RUN curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+# Snapshot transfers can terminate mid-stream. Keep a finite transfer/retry
+# budget and the exact checksum gate; HTTP/1.1 avoids the archive's HTTP/2 reset.
+RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --http1.1 --fail --location --show-error \
+      --retry 3 --retry-all-errors --retry-delay 1 --retry-max-time 180 \
+      --connect-timeout 20 --max-time 60 \
       --output /tmp/mkosi.deb \
       https://snapshot.debian.org/archive/debian/20260912T080811Z/pool/main/m/mkosi/mkosi_27-1_all.deb \
  && printf '%s  %s\n' \
