@@ -92,6 +92,8 @@ def qualify():
         'value={"pid":os.getpid(),"uid":os.getuid(),"gid":os.getgid(),"groups":os.getgroups(),'
         '"cap_eff":status["CapEff"].strip(),"listeners":listeners}\n'
         'pathlib.Path("/run/lanrith-policy/fixture-identity.json").write_text(json.dumps(value))\n'
+        'with socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM) as ready:\n'
+        ' ready.connect(os.environ["NOTIFY_SOCKET"]);ready.sendall(b"READY=1\\n")\n'
         'while True:time.sleep(1)\n')
     executable.chmod(0o755)
     recovery.write_text('#!/bin/sh\nexit 0\n')

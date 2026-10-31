@@ -45,6 +45,7 @@ class ObservationAdmissionTests(unittest.TestCase):
             helper = (output/'usr/lib/systemd/system/lanrith-policy-helper.service').read_text()
             self.assertIn('ExecStart=/usr/lib/lanrith/policy-runtime serve\n', helper)
             self.assertIn('SupplementaryGroups=1801\n', helper)
+            self.assertIn('Type=notify\nNotifyAccess=main\nTimeoutStartSec=100s\n', helper)
             self.assertIn('CapabilityBoundingSet=CAP_NET_ADMIN\n', helper)
             self.assertNotIn('CAP_CHOWN', helper)
             self.assertNotIn('observations.socket', helper)

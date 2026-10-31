@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Qualify the pinned helper's real observation IPC in an offline container.
+"""Exercise a selected helper's real observation IPC in an offline container.
 
-The helper, profile compiler, recovery tool and nftables are real. The directory
-and bindings producers are controlled synthetic inputs; this is not a signed
+The helper, profile compiler, recovery tool, generated binding producer and
+nftables are real. Directory data and the empty client topology are synthetic.
+A development candidate never qualifies the platform's pinned release. This is not a signed
 image, private console, live directory, translator or lifecycle qualification.
 """
 
@@ -13,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import select
+import signal
 import shutil
 import socket
 import stat
@@ -35,10 +37,13 @@ COMMANDS = {'router-policy-helper', 'router-policy-check', 'router-policy-profil
 OBSERVE = {'schema_version': 1, 'operation': 'observations', 'generation': '', 'offset': 0}
 PROPOSAL = '/run/router-policy-ipc/requests.sock'
 STATUS = '/run/router-policy-ipc/status.sock'
+SOURCE_FILES = ('lanrith/policy_agent.py', 'lanrith/policy_runtime.py', 'lanrith/extension_observations.py',
+                'tests/test_extension_observations.py', 'lanrith/integrations.py',
+                'tests/test_policy_agent.py', 'tests/policy_observer_component_native.py')
 
 
-def run(*args, check=True, **options):
-    result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, **options)
+def run(*args, check=True, timeout=30, **options):
+    result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, **options)
     require(not check or result.returncode == 0,
             'Native policy observer command failed: '+(result.stdout+result.stderr).decode(errors='replace')[-4096:])
     return result
@@ -91,6 +96,25 @@ def extract(package):
     return {'source_commit': selection['source_commit'], 'tag': selection['tag'],
             'package_sha256': selection['files'][package.name], 'executable_sha256': extracted,
             'current_release_security_admission': False}
+
+
+def candidate(directory):
+    """Development-only bytes never count as selected release qualification."""
+    require(directory.is_absolute() and directory.resolve() == directory and directory.is_dir(),
+            'Candidate directory must be canonical.')
+    metadata = json.loads((directory/'candidate.json').read_bytes())
+    require(set(metadata) == {'schema', 'source_commit', 'source_sha256', 'toolchain', 'executable_sha256',
+                              'current_release_security_admission'} and metadata['schema'] == 1 and
+            metadata['current_release_security_admission'] is False and
+            set(metadata['executable_sha256']) == COMMANDS,
+            'Invalid development candidate inventory.')
+    for name, expected in metadata['executable_sha256'].items():
+        path = directory/name
+        require(path.is_file() and not path.is_symlink() and digest(path) == expected and
+                not (Path('/usr/bin')/name).exists(), 'Candidate executable differs from its build inventory.')
+        shutil.copyfile(path, Path('/usr/bin')/name)
+        (Path('/usr/bin')/name).chmod(0o755)
+    return {**metadata, 'development_candidate': True}
 
 
 # Each subprocess actually changes kernel UID/GID. Sharing the socket group
@@ -164,7 +188,8 @@ def prepare_interfaces(value):
     return names
 
 
-def qualify(package, output):
+def qualify(package, output, *, candidate_directory=None):
+    source_hashes = {name: digest(ROOT/name) for name in SOURCE_FILES}
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
             (Path('/run/.containerenv').exists() or Path('/.dockerenv').exists()) and
             not Path('/usr/share/lanrith/installed.json').exists(),
@@ -173,7 +198,8 @@ def qualify(package, output):
             'Real observer fixture must have no external network.')
     require(output.is_absolute() and output.parent.is_dir() and not output.exists() and
             not output.is_symlink() and not policy_runtime.ROOT.exists(), 'Observer fixture state/output exists.')
-    component = extract(package)
+    require((package is None) != (candidate_directory is None), 'Select exactly one pinned package or development candidate.')
+    component = candidate(candidate_directory) if candidate_directory is not None else extract(package)
     units = Path('/run/systemd/system')
     names = (HELPER, *SOCKETS, *DEPENDENCIES)
     require(all(not (units/name).exists() for name in names), 'Observer unit overrides already exist.')
@@ -239,7 +265,7 @@ def qualify(package, output):
                 'Native executable bytes changed after pinned extraction.')
         run('systemctl', 'daemon-reload')
         run('systemd-analyze', 'verify', *(str(units/name) for name in names))
-        run('systemctl', 'start', HELPER)
+        run('systemctl', 'start', HELPER, timeout=110)
         deadline = time.monotonic()+8
         while True:
             response = request(policy_runtime.OBSERVATIONS, OBSERVE)
@@ -271,7 +297,6 @@ def qualify(package, output):
             time.sleep(.05)
         pid = run('systemctl', 'show', '--property=MainPID', '--value', HELPER).stdout.strip()
         def submit_empty():
-            policy_runtime.empty_bindings()
             snapshot = {'schema_version': 1, 'directory': {'observed_at': datetime.now(timezone.utc).isoformat(),
                         'complete': True, 'groups': [], 'devices': []}}
             response = request(PROPOSAL, snapshot, uid=1701, gid=1701)
@@ -352,8 +377,48 @@ def qualify(package, output):
                 run('systemctl', 'show', '--property=NRestarts', '--value', HELPER).stdout.strip() == b'0',
                 'Rejected clients restarted the enforcing helper.')
         checks.append('enforcing-helper-stays-running-without-restart')
+        # A producer's explicit negative interval seals permissions. Pausing
+        # the real producer prevents its next complete publication racing this
+        # controlled outage; no successful evidence timestamp is fabricated.
+        binder_pid = int(run('systemctl', 'show', '--property=MainPID', '--value', DEPENDENCIES[1]).stdout)
+        os.kill(binder_pid, signal.SIGSTOP)
+        try:
+            policy_runtime.incomplete_bindings()
+            rejected = request(PROPOSAL, {'schema_version': 1, 'directory': {
+                'observed_at': datetime.now(timezone.utc).isoformat(), 'complete': True, 'groups': [], 'devices': []}},
+                uid=1701, gid=1701)['reply']
+            require(rejected['status'] == 'rejected', 'Incomplete bindings admitted a directory request.')
+            time.sleep(11)
+            require(run('systemctl', 'show', '--property=MainPID', '--value', HELPER).stdout.strip() == pid and
+                    run('systemctl', 'show', '--property=NRestarts', '--value', HELPER).stdout.strip() == b'0',
+                    'An explicitly incomplete producer interval restarted the helper.')
+            pending = request(STATUS, {'schema_version': 1, 'operation': 'status'}, uid=1702, gid=1702)['reply']
+            require(pending['report']['permit_state'] == 'sealed', 'Pending evidence left application permission open.')
+        finally:
+            os.kill(binder_pid, signal.SIGCONT)
+        deadline = time.monotonic()+40
+        while not json.loads((policy_runtime.BINDINGS/'bindings.json').read_bytes())['complete']:
+            require(time.monotonic() < deadline, 'Real binding producer did not recover.')
+            time.sleep(.1)
+        checks.append('real-producer-incomplete-interval-seals-without-helper-restart')
+        cached_generation = request(policy_runtime.OBSERVATIONS, OBSERVE)['reply']['snapshot']['generation']
+        run('systemctl', 'restart', HELPER, timeout=110)
+        require(run('systemctl', 'show', '--property=MainPID', '--value', HELPER).stdout.strip() != pid,
+                'Explicit helper restart did not start a new process.')
+        require(request(policy_runtime.OBSERVATIONS, OBSERVE)['reply']['code'] == 'unobserved',
+                'Helper restart restored a cached directory observation.')
+        binding_after_restart = json.loads((policy_runtime.BINDINGS/'bindings.json').read_bytes())
+        observed['binding_after_restart'] = binding_after_restart['observed_at']
+        submit_empty()
+        require(request(policy_runtime.OBSERVATIONS, OBSERVE)['reply']['snapshot']['generation'] != cached_generation,
+                'Restart reused an earlier compilation generation.')
+        checks.append('helper-restart-waits-for-real-post-start-evidence-without-restoring-grants')
         require(all(digest(Path('/usr/bin')/name) == pinned for name, pinned in component['executable_sha256'].items()),
                 'Qualified native executable bytes no longer match their package.')
+        if candidate_directory is not None:
+            require(json.loads((candidate_directory/'candidate.json').read_bytes()) ==
+                    {key: item for key, item in component.items() if key != 'development_candidate'},
+                    'Development candidate inventory changed during qualification.')
     finally:
         run('systemctl', 'stop', *names, check=False)
         run('systemctl', 'reset-failed', *names, check=False)
@@ -363,24 +428,29 @@ def qualify(package, output):
         run('nft', 'flush', 'ruleset')
         for name in reversed(interfaces):
             run('ip', 'link', 'delete', name)
-    result = {'schema': 1, 'test': 'offline-pinned-policy-observer-component', 'result': 'pass',
+    require(source_hashes == {name: digest(ROOT/name) for name in SOURCE_FILES},
+            'Native observer source changed during qualification.')
+    result = {'schema': 1, 'test': ('offline-policy-observer-component-candidate' if candidate_directory else
+                                  'offline-pinned-policy-observer-component'), 'result': 'pass',
         'assessed_at': datetime.now(timezone.utc).isoformat(), 'component': component,
         'checks': checks, 'observation': observed, 'actual_policy_engine_ipc_qualified': True,
+        'selected_pinned_component_qualified': candidate_directory is None,
         'private_image_qualified': False, 'external_network': False,
         'limits': ['synthetic two-network profile and empty directory/bindings only',
                    'no nonempty grants, translator traffic, real directory or private publisher tested',
                    'no full signed image, persistent update/fallback or physical acceptance'],
-        'source_sha256': {name: digest(ROOT/name) for name in ('lanrith/policy_agent.py', 'lanrith/policy_runtime.py',
-            'lanrith/extension_observations.py', 'tests/test_extension_observations.py',
-            'tests/policy_observer_component_native.py')}}
+        'source_sha256': source_hashes}
     with output.open('xb') as stream:
         stream.write(canonical(result))
-    print('Pinned enforcing policy helper observation IPC passed native UID, operation and availability checks.')
+    print('Enforcing policy helper passed native readiness, UID, operation, outage and restart checks; '
+          'selected release qualified: '+str(candidate_directory is None)+'.')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--package', required=True, type=Path)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--package', type=Path)
+    selection.add_argument('--candidate', type=Path)
     parser.add_argument('--result', required=True, type=Path)
     args = parser.parse_args()
-    qualify(args.package, args.result)
+    qualify(args.package, args.result, candidate_directory=args.candidate)

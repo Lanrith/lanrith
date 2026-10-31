@@ -314,6 +314,14 @@ the optional endpoint on the next image boot. Application schemas, adapters and
 private account bindings remain extension responsibilities. Qualify the actual
 selected component and complete image as well as the launcher before deployment.
 
+The generated helper unit uses `Type=notify` and a 100-second startup limit.
+Its selected component must implement the bounded post-start binding handoff:
+ownership and application permits stay closed until the independent producer
+supplies qualified evidence, and only then can the helper report readiness.
+An `unobserved` observation reply does not establish readiness. A development
+candidate passing the native harness does not qualify the pinned component
+release or the owner's complete image.
+
 The selected policy helper currently requires fixed post-NAT source addresses.
 Combining directory policy with client masquerade or managed-service source
 translation over a DHCP IPv4 or RA IPv6 uplink is rejected by `validate` and
