@@ -51,14 +51,19 @@ CREDENTIAL_CHECKS = {'generated-unit-verification', 'operator-uid-socket-stage-a
     'failed-requests-collected',
     'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
     'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
-    'active-completion-observer-not-stopped'}
+    'active-completion-observer-not-stopped', 'extension-native-loadcredential-unprivileged-readers',
+    'extension-operator-uid-boundary', 'extension-exact-writable-namespace',
+    'optional-extension-current-boot-acceptance-gate', 'optional-extension-no-core-service-control',
+    'required-extension-committed-readiness', 'extension-invalid-and-fallback-values-preserve-consumers'}
 CREDENTIAL_IMPLEMENTATION = {'lanrith/credential_operation.py', 'lanrith/credential_config.py',
     'lanrith/credential_store.py', 'lanrith/credential_values.py', 'lanrith/build.py',
     'lanrith/runtime.py', 'lanrith/image_operation.py', 'lanrith/config.py', 'tests/test_intent.py',
     'scripts/qualify-credentials.py', 'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_credentials.py',
     'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',
     'mkosi/base/mkosi.extra/usr/lib/lanrith/credential_runtime.py',
-    'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py'}
+    'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py', 'lanrith/extension_credential_values.py',
+    'lanrith/extension_credential_config.py', 'lanrith/extension_credential_operation.py',
+    'lanrith/extensions.py', 'tests/extension_credentials_native.py'}
 
 
 def value(path):

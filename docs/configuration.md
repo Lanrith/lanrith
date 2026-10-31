@@ -270,6 +270,37 @@ their failure does not become a core boot requirement. Units also listed in
 `health_units` remain mandatory. Extension units must keep their own dependency
 and resource limits; `start_units` does not add a restart policy.
 
+An optional `credentials` list declares protected secret slots for an extension:
+
+```json
+[
+  {"name": "bootstrap", "format": "json", "consumers": ["example-app.service"]}
+]
+```
+
+Each consumer must be a literal `.service` file in that extension's inventory.
+Template units and core service replacements are rejected. Lanrith derives the
+root-only path `/var/lib/lanrith/extension-credentials/EXTENSION/NAME`, generates
+`LoadCredential=NAME:PATH` for the declared readers, and binds the reader set into
+the catalog digest. Values enter through the operator channel after installation;
+they are absent from the manifest, image and build provenance.
+
+The supported value format is a UTF-8 JSON object, at most 64 KiB, with unique
+keys, finite numbers, at most 4,096 nodes and nesting depth 16. An extension can
+declare 16 slots and 64 service readers. Its consumer must validate the
+application-specific schema and authentication material before using them.
+The shared runtime never executes supplied JSON or accepts caller-selected file
+paths, unit names or commands.
+
+Optional extensions provision after the current core boot is accepted. Their
+missing credentials leave core readiness independent. An extension implementing
+a selected core feature, or declaring mandatory `health_units`, needs committed
+credentials before boot acceptance. Disabled feature providers emit no credential
+catalogs, sockets or reader bindings. Each active extension has separate protected
+transaction history and a separate operator socket. See
+[credential provisioning](operations.md#extension-credential-provisioning) for
+the stage, verification and commit sequence.
+
 An optional `network` object declares host listeners and managed-service clients.
 Both refer to users in the extension's `identities.users` list. For example:
 

@@ -40,6 +40,8 @@ def validate_catalog(value):
                 str(path).startswith(('/var/lib/', '/var/cache/')) and
                 str(path.parent) not in ('/var/lib', '/var/cache', '/var/lib/lanrith') and
                 not path.is_relative_to('/var/lib/lanrith/credential-provisioning') and
+                not path.is_relative_to('/var/lib/lanrith/extension-credentials') and
+                not path.is_relative_to('/var/lib/lanrith/extension-credential-provisioning') and
                 not path.name.startswith(('.provisioning-', '.activation')) and path.name != '.lock',
                 'Credential needs a dedicated directory outside provisioning control state.')
         if item['format'] in ('tsig-base64', 'bgp-token'):

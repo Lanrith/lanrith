@@ -15,11 +15,13 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import tarfile
 import tempfile
 import time
 
 from lanrith import build, config, release
 from test_intent import minimal
+import extension_credentials_native as extension_fixture
 
 
 def run(*args, **kwargs):
@@ -57,8 +59,12 @@ def main():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         base = root/'base.tar'
-        base.write_bytes(b'synthetic assembly input')
-        build.assembly(value, base, root/'assembly', version='0.1.0', sequence=12)
+        with tarfile.open(base, 'w') as archive:
+            for name in ('etc/passwd', 'etc/group'):
+                archive.add('/'+name, arcname=name, recursive=False)
+        selected = extension_fixture.prepare(root)
+        value['extensions'] = list(selected)
+        build.assembly(value, base, root/'assembly', version='0.1.0', sequence=12, integrations=selected)
         run('useradd', '--uid', '1701', '--no-create-home', '--shell', '/bin/sh', 'fixture-operator')
         run('useradd', '--uid', '1702', '--no-create-home', '--shell', '/bin/sh', 'fixture-other')
         tree = root/'assembly/mkosi.extra'
@@ -148,6 +154,7 @@ def main():
         assert pid == run('systemctl', 'show', '--property=MainPID', '--value', 'lanrith-image-completion.service').strip()
         assert not Path('/run/fixture-completion-stopped').exists()
         assert active('alloy.service')
+        extension_checks = extension_fixture.exercise(installed, tree, units, run, wait, active)
         result = {'schema': 1, 'result': 'pass', 'test': 'offline-systemd-credential-provisioning',
             'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -159,7 +166,8 @@ def main():
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_credentials.py',
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/credential_runtime.py',
-                             'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py')},
+                             'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py',
+                             *extension_fixture.IMPLEMENTATION)},
             'systemd_version': run('systemctl', '--version').decode().splitlines()[0],
             'external_network': False, 'private_image_qualified': False,
             'checks': ['generated-unit-verification', 'operator-uid-socket-stage-and-commit',
@@ -167,8 +175,9 @@ def main():
                        'failed-requests-collected',
                        'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
                        'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
-                       'active-completion-observer-not-stopped'],
-            'limits': ['synthetic-consumers', 'no-ssh-or-encryption-acceptance', 'no-full-image-or-backend-qualification']}
+                       'active-completion-observer-not-stopped', *extension_checks],
+            'limits': ['synthetic-consumers', 'synthetic-core-boot-acceptance-products',
+                       'no-ssh-or-encryption-acceptance', 'no-full-image-or-backend-qualification']}
         args.result.parent.mkdir(parents=True, exist_ok=True)
         args.result.write_bytes(release.canonical(result))
         print(json.dumps(result, sort_keys=True))

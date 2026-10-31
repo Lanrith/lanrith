@@ -59,16 +59,27 @@ def decoded(text):
 
 
 class Store:
-    def __init__(self, installed, catalog, *, root=Path('/')):
+    def __init__(self, installed, catalog, *, root=Path('/'), extension=None):
         from .image_operation import identity
         require(installed.get('state_directory') == '/var/lib/lanrith', 'Credential control state differs.')
+        self.extension = extension
+        self.validate_catalog = validate_catalog
+        self.validate_value, self.decoded, self.descriptor = validate, decoded, descriptor
+        self.value_limit, control = 4097, CONTROL
+        if extension is not None:
+            from . import extension_credential_values as scoped
+            scoped.namespace(extension)
+            self.validate_catalog = lambda value: scoped.validate_catalog(extension, value)
+            self.validate_value, self.decoded = scoped.validate, scoped.decoded
+            self.descriptor = lambda item: scoped.descriptor(extension, item)
+            self.value_limit, control = scoped.VALUE_LIMIT, scoped.control_path(extension)
         self.identity = identity(installed)
-        self.catalog = validate_catalog(json.loads(canonical(catalog), object_pairs_hook=unique))
+        self.catalog = self.validate_catalog(json.loads(canonical(catalog), object_pairs_hook=unique))
         self.catalog_digest = digest(canonical(self.catalog))
         self.items = {item['reference']: item for item in self.catalog['credentials']}
         self.root = Path(root)
         require(self.root.is_absolute() and self.root.resolve() == self.root, 'Credential filesystem root differs.')
-        self.control = self.path(CONTROL)
+        self.control = self.path(control)
         self.write_targets = {self.path(i['path']) for i in self.items.values()} | {self.control/name for name in RECORDS}
         self._locked = False
 
@@ -230,13 +241,13 @@ class Store:
                 selected = item['descriptor']
             else:
                 selected = item
-            descriptor(selected)
+            self.descriptor(selected)
             require(key == binding(selected), 'Credential binding identity differs.')
         return value['bindings']
 
     def current(self, item):
-        raw = self.read(self.path(item['path']), 4097)
-        body = validate(item, raw)
+        raw = self.read(self.path(item['path']), self.value_limit)
+        body = self.validate_value(item, raw)
         return {'descriptor': item, 'sha256': digest(raw), 'canonical_sha256': digest(body)}
 
     def admitted(self):
@@ -266,12 +277,12 @@ class Store:
             'Pending credential transaction differs.')
         from .image_operation import identity
         identity(value['identity'])
-        validate_catalog(value['catalog'])
+        self.validate_catalog(value['catalog'])
         require(value['catalog_sha256'] == digest(canonical(value['catalog'])) and isinstance(value['values'], dict) and
                 set(value['values']) == {item['reference'] for item in value['catalog']['credentials']},
                 'Pending credential scope differs.')
         for item in value['catalog']['credentials']:
-            validate(item, decoded(value['values'][item['reference']]))
+            self.validate_value(item, self.decoded(value['values'][item['reference']]))
         return value
 
     def selected_pending(self):
@@ -330,9 +341,9 @@ class Store:
 
     def validate_values(self, values):
         require(isinstance(values, dict) and set(values) == set(self.items), 'Credential input scope differs.')
-        supplied = {name: decoded(values[name]) for name in self.items}
+        supplied = {name: self.decoded(values[name]) for name in self.items}
         for name, item in self.items.items():
-            validate(item, supplied[name])
+            self.validate_value(item, supplied[name])
         return supplied
 
     def preflight(self, values, *, allow_replace=False):
@@ -340,13 +351,13 @@ class Store:
         previous = self.inventory('admitted.json', admitted=True)
         selected = {}
         for name, item in self.items.items():
-            current = self.read(self.path(item['path']), 4097, missing=True)
+            current = self.read(self.path(item['path']), self.value_limit, missing=True)
             protected = [row for row in previous.values() if row['descriptor']['path'] == item['path']]
             require(not protected or current is not None and all(digest(current) == row['sha256'] for row in protected),
                     'Admitted credential integrity differs.')
             if current is not None:
                 try:
-                    equal = validate(item, current) == validate(item, supplied[name])
+                    equal = self.validate_value(item, current) == self.validate_value(item, supplied[name])
                 except ValueError:
                     equal = False
                 if equal:
@@ -354,6 +365,17 @@ class Store:
                 else:
                     require(allow_replace and not protected, 'Existing fallback credential must be preserved.')
             selected[name] = supplied[name]
+        # Reject exhausted history before the caller stops consumers. Consumer
+        # names are descriptor-bound, so extension histories can be larger than
+        # the fixed core grammars even with the same binding count.
+        registry = self.inventory('owned.json')
+        registry.update({binding(item): item for item in self.items.values()})
+        projected = {**previous, **{binding(item): {'descriptor': item,
+            'sha256': '0'*64, 'canonical_sha256': '0'*64} for item in self.items.values()}}
+        for records in (registry, projected):
+            require(len(records) <= HISTORY_LIMIT and
+                    len(canonical({'schema': 1, 'bindings': records})) <= LIMIT,
+                    'Credential history exceeds its storage bound.')
         return selected
 
     def stage(self, values, *, allow_replace=False):
@@ -380,8 +402,8 @@ class Store:
 
     def _write_pending(self, pending):
         for name, item in self.items.items():
-            raw = decoded(pending['values'][name])
-            if self.read(self.path(item['path']), 4097, missing=True) != raw:
+            raw = self.decoded(pending['values'][name])
+            if self.read(self.path(item['path']), self.value_limit, missing=True) != raw:
                 self.write(self.path(item['path']), raw)
         for item in self.items.values():
             self.current(item)
@@ -409,7 +431,7 @@ class Store:
     def prepared(self):
         pending = self.selected_pending()
         return pending is not None and pending['phase'] == 'prepared' and all(
-            self.read(self.path(item['path']), 4097, missing=True) == decoded(pending['values'][name])
+            self.read(self.path(item['path']), self.value_limit, missing=True) == self.decoded(pending['values'][name])
             for name, item in self.items.items())
 
     def commit(self, transaction_id):

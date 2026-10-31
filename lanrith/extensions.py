@@ -7,7 +7,7 @@ import shutil
 import stat
 
 from .release import HEX, canonical, file_record, read, require, unique
-from . import extension_network, extension_observations
+from . import extension_network, extension_observations, extension_credential_config, extension_credential_values
 
 
 PROTECTED = (
@@ -55,7 +55,8 @@ def admit(directory, expected):
     value = json.loads(read(directory / 'extension.json', 1024 * 1024), object_pairs_hook=unique)
     required = {'schema', 'id', 'features', 'health_units', 'files'}
     require(isinstance(value, dict) and required <= set(value) <= required | {
-                'replaces', 'identities', 'health_units_by_feature', 'start_units', 'network', 'observations'} and
+                'replaces', 'identities', 'health_units_by_feature', 'start_units', 'network', 'observations',
+                'credentials'} and
             value['schema'] == 1 and isinstance(value['id'], str) and
             re.fullmatch(r'[a-z][a-z0-9-]{0,47}', value['id']), 'Invalid integration manifest.')
     require(isinstance(value['features'], list) and len(value['features']) <= 32 and
@@ -73,6 +74,7 @@ def admit(directory, expected):
     identities = identity_declarations(value.get('identities', {}))
     extension_network.declarations(value.get('network', {}), identities)
     extension_observations.declarations(value.get('observations', []), identities)
+    extension_credential_values.declarations(value['id'], value.get('credentials', []), value['files'])
     start_units = value.get('start_units', [])
     require(isinstance(start_units, list) and len(start_units) <= 64 and
             all(isinstance(unit, str) and re.fullmatch(
@@ -122,7 +124,7 @@ def admit(directory, expected):
 def overlay(configuration, selected, destination, base_files=None):
     require(set(selected) == set(configuration['extensions']), 'Integration selections differ from configuration.')
     units, digests, written, identities, starts, declarations, replaced = [], {}, set(), [], [], [], set()
-    observations = []
+    observations, credentials = [], []
     for identity in sorted(selected):
         directory, expected = selected[identity]
         value = admit(directory, expected)
@@ -153,9 +155,13 @@ def overlay(configuration, selected, destination, base_files=None):
             starts.extend(value.get('start_units', []))
             declarations.append(extension_network.declarations(value.get('network', {}), identities[-1]))
             observations.append(extension_observations.declarations(value.get('observations', []), identities[-1]))
+            credentials.append((identity, extension_credential_values.declarations(
+                identity, value.get('credentials', []), value['files']), bool(active or value['health_units'])))
         replaced.update(value.get('replaces', []))
         digests[identity] = expected
     extension_observations.install(configuration, observations, destination)
+    credential_catalogs = extension_credential_config.install(credentials, destination,
+        configuration.get('administration', {}).get('username', 'admin'))
     plan = extension_network.resolve(configuration, declarations)
     if any(plan.values()):
         require('etc/nftables.conf' not in replaced,
@@ -166,7 +172,7 @@ def overlay(configuration, selected, destination, base_files=None):
             (destination/'etc/lanrith/services.nft').write_text(service_plane.namespace_firewall(
                 configuration, service_plane.topology(configuration), extension_rules=plan))
     return {'digests': digests, 'health_units': sorted(set(units)), 'identities': identities,
-            'start_units': sorted(set(starts))}
+            'start_units': sorted(set(starts)), 'credential_catalogs': credential_catalogs}
 
 
 def identity_declarations(value):

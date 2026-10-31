@@ -166,14 +166,16 @@ def ready(value, *, committed=True):
 
 
 def wait_ready(value, *, committed=True, deadline_seconds=PROVISION_SECONDS):
+    from .extension_credential_operation import index, required_ready
     require(type(deadline_seconds) is int and 1 <= deadline_seconds <= PROVISION_SECONDS,
             'Credential provisioning deadline differs.')
-    if not catalog(value)['credentials']:
+    if not catalog(value)['credentials'] and (not committed or
+            not any(row['core_required'] for row in index(value).values())):
         return True
     deadline = time.monotonic()+deadline_seconds
     while True:
         try:
-            if ready(value, committed=committed):
+            if ready(value, committed=committed) and (not committed or required_ready(value)):
                 return True
         except (OSError, ValueError, KeyError, RecursionError):
             pass

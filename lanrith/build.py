@@ -108,6 +108,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'operator': value['administration']['username'],
                  'root_access': value['administration']['root_access'],
                  'integration_health_units': integration['health_units'],
+                 'extension_credential_catalogs': integration['credential_catalogs'],
                  'configuration_sha256': digest, 'storage': value['hardware']['storage'],
                  'payload_limits': {'root': value['hardware']['storage']['root_mib']*1024*1024,
                     'verity': max(64, value['hardware']['storage']['root_mib']//16)*1024*1024,
@@ -150,7 +151,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'ntp_health_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
                    'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
-                   'credential_operation.py', 'boot_health.py',
+                   'credential_operation.py', 'extension_credential_values.py', 'extension_credential_operation.py',
+                   'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
                    'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',
                    'image_operation.py', 'steady_recovery.py'):
@@ -210,6 +212,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     credential_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                                   'from lanrith.credential_operation import main\nsys.exit(main())\n')
     credential_wrapper.chmod(0o755)
+    extension_credential_wrapper = overlay/'usr/bin/lanrith-extension-credentials'
+    extension_credential_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+        'from lanrith.extension_credential_operation import main\nsys.exit(main())\n')
+    extension_credential_wrapper.chmod(0o755)
     if serial_hash is not None:
         shutil.copyfile(serial_hash, overlay/'etc/security/admin.serial-passphrase.hash')
         (overlay/'etc/security/admin.serial-passphrase.hash').chmod(0o600)
@@ -288,6 +294,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     if installed['credential_catalog_sha256'] is not None:
         activation = units/'sockets.target.wants/lanrith-credentials.socket'
         activation.symlink_to('../lanrith-credentials.socket')
+    for extension in installed['extension_credential_catalogs']:
+        unit = 'lanrith-extension-credential-'+extension+'.socket'
+        (units/'sockets.target.wants'/unit).symlink_to('../'+unit)
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
         f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'

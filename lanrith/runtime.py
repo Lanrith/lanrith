@@ -82,7 +82,9 @@ def watchdog_health(policy, *, sysfs=Path('/sys/class/watchdog'), manager_fds=Pa
 def health():
     value = installed()
     from .credential_operation import ready
+    from .extension_credential_operation import required_ready
     require(ready(value), 'Required credentials have not been admitted.')
+    require(required_ready(value), 'Required extension credentials have not been admitted.')
     require(Path('/etc/machine-id').read_text().strip() == value['machine_id'],
             'Running device identity differs from the signed owner configuration.')
     expected = {'kernel.unprivileged_bpf_disabled': 2, 'net.core.bpf_jit_harden': 2,

@@ -127,6 +127,45 @@ uncommitted installation values can be corrected; each replacement gets a new
 transaction ID. Interrupted writes resume only for the same image and catalog.
 Credential rotation needs a separately qualified transition workflow.
 
+## Extension credential provisioning
+
+The same installed operator can provision an admitted extension with root access
+disabled. Each namespace has its own catalog, socket, lock and transaction history.
+Use the extension ID from the reviewed manifest:
+
+```sh
+ssh operator@router lanrith-extension-credentials example-addon status
+```
+
+The protected secret-manager runner sends the complete set as a JSON object on
+stdin: keys are slot names and values are canonical Base64 of each complete JSON
+credential object. Invoke `lanrith-extension-credentials example-addon stage
+CONFIGURATION_SHA256` with that input. The returned transaction ID identifies
+the exact prepared bytes and compiled reader bindings. Consumers receive
+systemd credentials under `$CREDENTIALS_DIRECTORY/NAME`. After the extension's
+authentication and functional checks succeed, confirm that transaction:
+
+```sh
+ssh operator@router lanrith-extension-credentials example-addon commit TRANSACTION_ID
+```
+
+An optional namespace reports `needs-core-acceptance` until both the persisted
+image identity and the current boot observation confirm acceptance. Its stage
+and commit operations control only its declared readers and readiness gate.
+An extension required by core health can provision before acceptance; boot
+completion waits for its committed set alongside the core credentials.
+
+Uncommitted extension values can be corrected after core acceptance. Invalid
+input and attempted changes to admitted values are rejected before readers stop.
+Changing readers requires fresh admission. To rotate an admitted value, use a
+new slot name in a newly built image and qualify the transition with the retained
+fallback. Each namespace retains its admitted history; exhausted history fails
+before service quiescence. Interrupted writes resume only for the same image,
+catalog and namespace. Extension state initialization and application-specific
+checks belong to that extension.
+
+## Credential recovery after compromise
+
 After any suspected root compromise, do not treat a successful reboot as
 credential recovery. Isolate the router, preserve external evidence, build from
 independently verified inputs, set a fresh `administration.host_key_rotation`,
