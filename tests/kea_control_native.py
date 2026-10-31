@@ -91,6 +91,8 @@ def qualify(output):
     account = pwd.getpwnam('_kea')
     Path('/run/kea').mkdir(mode=0o750)
     os.chown('/run/kea', account.pw_uid, account.pw_gid)
+    Path('/run/lock/kea').mkdir(mode=0o750, parents=True)
+    os.chown('/run/lock/kea', account.pw_uid, account.pw_gid)
     value = declaration()
     value['networks']['devices']['dhcp4']['id'] = 79
     value = config.normalize(value)
@@ -107,7 +109,7 @@ def qualify(output):
     with tempfile.TemporaryDirectory(prefix='lanrith-kea-query.', dir='/etc/kea') as temporary:
         root = Path(temporary)
         root.chmod(0o755)
-        config_path = root/'kea.json'
+        config_path = root/'kea-dhcp4.conf'
         config_path.write_bytes(raw)
         config_path.chmod(0o644)
         state = root/'leases'
@@ -149,7 +151,7 @@ def qualify(output):
                         stdout=log, stderr=subprocess.STDOUT,
                         umask=int(mask, 8),
                         env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C', 'KEA_PIDFILE_DIR': '/run/kea',
-                             'KEA_LOCKFILE_DIR': '/run/kea'})
+                             'KEA_LOCKFILE_DIR': '/run/lock/kea'})
                     deadline = time.monotonic()+10
                     while b'DHCP4_STARTED' not in log_path.read_bytes():
                         assert process.poll() is None and time.monotonic() < deadline, (

@@ -76,6 +76,7 @@ def qualify(result):
     command('mount', '-t', 'tmpfs', '-o', 'mode=0755', 'tmpfs', '/run')
     Path('/run/netns').mkdir(mode=0o700)
     Path('/run/kea').mkdir(mode=0o750)
+    Path('/run/lock/kea').mkdir(mode=0o750, parents=True)
     with tempfile.TemporaryDirectory(prefix='lanrith-lease-id.', dir='/etc/kea') as temporary:
         work = Path(temporary)
         work.chmod(0o755)
@@ -107,7 +108,9 @@ def qualify(result):
             # an ACK alone could also come from creating a replacement lease.
             native['Dhcp4']['control-socket'] = {
                 'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
-            config_path = work/'kea.json'
+            # The packaged AppArmor profile permits this production basename's
+            # PID file and the declared logger lock directory.
+            config_path = work/'kea-dhcp4.conf'
             config_path.write_text(json.dumps(native))
             command('kea-dhcp4', '-t', str(config_path))
             lease = {'address': '192.168.10.120', 'hwaddr': mac, 'client_id': '', 'valid_lifetime': '3600',
@@ -126,7 +129,8 @@ def qualify(result):
                 with log_path.open('wb') as output:
                     process = subprocess.Popen(['kea-dhcp4', '-c', str(config_path)],
                         stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                        env={**os.environ, 'KEA_PIDFILE_DIR': '/run/kea'})
+                        env={**os.environ, 'KEA_PIDFILE_DIR': '/run/kea',
+                             'KEA_LOCKFILE_DIR': '/run/lock/kea'})
                     deadline = time.monotonic()+5
                     while b'DHCP4_STARTED' not in log_path.read_bytes():
                         if process.poll() is not None or time.monotonic() > deadline:
