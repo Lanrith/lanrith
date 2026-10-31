@@ -215,3 +215,26 @@ Fresh-install recovery has additional VM runners and evidence described in
 [recovery qualification](recovery-qualification.md). Run the affected recovery
 cases against the release candidate. Historical tests that deliberately override
 experimental gates do not qualify the supported compiled-policy path.
+
+The optional `tests/policy_bindings_component_native.py` fixture exercises a
+nonempty cohort with the generated binding service, real helper IPC, nftables,
+Kea and local journal provenance. Run it only in a new offline systemd container
+with its own mount/network namespaces, no external interfaces and no installed
+Lanrith state. Supply the source at `/source`, the reviewed development binaries
+and `candidate.json` at `/candidate`, and a new private result directory at
+`/output`:
+
+```sh
+PYTHONPATH=/source python3 -B /source/tests/policy_bindings_component_native.py \
+  --candidate /candidate --collector-sha256 REVIEWED_COLLECTOR_SHA256 \
+  --result /output/native.json
+```
+
+The separate collector digest binds its executable in addition to the existing
+candidate inventory. Bound the container's memory and PIDs, retain source and
+executable hashes, and remove the owned container before recording cleanup.
+The fixture uses synthetic directory proposals, a synthetic accounting service
+running as `freerad`, and a lease seeded before the real Kea daemon starts.
+These checks cannot establish RADIUS authentication, directory authority, DHCP
+packet behavior, translated traffic or complete-image startup and recovery.
+Development binaries cannot satisfy selected-release or package admission.
