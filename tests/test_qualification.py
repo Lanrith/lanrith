@@ -43,6 +43,43 @@ class QualificationTests(unittest.TestCase):
         (directory/'native-qualification.json').write_bytes(release.canonical(native))
         (directory/'storage-qualification.json').write_bytes(release.canonical({'schema': 1, 'result': 'pass',
             'test': 'factory-slot-expansion', 'initial_partitions': 4, 'expanded_partitions': 8}))
+        implementation = {}
+        for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'tests/logs_native.py'):
+            path = project/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('synthetic logging source: '+name)
+            implementation[name] = release.file_record(path)['sha256']
+        (directory/'custom-security.json').write_bytes(release.canonical({
+            'components': {'alloy': {'binary_sha256': 'e'*64}}}))
+        (directory/'logs-qualification.json').write_bytes(release.canonical({
+            'schema': 1, 'result': 'pass', 'test': 'offline-journal-https-outage', 'assessed_at': now.isoformat(),
+            'source_sha256': implementation.pop('tests/logs_native.py'), 'implementation_sha256': implementation,
+            'alloy_sha256': 'e'*64, 'checks': sorted(qualification.LOG_CHECKS),
+            'queue_capacity_bytes': 67108864, 'queue_physical_bytes': 80*1024*1024,
+            'overflow_records': 1000, 'delivered_batches': 8}))
+        implementation = {}
+        for name in qualification.DIRECTORY_IMPLEMENTATION | {'tests/directory_native.py'}:
+            path = project/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text('synthetic directory source: '+name)
+            implementation[name] = release.file_record(path)['sha256']
+        (directory/'directory-qualification.json').write_bytes(release.canonical({
+            'schema': 1, 'result': 'pass', 'test': 'offline-directory-tls-egress', 'assessed_at': now.isoformat(),
+            'source_sha256': implementation.pop('tests/directory_native.py'), 'implementation_sha256': implementation,
+            'external_network': False, 'checks': sorted(qualification.DIRECTORY_CHECKS)}))
+        implementation = {}
+        for name in qualification.CREDENTIAL_IMPLEMENTATION | {'tests/credentials_native.py'}:
+            path = project/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text('synthetic credential source: '+name)
+            implementation[name] = release.file_record(path)['sha256']
+        (directory/'credential-qualification.json').write_bytes(release.canonical({
+            'schema': 1, 'result': 'pass', 'test': 'offline-systemd-credential-provisioning', 'assessed_at': now.isoformat(),
+            'source_sha256': implementation.pop('tests/credentials_native.py'), 'implementation_sha256': implementation,
+            'external_network': False, 'checks': sorted(qualification.CREDENTIAL_CHECKS), 'private_image_qualified': False,
+            'container_cleanup': 'removed', 'builder_image_sha256': 'f'*64, 'container_runtime': 'docker'}))
         workflows = {}
         for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
                      '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
@@ -85,6 +122,9 @@ class QualificationTests(unittest.TestCase):
             security = json.loads((directory/'security.json').read_text())
             record = json.loads((directory/'qualification.json').read_text())
             self.assertEqual(record['native_sha256'], release.file_record(directory/'native-qualification.json')['sha256'])
+            self.assertEqual(record['logs_sha256'], release.file_record(directory/'logs-qualification.json')['sha256'])
+            self.assertEqual(record['directory_sha256'], release.file_record(directory/'directory-qualification.json')['sha256'])
+            self.assertEqual(record['credentials_sha256'], release.file_record(directory/'credential-qualification.json')['sha256'])
             self.assertEqual(security['qualification']['record_sha256'], release.file_record(directory/'qualification.json')['sha256'])
             artifact = next(item for item in release.document((directory/'release.json').read_bytes())['artifacts']
                             if item['role'] == 'security')
@@ -171,3 +211,108 @@ class QualificationTests(unittest.TestCase):
             (project/'.github/workflows/build-base.yml').write_text('unreviewed signing authority change')
             with self.assertRaises(release.ReleaseError):
                 qualification.qualify(directory, project, {}, now=now)
+
+    def test_missing_stale_altered_and_wrong_subject_log_results_are_rejected(self):
+        for alteration in ('missing', 'binary', 'test-source', 'runtime-source', 'missing-check', 'stale',
+                           'no-overflow', 'no-delivery', 'storage-limit', 'changed-capacity'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                path = directory/'logs-qualification.json'
+                logs = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    path.unlink()
+                else:
+                    if alteration == 'binary':
+                        logs['alloy_sha256'] = 'b'*64
+                    elif alteration == 'test-source':
+                        logs['source_sha256'] = 'b'*64
+                    elif alteration == 'runtime-source':
+                        (project/'lanrith/logs_runtime.py').write_text('changed after qualification')
+                    elif alteration == 'missing-check':
+                        logs['checks'].remove('own-journal-exclusion')
+                    elif alteration == 'stale':
+                        logs['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
+                    elif alteration == 'no-overflow':
+                        logs['overflow_records'] = 0
+                    elif alteration == 'no-delivery':
+                        logs['delivered_batches'] = 0
+                    elif alteration == 'storage-limit':
+                        logs['queue_physical_bytes'] = 161*1024*1024
+                    elif alteration == 'changed-capacity':
+                        logs['queue_capacity_bytes'] = 65536
+                    path.write_bytes(release.canonical(logs))
+                with self.assertRaises((release.ReleaseError, OSError)):
+                    qualification.qualify(directory, project, {}, now=now)
+
+    def test_directory_results_bind_failure_coverage_freshness_and_all_implementation_inputs(self):
+        for alteration in ('missing', 'test-source', 'runtime-source', 'fixture-source', 'missing-check',
+                           'extra-input', 'missing-input', 'stale', 'future', 'external-network'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                path = directory/'directory-qualification.json'
+                report = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    path.unlink()
+                else:
+                    if alteration == 'test-source':
+                        report['source_sha256'] = 'b'*64
+                    elif alteration == 'runtime-source':
+                        (project/'lanrith/directory_runtime.py').write_text('changed after qualification')
+                    elif alteration == 'fixture-source':
+                        (project/'tests/test_directory.py').write_text('changed after qualification')
+                    elif alteration == 'missing-check':
+                        report['checks'].remove('expired-certificate-rejection')
+                    elif alteration == 'extra-input':
+                        report['implementation_sha256']['unreviewed.py'] = 'b'*64
+                    elif alteration == 'missing-input':
+                        report['implementation_sha256'].pop('lanrith/firewall.py')
+                    elif alteration == 'stale':
+                        report['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
+                    elif alteration == 'future':
+                        report['assessed_at'] = (now+datetime.timedelta(seconds=1)).isoformat()
+                    elif alteration == 'external-network':
+                        report['external_network'] = True
+                    path.write_bytes(release.canonical(report))
+                with self.assertRaises((release.ReleaseError, OSError)):
+                    qualification.qualify(directory, project, {}, now=now)
+
+    def test_credential_gate_requires_current_coverage_sources_isolation_and_cleanup(self):
+        changes = ('missing', 'test-source', 'runtime-source', 'runner-source', 'missing-check', 'extra-input',
+                   'missing-input', 'stale', 'future', 'naive-time', 'invalid-time', 'external-network',
+                   'not-cleaned', 'wrong-builder', 'invalid-schema')
+        for alteration in changes:
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                path = directory/'credential-qualification.json'
+                report = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    path.unlink()
+                else:
+                    if alteration == 'test-source':
+                        report['source_sha256'] = 'b'*64
+                    elif alteration in ('runtime-source', 'runner-source'):
+                        selected = 'lanrith/credential_operation.py' if alteration == 'runtime-source' else 'scripts/qualify-credentials.py'
+                        (project/selected).write_text('changed after qualification')
+                    elif alteration == 'missing-check':
+                        report['checks'].remove('native-loadcredential-bytes')
+                    elif alteration == 'extra-input':
+                        report['implementation_sha256']['unreviewed.py'] = 'b'*64
+                    elif alteration == 'missing-input':
+                        report['implementation_sha256'].pop('lanrith/credential_values.py')
+                    elif alteration in ('stale', 'future'):
+                        report['assessed_at'] = (now+datetime.timedelta(hours=-7 if alteration == 'stale' else 1)).isoformat()
+                    elif alteration == 'naive-time':
+                        report['assessed_at'] = now.replace(tzinfo=None).isoformat()
+                    elif alteration == 'invalid-time':
+                        report.pop('assessed_at')
+                    elif alteration == 'external-network':
+                        report['external_network'] = True
+                    elif alteration == 'not-cleaned':
+                        report['container_cleanup'] = 'pending'
+                    elif alteration == 'wrong-builder':
+                        report['builder_image_sha256'] = 'unbound-tag'
+                    elif alteration == 'invalid-schema':
+                        report['schema'] = True
+                    path.write_bytes(release.canonical(report))
+                with self.assertRaises((release.ReleaseError, OSError)):
+                    qualification.qualify(directory, project, {}, now=now)

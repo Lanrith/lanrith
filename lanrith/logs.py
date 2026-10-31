@@ -37,6 +37,11 @@ loki.relabel "router_journal" {
   forward_to = []
   rule {
     source_labels = ["__journal__systemd_unit"]
+    regex         = "alloy\\\\.service"
+    action        = "drop"
+  }
+  rule {
+    source_labels = ["__journal__systemd_unit"]
     target_label  = "unit"
     regex         = "([A-Za-z0-9_.@:-]{1,128})"
   }
@@ -109,7 +114,7 @@ otelcol.processor.groupbyattrs "router" {
 }
 
 otelcol.storage.file "router" {
-  directory             = "/var/lib/lanrith/alloy/queue"
+  directory             = "/var/lib/lanrith-alloy/queue"
   directory_permissions = "0700"
   fsync                  = true
   compaction {
@@ -137,7 +142,7 @@ otelcol.exporter.otlphttp "router" {
     timeout  = "15s"
     tls {
       server_name = SERVER_NAME
-      min_version = "TLS1.2"
+      min_version = "1.2"
     }
   }
   retry_on_failure {
@@ -176,18 +181,19 @@ def render(value):
     unit = (
         '[Unit]\nDescription=Redact and export the router journal\n'
         'Requires=lanrith-services.service\nAfter=lanrith-services.service systemd-journald.service\n'
-        'BindsTo=lanrith-services.service nftables.service\n\n[Service]\nType=simple\n'
+        'BindsTo=lanrith-services.service nftables.service\n\n[Service]\nType=notify\nNotifyAccess=main\n'
         'User=alloy\nGroup=alloy\nSupplementaryGroups=systemd-journal\n'
         'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'
         'LoadCredential='+credential+':'+bindings.credential_path(value, credential)+'\n'
         'ExecStartPre=+/usr/lib/lanrith/logs-runtime stage\n'
-        'ExecStart=/usr/bin/alloy run --stability.level=public-preview --disable-reporting '
-        '--server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/lanrith/alloy/state '
-        '/etc/alloy/config.alloy\n'
+        'ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\nExecReload=\n'
+        'EnvironmentFile=\nWorkingDirectory=/var/lib/lanrith-alloy\n'
+        'TimeoutStartSec=35s\nTimeoutStopSec=20s\nWatchdogSec=30s\n'
         'StateDirectory=lanrith/alloy\nStateDirectoryMode=0750\n'
+        'BindPaths=/var/lib/lanrith/alloy:/var/lib/lanrith-alloy\n'
         'RuntimeDirectory=lanrith-logs\nRuntimeDirectoryMode=0750\nUMask=0027\n'
-        'ReadWritePaths=/var/lib/lanrith/alloy /run/lanrith-logs\n'
-        'IPAddressDeny=any\nIPAddressAllow='+policy['target']+'\n'
+        'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs\n'
+        'IPAddressDeny=any\nIPAddressAllow='+policy['target']+'\nIPAddressAllow=127.0.0.1/32\n'
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nNoNewPrivileges=yes\n'
         'PrivateTmp=yes\nPrivateDevices=yes\nProtectHome=yes\nProtectSystem=strict\n'
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'

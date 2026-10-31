@@ -27,6 +27,9 @@ class AdmissionTests(unittest.TestCase):
                       'workflow': 'Lanrith/lanrith/.github/workflows/build-base.yml'}
             for field, name in (('filesystem_sha256', 'lanrith-base.tar.gz'),
                                 ('initrd_sha256', 'lanrith-initrd-base.tar.gz'),
+                                ('logs_sha256', 'logs-qualification.json'),
+                                ('directory_sha256', 'directory-qualification.json'),
+                                ('credentials_sha256', 'credential-qualification.json'),
                                 ('storage_sha256', 'storage-qualification.json')):
                 (root/name).write_bytes(b'synthetic unit-test evidence')
                 record[field] = selection['files'][name] = release.file_record(root/name)['sha256']
@@ -40,6 +43,15 @@ class AdmissionTests(unittest.TestCase):
                          qualification={'result': 'pass', 'record_sha256': selection['files']['qualification.json']})
             (root/'security.json').write_bytes(release.canonical(value))
             admission.assess(root, selection, now)
+            credential_report = root/'credential-qualification.json'
+            previous = credential_report.read_bytes()
+            credential_report.write_bytes(b'substituted credential evidence')
+            with self.assertRaises(release.ReleaseError):
+                admission.assess(root, selection, now)
+            credential_report.unlink()
+            with self.assertRaises((release.ReleaseError, OSError)):
+                admission.assess(root, selection, now)
+            credential_report.write_bytes(previous)
             with self.assertRaises(release.ReleaseError):
                 admission.assess(root, selection, now+datetime.timedelta(hours=25))
             assessment = {'schema': 1, 'inventory_sha256': digest, 'assessed_at': now.isoformat(),

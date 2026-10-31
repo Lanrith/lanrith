@@ -115,6 +115,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'boot': value['hardware']['boot'], 'watchdog': value['hardware']['watchdog'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
+    credential_manifest = overlay/'usr/share/lanrith/credentials.json'
+    installed['credential_catalog_sha256'] = (hashlib.sha256(credential_manifest.read_bytes()).hexdigest()
+                                               if credential_manifest.is_file() else None)
     if certificate is not None:
         installed['image_contract'] = boot_policy.contract(value, base, certificate, public, integration['digests'])
         installed['image_contract']['recovery'] = ({'image_id': image_id, 'sequence': sequence,
@@ -145,13 +148,20 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
-                   'metrics_runtime.py', 'policy_runtime.py', 'radius_runtime.py', 'logs_runtime.py', 'boot_health.py',
+                   'metrics_runtime.py', 'router_metrics_runtime.py', 'ntp_health_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
+                   'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
+                   'credential_operation.py', 'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
                    'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',
                    'image_operation.py', 'steady_recovery.py'):
         path = Path(__file__).with_name(module)
         require(path.is_file(), 'A required image runtime module is missing.')
         shutil.copyfile(path, library / module)
+    # Keep native transaction recovery imports available even without SNMP.
+    # None of these helpers activates a daemon or provisioning endpoint.
+    helpers = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/usr/lib/lanrith'
+    for name in ('snmp_credentials.py', 'snmp_service.py', 'credential_runtime.py', 'systemd_service.py'):
+        shutil.copyfile(helpers/name, overlay/'usr/lib/lanrith'/name)
     wrapper = overlay / 'usr/bin/lanrith-runtime'
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
@@ -161,6 +171,21 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     fan_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                            'from lanrith.fancontrol_runtime import main\nsys.exit(main())\n')
     fan_wrapper.chmod(0o755)
+    if value.get('observability', {}).get('metrics', {}).get('enabled'):
+        metrics_wrapper = overlay/'usr/lib/lanrith/router-metrics'
+        metrics_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                   'from lanrith.router_metrics_runtime import main\nsys.exit(main())\n')
+        metrics_wrapper.chmod(0o755)
+        if value['services']['ntp']['enabled']:
+            ntp_wrapper = overlay/'usr/lib/lanrith/ntp-health'
+            ntp_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                   'from lanrith.ntp_health_runtime import main\nsys.exit(main())\n')
+            ntp_wrapper.chmod(0o755)
+        if value.get('identity', {}).get('policy', {}).get('enabled'):
+            directory_wrapper = overlay/'usr/lib/lanrith/directory-health'
+            directory_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                         'from lanrith.directory_runtime import main\nsys.exit(main())\n')
+            directory_wrapper.chmod(0o755)
     if value.get('identity', {}).get('policy', {}).get('enabled'):
         policy_wrapper = overlay / 'usr/lib/lanrith/policy-runtime'
         policy_wrapper.write_text('#!/usr/bin/python3\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
@@ -181,15 +206,38 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     operator_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                                 'from lanrith.image_operation import main\nsys.exit(main())\n')
     operator_wrapper.chmod(0o755)
+    credential_wrapper = overlay/'usr/bin/lanrith-credentials'
+    credential_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                  'from lanrith.credential_operation import main\nsys.exit(main())\n')
+    credential_wrapper.chmod(0o755)
     if serial_hash is not None:
         shutil.copyfile(serial_hash, overlay/'etc/security/admin.serial-passphrase.hash')
         (overlay/'etc/security/admin.serial-passphrase.hash').chmod(0o600)
     units = overlay / 'usr/lib/systemd/system'
     units.mkdir(parents=True, exist_ok=True)
+    if integration['start_units']:
+        (units/'lanrith-extension-start.service').write_text(
+            '[Unit]\nDescription=Start admitted optional integrations after core acceptance\n'
+            'DefaultDependencies=no\nRequires=boot-complete.target lanrith-observation.service\n'
+            'After=boot-complete.target lanrith-observation.service\n'
+            'Conflicts=shutdown.target\nBefore=shutdown.target\n'
+            '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+            'ExecStart=/usr/bin/systemctl --no-block start -- '+' '.join(integration['start_units'])+'\n'
+            'TimeoutStartSec=10s\nCapabilityBoundingSet=\nNoNewPrivileges=yes\n'
+            'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
+            'RestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\n'
+            'MemoryMax=32M\nTasksMax=8\nLimitNOFILE=64\n')
+        activation = units/'multi-user.target.wants/lanrith-extension-start.service'
+        activation.parent.mkdir(parents=True, exist_ok=True)
+        activation.symlink_to('../lanrith-extension-start.service')
     required = runtime_plan.required_units(value, target_facts=target_facts,
                                            integrations=integration['health_units'])
     (metadata/'health.json').write_bytes(release.canonical(
         runtime_plan.health(value, target_facts=target_facts, integrations=integration['health_units'])))
+    if value.get('observability', {}).get('metrics', {}).get('enabled'):
+        metric_policy = json.loads((metadata/'router-metrics.json').read_bytes())
+        metric_policy['units'] = required
+        (metadata/'router-metrics.json').write_bytes(release.canonical(metric_policy))
     # These helpers may come from an older admitted base. Replace every consumer
     # together with its generated administration contract.
     for name in ('ensure-ssh-host-key', 'verify-serial-passphrase', 'serial-idle-watchdog'):
@@ -213,6 +261,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=sockets.target\n')
     (units/'lanrith-image-operation@.service').write_text(
         '[Unit]\nDescription=Bounded operator image operation\n'
+        'CollectMode=inactive-or-failed\n'
         'RequiresMountsFor=/var/lib/lanrith /var/tmp/lanrith-update\n'
         '\n[Service]\nType=exec\nExecStart=/usr/bin/lanrith-image serve\n'
         'ExecStopPost=/usr/bin/lanrith-image cancel-request\n'
@@ -236,6 +285,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         activation = units/target/unit
         activation.parent.mkdir(parents=True, exist_ok=True)
         activation.symlink_to('../'+unit)
+    if installed['credential_catalog_sha256'] is not None:
+        activation = units/'sockets.target.wants/lanrith-credentials.socket'
+        activation.symlink_to('../lanrith-credentials.socket')
     (units / 'lanrith-health.service').write_text(
         '[Unit]\nDescription=Verify local router readiness before boot acceptance\n'
         f'Requires=lanrith-recovery-key.service {" ".join(required)}\n'

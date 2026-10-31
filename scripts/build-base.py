@@ -250,6 +250,22 @@ def main():
                                        'sbom': 'sbom.spdx.json', 'security': 'security.json', 'inputs': 'inputs.json',
                                        'tools': 'tools.tar.gz'})
     (args.output / 'release.json').write_bytes(canonical(manifest))
+    alloy = json.loads((args.work/'custom-security.json').read_text())['components']['alloy']
+    alloy_packages = sorted(packages.glob('alloy_*.deb'))
+    require(len(alloy_packages) == 1 and file_record(alloy_packages[0])['sha256'] == alloy['package_sha256'],
+            'Logging qualification package differs from the scanned subject.')
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged', '--memory', '768m',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(packages)+':/packages:ro',
+        '-v', str(args.output)+':/output', builder, 'sh', '-eu', '-c',
+        'dpkg-deb --extract "$1" /tmp/logs-binary\n'
+        'exec python3 /source/tests/logs_native.py --alloy /tmp/logs-binary/usr/bin/alloy '
+        '--alloy-sha256 "$2" --result /output/logs-qualification.json',
+        'logging-qualification', '/packages/'+alloy_packages[0].name, alloy['binary_sha256'])
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.output)+':/output',
+        builder, 'python3', '/source/tests/directory_native.py', '--result', '/output/directory-qualification.json')
+    run(sys.executable, str(PROJECT/'scripts/qualify-credentials.py'), '--builder', builder,
+        '--result', str(args.output/'credential-qualification.json'))
     # Qualification has its own disposable authority and regular-file disks.
     # No production key or owner configuration enters the public build.
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',

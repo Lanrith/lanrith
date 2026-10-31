@@ -12,14 +12,14 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import config
+from lanrith import config, extension_network, firewall, service_plane
 
 SERVER = '''
 import json,selectors,socket,sys
 selector=selectors.DefaultSelector()
 for family in (socket.AF_INET,socket.AF_INET6):
     for protocol in (socket.SOCK_STREAM,socket.SOCK_DGRAM):
-        for port in (22,23,53,67,123,161,5353,8888,8889,12345):
+        for port in (22,23,53,67,123,161,5353,8888,8889,9100,12345):
             stream=socket.socket(family,protocol)
             stream.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             if family==socket.AF_INET6:stream.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1)
@@ -141,9 +141,16 @@ def connection(router_name, client_name, addresses, number):
     return peers
 
 
-def server(namespace, path):
+def server(namespace, path, uid=None):
     ready = path/(namespace+'.ready')
-    process = subprocess.Popen(['nsenter', '--net=/run/netns/'+namespace, '--', sys.executable, '-c', SERVER, str(ready)],
+    code = SERVER
+    if uid is not None:
+        path.chmod(0o755)
+        events = Path(str(ready)+'.events')
+        events.touch()
+        os.chown(events, uid, uid)
+        code = code.replace('while True:', 'import os; os.setgroups([]); os.setgid('+str(uid)+'); os.setuid('+str(uid)+')\nwhile True:', 1)
+    process = subprocess.Popen(['nsenter', '--net=/run/netns/'+namespace, '--', sys.executable, '-c', code, str(ready)],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     deadline = time.monotonic()+5
     while not ready.exists():
@@ -152,6 +159,154 @@ def server(namespace, path):
             raise AssertionError('Synthetic listener could not start: '+process.communicate(timeout=5)[1][-1024:])
         time.sleep(0.02)
     return process
+
+
+def reject_extension_tuple_reuse(work, gateway, client):
+    ready = work/'extension-tuple-ready'
+    code = '''
+import socket,sys
+with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as stream:
+    stream.bind((sys.argv[1],40000));stream.settimeout(2)
+    stream.sendto(b'legitimate-extension-flow',(sys.argv[2],8888))
+    stream.recvfrom(4096)
+    open(sys.argv[3],'x').close()
+    try:
+        data,peer=stream.recvfrom(4096)
+    except TimeoutError:sys.exit(0)
+    sys.exit(20)
+'''
+    process = subprocess.Popen(['nsenter', '--net=/run/netns/extension-client', '--', sys.executable,
+                                '-c', code, client, gateway, str(ready)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic()+4
+        while not ready.exists():
+            if process.poll() is not None or time.monotonic() > deadline:
+                raise AssertionError('The legitimate extension tuple was not established.')
+            time.sleep(0.02)
+        ns('router', sys.executable, '-c',
+           'import os,socket,sys; os.setgroups([]); os.setgid(1802); os.setuid(1802); '
+           's=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); '
+           's.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((sys.argv[1],8888)); '
+           '\ntry:s.sendto(b"wrong-uid-stale-tuple",(sys.argv[2],40000))\n'
+           'except PermissionError:pass', gateway, client)
+        _, diagnostic = process.communicate(timeout=5)
+        if process.returncode != 0:
+            raise AssertionError('Another UID reused an extension tuple: '+diagnostic.decode()[-512:])
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+
+
+def exercise_extensions():
+    """Use arbitrary extension names/UIDs; no private application is installed."""
+    value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+    value['services']['dns'] = {'enabled': False}
+    value['services']['ntp'] = {'enabled': False}
+    value['observability'] = {'metrics': {'enabled': True, 'clients': [{'network': 'home'}]}}
+    value = config.normalize(value)
+    value['networks']['rescue'] = {'name': 'rescue0', 'addresses': ['198.18.0.11/24'],
+                                  'forwarding': False, 'ra': False}
+    plane = service_plane.topology(value)
+    listeners = [{'user': 'example-agent', 'network': 'home', 'address': address,
+                  'sources': [prefix], 'protocol': protocol, 'port': 8888}
+                 for address, prefix in (('192.168.10.1', '192.168.10.0/24'),
+                                         ('fd42:1000:1000:10::1', 'fd42:1000:1000:10::/64'))
+                 for protocol in ('tcp', 'udp')]
+    listeners.append({'user': 'example-agent', 'network': 'rescue', 'address': '198.18.0.11',
+                      'sources': ['198.18.0.0/24'], 'protocol': 'tcp', 'port': 8888})
+    plan = extension_network.resolve(value, [extension_network.declarations(
+        {'listeners': listeners, 'services': [{'user': 'example-agent', 'service': 'metrics', 'family': family}
+                                             for family in (4, 6)]},
+        {'users': [{'name': 'example-agent', 'uid': 1801, 'gid': 1801}], 'groups': []})])
+    with tempfile.TemporaryDirectory(prefix='lanrith-extension-packets.') as temporary:
+        work = Path(temporary)
+        # Give the namespace parser its generated service identity through a
+        # private bind mount; never edit the host account registry.
+        import pwd
+        passwd = Path('/etc/passwd').read_text()
+        if not any(line.startswith('lanrith-metrics:') for line in passwd.splitlines()):
+            passwd += 'lanrith-metrics:*:1803:1803:Fixture:/nonexistent:/usr/sbin/nologin\n'
+        for uid in (1801, 1802):
+            try:
+                pwd.getpwuid(uid)
+            except KeyError:
+                continue
+            raise AssertionError('Synthetic extension UID is occupied.')
+        (work/'passwd').write_text(passwd)
+        run('mount', '--bind', str(work/'passwd'), '/etc/passwd')
+        processes, namespaces = [], ['router', 'extension-client', 'extension-oob', 'upstream', 'services']
+        try:
+            run('ip', 'netns', 'add', 'router')
+            client = connection('lan', 'extension-client', value['networks']['home']['addresses'], 1)
+            oob = connection('rescue0', 'extension-oob', value['networks']['rescue']['addresses'], 2)
+            wan = value['hardware']['interfaces'][value['uplink']['interface']]['name']
+            uplink = connection(wan, 'upstream', ['198.51.100.1/24', '2001:db8:ffff::1/64'], 3)
+            connection(plane['host_link'], 'services', plane['host_addresses'], 4)
+            ns('services', 'ip', 'link', 'set', 'eth0', 'name', plane['service_link'])
+            for address in plane['endpoints']['metrics']:
+                ns('services', 'ip', 'address', 'add', address+('/32' if ':' not in address else '/128'),
+                   'dev', plane['service_link'], *(['nodad'] if ':' in address else []))
+            for _, remote, family in uplink:
+                ns('router', 'ip', '-'+str(family), 'route', 'add', 'default', 'via', remote)
+            sysctls = work/'routing.conf'
+            sysctls.write_text(firewall.sysctls())
+            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
+            host_rules, peer_rules = work/'host.nft', work/'peer.nft'
+            host_rules.write_text(firewall.render(value, extension_rules=plan))
+            peer_rules.write_text(service_plane.namespace_firewall(value, plane, extension_rules=plan))
+            ns('router', 'nft', '--file', str(host_rules))
+            ns('services', 'nft', '--file', str(peer_rules))
+            processes.append(server('router', work, uid=1801))
+            processes.append(server('services', work))
+            processes.append(server('upstream', work))
+            for gateway, address, family in client:
+                probe('extension-client', gateway, 8888, True)
+                probe('extension-client', gateway, 8888, True, 'udp')
+                probe('extension-client', gateway, 8889, False)
+                probe('extension-client', oob[0][0], 8888, False)
+                reject_forgery('upstream', address, gateway, wan, 'extension-wrong-ingress-'+str(family),
+                               'router', work)
+            probe('extension-oob', oob[0][0], 8888, True)
+            for address in plane['endpoints']['metrics']:
+                for uid, allowed in ((1801, True), (1802, False), (65534, False)):
+                    code = 'import os; os.setgroups([]); os.setgid('+str(uid)+'); os.setuid('+str(uid)+')\n'+CLIENT
+                    result = subprocess.run(['nsenter', '--net=/run/netns/router', '--',
+                        sys.executable, '-c', code, address, '9100', 'tcp'], capture_output=True, timeout=5)
+                    if result.returncode not in (0, 10) or (result.returncode == 0) != allowed:
+                        raise AssertionError('Managed metrics access differs for extension UID '+str(uid)+': '+result.stderr.decode()[-512:])
+                probe('router', address, 8888, False)
+                reject_forgery('extension-client', plan['services'][0 if ':' not in address else 1]['source'],
+                               address, 'lan', 'extension-host-source-forgery-'+str(':' in address), 'services', work,
+                               dport=9100)
+            for _, remote, _ in uplink:
+                code = 'import os; os.setgroups([]); os.setgid(1801); os.setuid(1801)\n'+CLIENT
+                result = subprocess.run(['nsenter', '--net=/run/netns/router', '--', sys.executable,
+                    '-c', code, remote, '8888', 'tcp'], capture_output=True, timeout=5)
+                if result.returncode != 10:
+                    raise AssertionError('Extension obtained undeclared external access.')
+            reject_extension_tuple_reuse(work, client[0][0], client[0][1])
+            # Removing the declarations removes every new listener/dependency;
+            # fresh connections cannot inherit their previous permission.
+            host_rules.write_text(firewall.render(value))
+            peer_rules.write_text(service_plane.namespace_firewall(value, plane))
+            ns('router', 'nft', '--file', str(host_rules))
+            ns('services', 'nft', '--file', str(peer_rules))
+            for gateway, _, _ in client:
+                probe('extension-client', gateway, 8888, False)
+        finally:
+            for process in processes:
+                process.terminate()
+                try:
+                    process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=5)
+            for namespace in reversed(namespaces):
+                subprocess.run(['ip', 'netns', 'delete', namespace], capture_output=True)
+            run('umount', '/etc/passwd')
+    print('Generic extension listeners, managed metrics UID access, OOB, spoof/stale-tuple denial and removal passed.')
 
 
 def exercise(example):
@@ -340,6 +495,7 @@ def main():
     run('mount', '-t', 'tmpfs', '-o', 'mode=0700', 'tmpfs', '/run/netns')
     for example in ('minimal.yaml', 'segmented.yaml'):
         exercise(example)
+    exercise_extensions()
 
 
 if __name__ == '__main__':

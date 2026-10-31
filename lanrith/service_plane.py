@@ -240,8 +240,9 @@ def render(value):
     return files
 
 
-def namespace_firewall(value, plane):
+def namespace_firewall(value, plane, *, extension_rules=None):
     from .firewall import values
+    from .extension_network import namespace_rules
     lines = ['flush ruleset', 'table inet services {',
              'chain input { type filter hook input priority filter; policy drop;',
              'iifname "lo" accept', 'ct state invalid drop', 'ct state established,related accept',
@@ -263,6 +264,7 @@ def namespace_firewall(value, plane):
                         lines.append(f'{spelling} saddr {values(sources)} {spelling} daddr {values(targets)} '
                                      f'{protocol} dport 1813 accept')
     lines += metrics.client_rules(value, namespace=True)
+    lines += namespace_rules(extension_rules)
     lines += ['}', 'chain forward { type filter hook forward priority filter; policy drop; }',
               'chain output { type filter hook output priority filter; policy drop;',
               'ct state invalid drop', *local_output(value, plane),
@@ -334,6 +336,14 @@ def local_output(value, plane):
     from .firewall import values
     endpoints = plane['endpoints']
     lines = ['oifname "lo" meta skuid 0 accept']
+    if 'logs' in endpoints:
+        # The supervisor observes Alloy's local component graph. The API is
+        # neither a LAN listener nor a dependency available to other services.
+        lines += [
+            'oifname "lo" meta skuid "alloy" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport 12345 accept',
+            'oifname "lo" meta skuid "alloy" ip saddr 127.0.0.1 ip daddr 127.0.0.1 '
+            'ct direction reply ct state { established, related } tcp sport 12345 accept',
+        ]
     if 'dns' in endpoints and 'ntp' in endpoints:
         for family, spelling, target in ((4, 'ip', '127.0.0.1'), (6, 'ip6', '::1')):
             for protocol in ('tcp', 'udp'):

@@ -23,6 +23,31 @@ selectors and undeclared management networks fail validation. See the
 | `extensions` | IDs of separately reviewed integration manifests |
 | `release` | Owner image identity and monotonic `sequence_floor` |
 
+Use `networks.<name>.dhcp4.id` to retain a DHCPv4 subnet identity, for example
+`dhcp4: {id: 1024, pools: [192.168.10.100-192.168.10.200]}`. IDs must be unique
+integers from 1 to 4294967294. They are independent of VLAN numbers. Kea uses
+these IDs to associate leases with subnets, so retain the existing IDs when
+importing a lease file. See the [Kea subnet identifier contract](https://kea.readthedocs.io/en/kea-3.0.0/arm/dhcp4-srv.html#ipv4-subnet-identifier).
+
+Omitting `id` assigns the first unused positive number in network order, reserving
+explicit IDs first. The normalized build input records every assigned ID so
+canonical snapshots and native policy admission agree with Kea. Pin IDs in the
+owner file before reordering existing networks or changing a persisted layout.
+Disabled scopes reserve no ID. IDs are compiled into native configuration and
+bounded runtime contracts; owner YAML remains build-only.
+
+Selecting RADIUS admission also configures Kea's private Unix control socket
+and the packaged lease-command hook used by its bounded admission collector.
+Before startup completes, an unprivileged post-start check verifies the main
+daemon's UID/PID and service group, then removes execute/other access with mode
+`0660`. The `_kea` group is reserved for the daemon and explicitly admitted
+service collectors. Admission collectors retain empty capability sets; they
+need no DAC override. Missing readiness is bounded; an unsafe path or different
+peer fails startup. Disabling RADIUS
+omits the socket, hook and post-start check. The socket remains administrative IPC owned by
+Kea's service account; ordinary users and observation-only consumers must not
+receive access to it. Lease observations alone grant no forwarding permission.
+
 ## Access rules
 
 Use the same rules for every routed destination. Network names come from your
@@ -55,6 +80,7 @@ case. Names are preserved in the image's resolved configuration for inspection
 and future console display. They are metadata: renaming a rule does not change
 its match, position or permissions, and the compiler does not insert names into
 firewall code. Unnamed rules remain valid.
+
 
 The first matching rule decides. A selector with both `network` and `addresses`
 requires both to match; a host exception therefore stays restricted to its
@@ -144,6 +170,39 @@ through native and translated paths. Enabling a package or component grants no
 trust to a cluster, directory or backend. Temporary broad permissions remain
 explicit owner rules.
 
+Directory policy generates host egress for the policy reader's UID, exact
+server addresses, TCP port, interface and assigned router sources. Targets need
+an unambiguous declared ordinary attachment or a route through one. Router,
+management, managed-service and translator identities are excluded. This
+connectivity exception supplies no client forwarding permission.
+
+An IP-literal directory URL uses that address directly. A named URL requires
+`addresses` with one to eight unique IP pins. Lanrith emits the corresponding
+host entries at build time and retains the URL hostname for TLS verification.
+This avoids a dependency on DNS while enforcing exact destinations. Changing a
+pin requires a new image. For example, with matching declared networks:
+
+```yaml
+identity:
+  directories:
+    devices:
+      enabled: true
+      url: ldap+starttls://directory.example.test:389
+      addresses: [192.0.2.30, 'fd42:1234:5678:10::30']
+      base_dn: dc=example,dc=test
+      bind_dn: cn=router,dc=example,dc=test
+      credential: directory_bind  # Protected runtime credential reference.
+      ca_file: trust/directory.pem  # Reviewed public CA in runtime.trust.
+  policy:
+    enabled: true
+    directory: devices
+    networks: [devices]
+```
+
+With metrics enabled, a separate credential-free identity observes verified
+directory TLS. Its results describe transport health; authenticated collection
+and fresh grants have separate requirements. See [router health metrics](metrics.md).
+
 When authenticated log delivery is enabled, Lanrith also emits a one-minute
 heartbeat containing the accepted boot ID, selected entry, release sequence and
 effective configuration digest. The timer is part of boot health and the event
@@ -153,6 +212,9 @@ event outside the router. This is a liveness signal, not remote attestation: an
 attacker with unrestricted root can forge local events.
 
 ## Hardware and optional integrations
+
+See [router health metrics](metrics.md) for collector units, metric names,
+query and inventory bounds, and source-admission behavior.
 
 Defaults allocate a 1 GiB ESP, two 4 GiB root slots and 64 GiB encrypted state.
 Surplus storage stays unallocated. Factory installation requires an eligible
@@ -200,6 +262,87 @@ size and numeric mode. The private repository pins the manifest digest in
 `extensions.lock`. Ordinary files only are allowed; no links, devices,
 maintainer scripts or build hooks run during signing. Health units become boot
 acceptance requirements.
+
+Use `start_units` for extension-owned services, sockets, timers or targets that
+should start after core boot acceptance. Each unit must be inventoried under
+`usr/lib/systemd/system/`. Lanrith starts them after the accepted boot observation;
+their failure does not become a core boot requirement. Units also listed in
+`health_units` remain mandatory. Extension units must keep their own dependency
+and resource limits; `start_units` does not add a restart policy.
+
+An optional `network` object declares host listeners and managed-service clients.
+Both refer to users in the extension's `identities.users` list. For example:
+
+```json
+{
+  "listeners": [{
+    "user": "example-agent", "network": "home", "address": "192.168.10.1",
+    "sources": ["192.168.10.0/24"], "protocol": "tcp", "port": 8443
+  }],
+  "services": [{"user": "example-agent", "service": "metrics", "family": 4}]
+}
+```
+
+Listeners require an exact gateway address on the named network, explicit
+same-family source prefixes within that attachment, TCP or UDP, and a port from
+1024 to 65535. The configured SSH port is reserved. Management-network listeners
+remain reachable only through their own attachment. These declarations add no
+forwarding permission and cannot bypass source validation, OOB isolation or
+translation guards.
+
+Managed-service access currently supports the selected metrics API over TCP 9100,
+using family `4` or `6`. It requires metrics to be enabled. Lanrith derives the
+host-link source and service destination, admits the matching namespace input,
+and checks the extension UID before accepting tracked output. Other unprivileged
+UIDs cannot reuse those tuples. Declared UIDs receive no other external output
+permission; existing host loopback policy and privileged-root authority remain.
+This contract supplies network admission, not application authentication or a
+sandbox for untrusted extension code. The owner must review the extension's units,
+helpers and credentials.
+
+Typed network declarations cannot be combined with a complete firewall
+replacement. The build emits native rules only; no runtime extension parser or
+owner YAML is needed. Removing a declaration removes its new-connection grant.
+
+An optional `observations` manifest list selects a read-only policy endpoint:
+
+```json
+[{"service": "policy", "user": "example-agent"}]
+```
+
+The reader and its primary group must belong to that extension's identities.
+Policy must be enabled, and only one reader across the active extensions is
+supported. Lanrith generates the fixed socket
+`/run/lanrith-policy-observations/observations.sock` and pins the reader UID.
+The component checks kernel peer credentials and accepts only bounded observation
+requests. This grants no proposal, status/operator or mutation endpoint access.
+
+The core helper launcher prepares the root-owned, group-scoped socket and then
+becomes the existing helper process. It uses the helper's existing capability
+set and one supplementary reader group. Endpoint setup failures leave the two
+mandatory helper sockets available; they create no failed optional socket unit
+and do not change the native boot failure gate. Removing the declaration removes
+the optional endpoint on the next image boot. Application schemas, adapters and
+private account bindings remain extension responsibilities. Qualify the actual
+selected component and complete image as well as the launcher before deployment.
+
+The generated helper unit uses `Type=notify` and a 100-second startup limit.
+Its selected component must implement the bounded post-start binding handoff:
+ownership and application permits stay closed until the independent producer
+supplies qualified evidence, and only then can the helper report readiness.
+An `unobserved` observation reply does not establish readiness. A development
+candidate passing the native harness does not qualify the pinned component
+release or the owner's complete image.
+
+The selected policy helper currently requires fixed post-NAT source addresses.
+Combining directory policy with client masquerade or managed-service source
+translation over a DHCP IPv4 or RA IPv6 uplink is rejected by `validate` and
+`render`, before native profile assembly. Select static addresses for the
+translated uplink families for that combination.
+An ordinary router without directory policy retains DHCP WAN support. A policy
+profile with no source translation can also use a dynamic uplink; a qualified
+live source-address producer is required before translated dynamic policy paths
+can be supported.
 
 An optional `replaces` list explicitly admits replacement of compiler-generated
 firewall, networkd, Kea, Unbound, Chrony or routing-sysctl files. This is for
@@ -266,10 +409,17 @@ Review any ownership conversion of existing state separately.
 
 Private migration inputs may supply an optional `runtime` object. Its
 `credentials` map binds declared credential names to canonical files beneath
-`/var/lib` or `/var/cache`. BIND and FRR use those paths with `LoadCredential`;
-assembly does not read or copy their contents. Other components remain subject
-to their runtime support gates. Without a binding, a credential uses
-`/var/lib/lanrith/credentials/<name>`.
+`/var/lib` or `/var/cache`. DNS, routing, directory policy, RADIUS and logging
+stage selected inputs through `LoadCredential`. SNMP uses its managed activation
+helper. Assembly does not read or copy credential values. The default path is
+`/var/lib/lanrith/credentials/<name>`, except the SNMP input at
+`/var/lib/lanrith/snmp/snmpd.conf`.
+
+For active consumers, `/usr/share/lanrith/credentials.json` records the selected
+references, paths, native formats and service units. Disabled integrations add
+no requirement. It contains metadata only. The protected first-install writer,
+operator protocol and boot gate are still under implementation; this catalog
+does not seed an empty state filesystem.
 
 `runtime.service_identities` maps account names to required numeric `uid` and
 `gid`, with optional `home` and `shell`. Assembly checks the admitted base and

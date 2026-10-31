@@ -6,12 +6,14 @@ fixed, narrow runtime document and never searches for or reconstructs intent.
 
 import argparse
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import pwd
 import re
+import socket
 import stat
 import subprocess
 import sys
@@ -28,6 +30,7 @@ BINDINGS = ROOT/'bindings'
 COLLECTOR = ROOT/'collector'
 READER = Path('/run/router-policy-reader')
 ENROLLMENT = Path('/var/lib/lanrith/policy-enrollment/enrolled')
+OBSERVATIONS = Path('/run/lanrith-policy-observations/observations.sock')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 IFNAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,14}\Z')
@@ -82,11 +85,21 @@ def exact(value, keys, label):
 
 
 def load_contract(path=CONTRACT, *, owner=0):
-    value = exact(decode(read(path, 64*1024, owner=owner, private=True), 64*1024), {
+    value = decode(read(path, 64*1024, owner=owner, private=True), 64*1024)
+    observer = value.get('observer') if isinstance(value, dict) else None
+    value = exact(value, {
         'schema_version', 'profile_directory', 'profile_metadata', 'generation_directory',
         'state_directory', 'binding_directory', 'nft_executable', 'helper_executable',
         'recover_executable', 'collector_executable', 'managed_interfaces', 'directory',
-        'binding_collector', 'translation_manifests'}, 'Policy runtime')
+        'binding_collector', 'translation_manifests'} | ({'observer'} if observer is not None else set()),
+        'Policy runtime')
+    if observer is not None:
+        exact(observer, {'user', 'uid', 'gid'}, 'Policy observer')
+        if (not isinstance(observer['user'], str) or
+                not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', observer['user']) or
+                any(type(observer[key]) is not int or not 100 <= observer[key] <= 59999
+                    for key in ('uid', 'gid'))):
+            raise PolicyRuntimeError('Policy observer identity differs.')
     fixed = {
         'schema_version': 1,
         'profile_directory': '/etc/router-policy-agent/profile',
@@ -144,7 +157,7 @@ def load_contract(path=CONTRACT, *, owner=0):
                 collector['kea_socket'] != '/run/kea/kea4-ctrl-socket' or prefix.version != 4 or
                 str(prefix) != collector['ipv4_prefix'] or not isinstance(collector['nas_prefixes'], list) or
                 not 1 <= len(nas) <= 64 or collector['nas_prefixes'] != sorted(set(map(str, nas))) or
-                type(collector['subnet_id']) is not int or not 1 <= collector['subnet_id'] <= 2**32-1 or
+                type(collector['subnet_id']) is not int or not 1 <= collector['subnet_id'] <= 2**32-2 or
                 type(collector['vlan']) is not int or not 1 <= collector['vlan'] <= 4094 or
                 type(collector['maximum_devices']) is not int or
                 not 1 <= collector['maximum_devices'] <= 256 or
@@ -356,11 +369,126 @@ def publish_runtime(contract, profile, mapping):
               'request_socket': '/run/router-policy-ipc/requests.sock',
               'status_socket': '/run/router-policy-ipc/status.sock',
               'expected_generation': generation}
+    observer = contract.get('observer')
+    if observer is not None and observer['uid'] not in (0, reader, operator):
+        try:
+            account = pwd.getpwnam(observer['user'])
+        except KeyError:
+            account = None
+        if account is not None and (account.pw_uid, account.pw_gid) == (observer['uid'], observer['gid']):
+            try:
+                prepare_observation_directory()
+            except (OSError, ValueError):
+                pass  # Optional observations never prevent the core bootstrap.
+            else:
+                helper.update(observer_uid=observer['uid'], observations_socket=str(OBSERVATIONS))
     runtime = nat64_pin()
     if runtime is not None:
         helper['nat64_runtime'] = runtime
     atomic(CONFIG/'helper.json', helper)
     atomic(GENERATION/'generation.json', generation)
+
+
+def prepare_observation_directory(path=OBSERVATIONS.parent):
+    """Best-effort bootstrap preparation before the helper's /run sandbox."""
+    if os.geteuid() != 0:
+        raise PolicyRuntimeError('Policy observation preparation requires root.')
+    path.mkdir(mode=0o755, exist_ok=True)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
+            raise PolicyRuntimeError('Policy observation directory is unsafe.')
+        os.fchmod(descriptor, 0o755)
+    finally:
+        os.close(descriptor)
+
+
+def observation_listener(observer, path=OBSERVATIONS):
+    """Create only the core-owned optional socket; caller handles unavailability."""
+    if os.geteuid() != 0 or observer['gid'] not in {os.getegid(), *os.getgroups()}:
+        raise PolicyRuntimeError('Policy observer group is unavailable.')
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    listener = None
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o755:
+            raise PolicyRuntimeError('Policy observation directory is unsafe.')
+        try:
+            previous = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            previous = None
+        if previous is not None:
+            if (not stat.S_ISSOCK(previous.st_mode) or previous.st_uid != 0 or
+                    previous.st_gid != observer['gid'] or stat.S_IMODE(previous.st_mode) != 0o660):
+                raise PolicyRuntimeError('Policy observation path is unsafe.')
+            os.unlink(path.name, dir_fd=directory)
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(path))
+        # The owner can select one of its supplementary groups without
+        # CAP_CHOWN. The enforcing helper keeps only its existing CAP_NET_ADMIN.
+        os.chown(path.name, -1, observer['gid'], dir_fd=directory, follow_symlinks=False)
+        os.chmod(path.name, 0o660, dir_fd=directory, follow_symlinks=False)
+        listener.listen(16)
+        return listener
+    except BaseException:
+        if listener is not None:
+            listener.close()
+        raise
+    finally:
+        os.close(directory)
+
+
+def serve(contract_path=CONTRACT):
+    """Become the fixed helper, with two mandatory and at most one optional FD."""
+    if os.geteuid() != 0:
+        raise PolicyRuntimeError('Policy helper launch requires root.')
+    environment = dict(os.environ)
+    if (environment.get('LISTEN_PID') != str(os.getpid()) or environment.get('LISTEN_FDS') != '2' or
+            environment.get('LISTEN_FDNAMES') not in ('requests:status', 'status:requests')):
+        raise PolicyRuntimeError('Policy helper requires its two supervisor sockets.')
+    contract = load_contract(contract_path)
+    observer = contract.get('observer')
+    descriptor = None
+    if observer is not None:
+        listener = None
+        try:
+            helper = decode(read(CONFIG/'helper.json', 64*1024, private=True), 64*1024)
+            if (helper.get('observer_uid') != observer['uid'] or
+                    helper.get('observations_socket') != str(OBSERVATIONS)):
+                raise PolicyRuntimeError('Policy observation identity is unavailable.')
+            listener = observation_listener(observer)
+            if listener.fileno() != 5:
+                try:
+                    os.fstat(5)
+                except OSError as error:
+                    if error.errno != errno.EBADF:  # Never overwrite another live descriptor.
+                        raise
+                else:
+                    raise PolicyRuntimeError('Optional observation descriptor is occupied.')
+                os.dup2(listener.fileno(), 5, inheritable=True)
+                descriptor = 5
+                listener.close()
+            else:
+                os.set_inheritable(listener.fileno(), True)
+                descriptor = listener.detach()
+            listener = None
+        except (OSError, KeyError, TypeError, ValueError):
+            if listener is not None:
+                listener.close()
+            if descriptor is not None:
+                os.close(descriptor)
+                descriptor = None
+            print('policy-runtime: optional observations unavailable; starting enforcement', file=sys.stderr)
+    if descriptor is not None:
+        environment['LISTEN_FDS'] = '3'
+        environment['LISTEN_FDNAMES'] += ':observations'
+    try:
+        os.execve(contract['helper_executable'], [contract['helper_executable'],
+            '-config-directory', str(CONFIG), '-binding-directory', str(BINDINGS)], environment)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def install_guards(contract_path=CONTRACT):
@@ -411,13 +539,15 @@ def bindings_loop(contract_path=CONTRACT, interval=30):
 
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop'))
+    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop', 'serve'))
     args = parser.parse_args(arguments)
     try:
         if args.operation == 'install-guards':
             install_guards()
         elif args.operation == 'bootstrap':
             bootstrap()
+        elif args.operation == 'serve':
+            serve()
         else:
             bindings_loop()
     except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as error:

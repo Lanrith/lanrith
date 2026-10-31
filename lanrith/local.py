@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import uuid
 
-from . import admission, archive, config, extensions, release, trust
+from . import admission, archive, config, extensions, owner_inputs, release, trust
 
 
 @contextmanager
@@ -64,11 +64,13 @@ def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
                     'Owner directory must be canonical.')
     selection = trust.lock(owner/'platform.lock')
     value = config.load(owner/'config.yaml')
+    owner_options, owner_records = owner_inputs.load(owner, value)
     release.require(type(sequence) is int and value.get('release', {}).get('sequence_floor', 0) < sequence <= 999999999,
                     'Deployment sequence must exceed the configured floor.')
     release.require(value['hardware'].get('machine_id'), 'Initialize the permanent owner machine identity first.')
     pins = consumer().integration_pins(owner, value)
     names = {'config.yaml', 'platform.lock', 'trust/boot.crt'}
+    names.update(owner_records)
     release.public_key(owner/'trust/boot.crt')
     if (owner/'extensions.lock').exists():
         names.add('extensions.lock')
@@ -82,6 +84,8 @@ def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
                         'Owner input has a linked parent.')
         records[name] = {**release.file_record(path), 'mode': stat.S_IMODE(path.stat().st_mode)}
     integration_digests = {name: pin[1] for name, pin in pins.items()}
+    release.require(all(all(records[name][key] == expected for key, expected in record.items())
+                        for name, record in owner_records.items()), 'Owner build inputs changed during admission.')
     serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
     result = {'schema': 1, 'purpose': 'local-owner-build', 'deployment_sequence': sequence,
             'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
@@ -101,7 +105,9 @@ def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
     if boot_options is not None or build_inputs.digest_fields(boot_record):
         result['boot_inputs'] = boot_record
     result['effective_configuration_sha256'] = config.effective_digest(value, integration_digests,
-        serial_digest, boot_inputs=build_inputs.digest_fields(boot_record))
+        serial_digest, boot_inputs=build_inputs.digest_fields(boot_record), **owner_options)
+    if owner_records:
+        result['owner_inputs'] = owner_records
     return result
 
 
@@ -150,13 +156,7 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
     release.require(Path('/dev/shm').is_mount(), 'Signing requires a private tmpfs.')
     work.mkdir(mode=0o700, parents=True)
     snapshot, tools = work/'owner', work/'tools'
-    snapshot.mkdir(mode=0o700)
-    for name, record in actual['files'].items():
-        target = snapshot/name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(owner/name, target)
-        target.chmod(record['mode'])
-        release.require(release.file_record(target)['sha256'] == record['sha256'], 'Owner input changed during snapshot.')
+    owner_inputs.snapshot(owner, snapshot, actual['files'])
     tools.mkdir(mode=0o700)
     tools_archive = work/'platform-tools.tar.gz'
     shutil.copyfile(platform/'tools.tar.gz', tools_archive)
@@ -193,6 +193,7 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
             'effective_configuration_sha256': actual['effective_configuration_sha256'],
             'serial_provisioning_sha256': actual['serial_provisioning_sha256'],
             'integration_digests': actual['integration_digests'], 'assessment_sha256': actual['assessment_sha256'],
+            **({'owner_inputs': actual['owner_inputs']} if 'owner_inputs' in actual else {}),
             **({'boot_inputs': actual['boot_inputs']} if 'boot_inputs' in actual else {})}))
         (private/'admitted.json').chmod(0o600)
         # Normalize ownership inside this isolated mount only. Rootless Podman's

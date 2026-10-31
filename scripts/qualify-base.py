@@ -34,6 +34,31 @@ CHECKS = {
         'elevation-tools-absent', 'privileged-file-paths-absent', 'source-configuration-absent',
         'unprivileged-upload-staging'},
 }
+LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
+    'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
+    'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
+    'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations'}
+DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
+    'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
+    'reader-and-observer-exact-egress', 'other-identities-destination-port-source-interface-denied',
+    'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
+DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
+    'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
+    'lanrith/config.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
+    'tests/test_directory.py', 'tests/test_policy_agent.py', 'tests/test_intent.py'}
+CREDENTIAL_CHECKS = {'generated-unit-verification', 'operator-uid-socket-stage-and-commit',
+    'unauthorized-uid-and-root-denied', 'malformed-input-preserves-consumers',
+    'failed-requests-collected',
+    'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
+    'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
+    'active-completion-observer-not-stopped'}
+CREDENTIAL_IMPLEMENTATION = {'lanrith/credential_operation.py', 'lanrith/credential_config.py',
+    'lanrith/credential_store.py', 'lanrith/credential_values.py', 'lanrith/build.py',
+    'lanrith/runtime.py', 'lanrith/image_operation.py', 'lanrith/config.py', 'tests/test_intent.py',
+    'scripts/qualify-credentials.py', 'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_credentials.py',
+    'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',
+    'mkosi/base/mkosi.extra/usr/lib/lanrith/credential_runtime.py',
+    'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py'}
 
 
 def value(path):
@@ -78,6 +103,58 @@ def qualify(directory, project, environment, *, now=None):
     require(storage.get('result') == 'pass' and storage.get('test') == 'factory-slot-expansion' and
             storage.get('initial_partitions') == 4 and storage.get('expanded_partitions') == 8,
             'Matching-builder signed storage expansion did not pass.')
+    logs = value(directory/'logs-qualification.json')
+    custom = value(directory/'custom-security.json')
+    require(logs.get('schema') == 1 and logs.get('result') == 'pass' and
+            logs.get('test') == 'offline-journal-https-outage' and set(logs.get('checks', [])) == LOG_CHECKS and
+            logs.get('source_sha256') == file_record(project/'tests/logs_native.py')['sha256'] and
+            logs.get('alloy_sha256') == custom.get('components', {}).get('alloy', {}).get('binary_sha256') and
+            logs.get('queue_capacity_bytes') == 67108864 and 0 < logs.get('overflow_records', 0) and
+            0 < logs.get('queue_physical_bytes', 0) <= 160*1024*1024 and
+            logs.get('delivered_batches', 0) > 0,
+            'Native journal delivery qualification is incomplete or describes another exporter.')
+    stamp = datetime.datetime.fromisoformat(logs['assessed_at'])
+    require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
+            'Native journal delivery qualification is stale or future-dated.')
+    implementation = logs.get('implementation_sha256', {})
+    require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py'} and
+            all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
+            'Log delivery implementation changed after native qualification.')
+    directory_tls = value(directory/'directory-qualification.json')
+    require(directory_tls.get('schema') == 1 and directory_tls.get('result') == 'pass' and
+            directory_tls.get('test') == 'offline-directory-tls-egress' and
+            set(directory_tls.get('checks', [])) == DIRECTORY_CHECKS and
+            directory_tls.get('external_network') is False and
+            directory_tls.get('source_sha256') == file_record(project/'tests/directory_native.py')['sha256'],
+            'Native directory qualification is incomplete or describes different tests.')
+    stamp = datetime.datetime.fromisoformat(directory_tls['assessed_at'])
+    require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
+            'Native directory qualification is stale or future-dated.')
+    implementation = directory_tls.get('implementation_sha256', {})
+    require(set(implementation) == DIRECTORY_IMPLEMENTATION and
+            all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
+            'Directory implementation changed after native qualification.')
+    credentials = value(directory/'credential-qualification.json')
+    require(type(credentials.get('schema')) is int and credentials['schema'] == 1 and
+            credentials.get('result') == 'pass' and credentials.get('test') == 'offline-systemd-credential-provisioning' and
+            isinstance(credentials.get('checks'), list) and all(isinstance(check, str) for check in credentials['checks']) and
+            set(credentials['checks']) == CREDENTIAL_CHECKS and credentials.get('external_network') is False and
+            credentials.get('container_cleanup') == 'removed' and credentials.get('private_image_qualified') is False and
+            isinstance(credentials.get('container_runtime'), str) and credentials['container_runtime'] in ('docker', 'podman') and
+            isinstance(credentials.get('builder_image_sha256'), str) and
+            re.fullmatch(r'[0-9a-f]{64}', credentials['builder_image_sha256']) and
+            credentials.get('source_sha256') == file_record(project/'tests/credentials_native.py')['sha256'],
+            'Native credential qualification is incomplete or describes different tests.')
+    try:
+        stamp = datetime.datetime.fromisoformat(credentials['assessed_at'])
+    except (KeyError, TypeError, ValueError):
+        require(False, 'Native credential qualification timestamp is invalid.')
+    require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
+            'Native credential qualification is stale or future-dated.')
+    implementation = credentials.get('implementation_sha256', {})
+    require(isinstance(implementation, dict) and set(implementation) == CREDENTIAL_IMPLEMENTATION and
+            all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
+            'Credential implementation changed after native qualification.')
     assessment = value(project/'security/slsa-assessment.json')
     require(assessment.get('schema') == 1 and assessment.get('specification') == 'SLSA v1.2' and
             assessment.get('target') == 'Build L3' and assessment.get('result') == 'design-assessed' and
@@ -119,6 +196,9 @@ def qualify(directory, project, environment, *, now=None):
         'assessed_at': now.isoformat(), 'assessment': assessment,
         'native_sha256': file_record(directory/'native-qualification.json')['sha256'],
         'storage_sha256': file_record(directory/'storage-qualification.json')['sha256'],
+        'logs_sha256': file_record(directory/'logs-qualification.json')['sha256'],
+        'directory_sha256': file_record(directory/'directory-qualification.json')['sha256'],
+        'credentials_sha256': file_record(directory/'credential-qualification.json')['sha256'],
         'filesystem_sha256': file_record(directory/'lanrith-base.tar.gz')['sha256'],
         'initrd_sha256': file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
         'requires_consumer_verified_file_and_oci_provenance': True}

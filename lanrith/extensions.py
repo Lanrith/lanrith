@@ -7,6 +7,7 @@ import shutil
 import stat
 
 from .release import HEX, canonical, file_record, read, require, unique
+from . import extension_network, extension_observations
 
 
 PROTECTED = (
@@ -54,7 +55,7 @@ def admit(directory, expected):
     value = json.loads(read(directory / 'extension.json', 1024 * 1024), object_pairs_hook=unique)
     required = {'schema', 'id', 'features', 'health_units', 'files'}
     require(isinstance(value, dict) and required <= set(value) <= required | {
-                'replaces', 'identities', 'health_units_by_feature'} and
+                'replaces', 'identities', 'health_units_by_feature', 'start_units', 'network', 'observations'} and
             value['schema'] == 1 and isinstance(value['id'], str) and
             re.fullmatch(r'[a-z][a-z0-9-]{0,47}', value['id']), 'Invalid integration manifest.')
     require(isinstance(value['features'], list) and len(value['features']) <= 32 and
@@ -69,7 +70,16 @@ def admit(directory, expected):
                 all(health_unit(unit) for unit in units) for units in by_feature.values()),
             'Invalid per-feature health units.')
     require(isinstance(value['files'], dict) and 0 < len(value['files']) <= 4096, 'Invalid integration inventory.')
-    identity_declarations(value.get('identities', {}))
+    identities = identity_declarations(value.get('identities', {}))
+    extension_network.declarations(value.get('network', {}), identities)
+    extension_observations.declarations(value.get('observations', []), identities)
+    start_units = value.get('start_units', [])
+    require(isinstance(start_units, list) and len(start_units) <= 64 and
+            all(isinstance(unit, str) and re.fullmatch(
+                r'[A-Za-z0-9_][A-Za-z0-9_.@-]{0,127}\.(service|socket|timer|target)', unit) and
+                '@.' not in unit and
+                'usr/lib/systemd/system/'+unit in value['files'] for unit in start_units) and
+            len(set(start_units)) == len(start_units), 'Invalid integration start units.')
     replaces = value.get('replaces', [])
     require(isinstance(replaces, list) and len(replaces) == len(set(replaces)) and
             all(isinstance(name, str) and name in value['files'] and
@@ -111,7 +121,8 @@ def admit(directory, expected):
 
 def overlay(configuration, selected, destination, base_files=None):
     require(set(selected) == set(configuration['extensions']), 'Integration selections differ from configuration.')
-    units, digests, written, identities = [], {}, set(), []
+    units, digests, written, identities, starts, declarations, replaced = [], {}, set(), [], [], [], set()
+    observations = []
     for identity in sorted(selected):
         directory, expected = selected[identity]
         value = admit(directory, expected)
@@ -139,8 +150,23 @@ def overlay(configuration, selected, destination, base_files=None):
             written.add(name)
         if active or not value['features']:
             units.extend(value['health_units'])
+            starts.extend(value.get('start_units', []))
+            declarations.append(extension_network.declarations(value.get('network', {}), identities[-1]))
+            observations.append(extension_observations.declarations(value.get('observations', []), identities[-1]))
+        replaced.update(value.get('replaces', []))
         digests[identity] = expected
-    return {'digests': digests, 'health_units': sorted(set(units)), 'identities': identities}
+    extension_observations.install(configuration, observations, destination)
+    plan = extension_network.resolve(configuration, declarations)
+    if any(plan.values()):
+        require('etc/nftables.conf' not in replaced,
+                'Typed integration networking cannot combine with a whole-firewall replacement.')
+        from . import firewall, service_plane
+        (destination/'etc/nftables.conf').write_text(firewall.render(configuration, extension_rules=plan))
+        if plan['services']:
+            (destination/'etc/lanrith/services.nft').write_text(service_plane.namespace_firewall(
+                configuration, service_plane.topology(configuration), extension_rules=plan))
+    return {'digests': digests, 'health_units': sorted(set(units)), 'identities': identities,
+            'start_units': sorted(set(starts))}
 
 
 def identity_declarations(value):

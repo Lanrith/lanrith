@@ -169,9 +169,7 @@ def runtime_contract(value):
         admission = value['networks'][admission_key]
         ipv4 = next(ip.ip_interface(address).network for address in admission['addresses']
                     if ip.ip_interface(address).version == 4)
-        subnet_id = next(index for index, (key, _) in enumerate(
-            ((key, network) for key, network in value['networks'].items() if 'dhcp4' in network), 1)
-                         if key == admission_key)
+        subnet_id = intent.dhcp4_ids(value)[admission_key]
         attachment = value['hardware']['interfaces'][admission['interface']]['name']
         collector = {
             'radius_user': 'freerad',
@@ -210,12 +208,14 @@ def runtime_contract(value):
     }
 
 
-def render(value):
+def render(value, *, observer=None):
     """Emit private runtime policy and complete public service ownership."""
     policy = value.get('identity', {}).get('policy', {})
     if not policy.get('enabled', False):
         return {}
     contract = runtime_contract(value)
+    if observer is not None:
+        contract['observer'] = observer
     reference = contract['directory']['credential_name']
     credential = bindings.credential_path(value, reference)
     translators = []
@@ -264,6 +264,9 @@ def render(value):
         'RestrictAddressFamilies='+binding_families+'\n'
         'RestrictNamespaces=yes\nRestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
         'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n')
+    helper_start = ('/usr/lib/lanrith/policy-runtime serve' if observer is not None else
+                    '/usr/bin/router-policy-helper -config-directory /run/lanrith-policy/config '
+                    '-binding-directory /run/lanrith-policy/bindings')
     helper = (
         '[Unit]\nDescription=Enforce image-bounded directory policy\n'
         'Wants=lanrith-policy-reader.service\n'
@@ -271,19 +274,21 @@ def render(value):
         'lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket\n'
         'After=lanrith-policy-bootstrap.service lanrith-policy-bindings.service '
         'lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket\n\n'
-        '[Service]\nType=exec\nEnvironment=GOMAXPROCS=2 GOMEMLIMIT=400MiB\n'
-        'ExecStart=/usr/bin/router-policy-helper -config-directory /run/lanrith-policy/config '
-        '-binding-directory /run/lanrith-policy/bindings\n'
+        '[Service]\nType=notify\nNotifyAccess=main\nTimeoutStartSec=100s\n'
+        'Environment=GOMAXPROCS=2 GOMEMLIMIT=400MiB\n'
+        'ExecStart='+helper_start+'\n'
         'ExecStopPost=-/usr/bin/router-policy-recover -config-directory /run/lanrith-policy/config -timeout 5s\n'
         'Sockets=lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket\n'
         'Restart=on-failure\nRestartSec=2s\nTimeoutStopSec=10s\nUser=root\nGroup=root\nUMask=0077\n'
         'NoNewPrivileges=yes\nCapabilityBoundingSet=CAP_NET_ADMIN\nProtectSystem=strict\nProtectHome=yes\n'
         'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
         'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'
-        'ReadWritePaths=/run/lanrith-policy /var/lib/lanrith/policy-agent\n'
+        'ReadWritePaths=/run/lanrith-policy /var/lib/lanrith/policy-agent'+
+        (' -/run/lanrith-policy-observations' if observer is not None else '')+'\n'
         'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\nRestrictRealtime=yes\n'
         'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=512M\nMemorySwapMax=0\n'
-        'TasksMax=64\nLimitNOFILE=4096\n')
+        'TasksMax=64\nLimitNOFILE=4096\n'+
+        (f'SupplementaryGroups={observer["gid"]}\n' if observer is not None else ''))
     reader = (
         '[Unit]\nDescription=Read fresh directory policy over verified TLS\n'
         'Requires=lanrith-policy-helper.service\nAfter=lanrith-policy-helper.service systemd-networkd.service\n\n'

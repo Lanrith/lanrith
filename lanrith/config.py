@@ -460,6 +460,8 @@ def render(value, *, target_facts=None, retained_allocations=None):
         files[f'etc/systemd/network/25-{parent}-trunk.network'] = (
             f'[Match]\nName={parent}\n\n[Network]\nLinkLocalAddressing=no\n' +
             ''.join(f'VLAN={vlan}\n' for vlan in vlans))
+    from . import directory_config
+    files['etc/hosts'] += directory_config.hosts(value)
     files['etc/nftables.conf'] = firewall.render(value)
     if value['services'].get('dhcp4', {}).get('enabled'):
         scopes = []
@@ -467,7 +469,7 @@ def render(value, *, target_facts=None, retained_allocations=None):
             if 'dhcp4' not in network:
                 continue
             address = next(ipaddress.ip_interface(a) for a in network['addresses'] if ':' not in a)
-            scopes.append({'id': len(scopes) + 1, 'subnet': str(address.network), 'interface': network['name'],
+            scopes.append({'id': network['dhcp4']['id'], 'subnet': str(address.network), 'interface': network['name'],
                            'pools': [{'pool': pool} for pool in network['dhcp4']['pools']],
                            'reservations': [{('hw-address' if k == 'mac' else 'ip-address' if k == 'address' else k): v
                                              for k, v in entry.items()} for entry in network['dhcp4'].get('reservations', [])],
@@ -482,6 +484,12 @@ def render(value, *, target_facts=None, retained_allocations=None):
             'valid-lifetime': 3600, 'subnet4': scopes}
         if value.get('identity', {}).get('radius', {}).get('enabled', False):
             dhcp4['control-socket'] = {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
+            # The qualified x86-64 Kea package supplies the commands used by
+            # the bounded admission collector. A socket alone cannot serve them.
+            dhcp4['hooks-libraries'] = [{'library': '/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so'}]
+            files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'] = (
+                '[Service]\nExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n'
+                'TimeoutStartSec=20s\n')
         files['etc/kea/kea-dhcp4.conf'] = json.dumps({'Dhcp4': dhcp4}, indent=2) + '\n'
     files.update(service_plane.render(value))
     files.update(authoritative.render(value))
@@ -490,12 +498,15 @@ def render(value, *, target_facts=None, retained_allocations=None):
     files.update(nat64.render(value, retained_allocations))
     files.update(ids.render(value))
     files.update(metrics.render(value))
+    files.update(directory_config.render(value))
     files.update(radius.render(value))
     files.update(logs.render(value))
     files.update(discovery.render(value, retained_allocations))
     from . import snmp
     files.update(snmp.render(value))
     files.update(bindings.render(value))
+    from . import credential_config
+    files.update(credential_config.render(value))
     files.update(hardware_policy.ownership_files(value, target_facts))
     files.update(fancontrol_config.render(value))
     if value.get('identity', {}).get('policy', {}).get('enabled', False):

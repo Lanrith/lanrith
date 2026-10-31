@@ -180,6 +180,22 @@ keys, snapshots owner inputs, then runs mkosi with networking disabled. It
 retains independently verified `update/` and `factory/` directories. Keep the
 workspace private: it contains the effective owner configuration.
 
+The owner directory can also contain `hardware-facts.json` and
+`translation-allocations.json`. The first supplies verified target facts for
+ownership declarations; the second preserves explicitly selected translator
+source assignments. Each is a strict JSON object of at most 1 MiB. Preflight
+validates its meaning, records its bytes and digest, and binds the resulting
+configuration identity. Local and hosted assembly use the same input contract.
+Changed, missing or substituted companion files invalidate the request before
+signing. Independent private evidence checks them again. The signing snapshot
+contains these build inputs; the deployed root and initrd do not.
+
+The shared snapshot helper opens each source through directory handles and
+rejects file or parent symlinks, hard links, changed modes and changed bytes.
+It copies only the admitted file sizes, preserves reviewed modes, and removes
+its own partial destination on failure. Controllers revalidate the resulting
+snapshot before opening signing material and mount that snapshot for assembly.
+
 Signing uses private tmpfs and an owned container. Cleanup stops that container
 before removing keys; an unavailable container engine retains the owned tmpfs
 for recovery. The local path does not claim hosted SLSA qualification for the

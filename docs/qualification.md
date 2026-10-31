@@ -31,15 +31,93 @@ Do not transplant qualification claims from an earlier repository or release.
 `tests/packets.py` exercises the generated firewall using real IPv4 and IPv6
 connections in disposable namespaces. It checks management access, unsolicited
 uplink traffic, inter-network isolation, directional port grants, disabled
-service ports, spoof rejection, NAT44 and IPv6 source preservation. These
+service ports, spoof rejection, NAT44 and IPv6 source preservation.
+It also checks arbitrary extension listeners, managed metrics access by UID,
+wrong ingress, OOB boundaries, a forged managed-host source, stale-tuple reuse
+by another UID, undeclared egress and removal of new-connection permission. These
 results cover the generic compiler policy. Advanced integrations and physical
 hardware still need their own candidate-specific tests.
+
+The required native parser check also runs `tests/dhcp_native.py`. In private
+mount/network namespaces it loads an older-schema synthetic Kea lease file with
+an explicit subnet ID, checks native assigned-address counts before renewal,
+receives DHCPACK, restarts Kea and repeats. It verifies that the lease retains
+its ID, that canonical owner snapshots preserve it and that Kea accepts the
+supported upper bound. Actual owner lease import and populated-image upgrade/
+rollback still require the corresponding owner artifacts and state.
+
+`tests/extensions_native.py --result /output/extension-systemd.json` requires an
+uninitialized, offline container with systemd as PID 1. It verifies the generated
+optional starter, the observer's actual oneshot lifecycle and systemd's unchanged
+global failed-unit check. A synthetic optional service fails after core acceptance;
+a separate core failure still prevents acceptance. The fixture resets only four
+allow-listed container-only kernel mount failures and records any such resets.
+It does not qualify an extension application, full-image startup or physical boot.
 
 `tests/storage.py` creates a signed synthetic EROFS image and expands it with
 the matching builder's `systemd-repart`. It verifies that the second slot and
 state appear without moving or changing signed data, hashes or signatures.
 It uses regular files and a disposable test authority. TPM and encrypted-state
 boot behavior remain separate qualification requirements.
+
+`tests/logs_native.py` qualifies the selected Alloy binary in an offline
+namespace. It imports a synthetic systemd journal, checks redaction and
+self-log exclusion, exceeds the production 64 MiB logical queue, kills and
+restarts the exporter, then verifies delivery to an authenticated HTTPS
+collector with a disposable CA. Overflow rejects records; this test does not
+promise lossless delivery. Physical queue storage has a separate tested bound
+of 160 MiB. The result records the binary and implementation digests and is a
+required, provenance-bound input to base qualification and consumer admission.
+
+The generated `alloy.service` uses notify readiness and a watchdog. Its
+supervisor requires every root graph component to be healthy before reporting
+readiness and exits if a component fails later. Alloy's HTTP readiness and
+health endpoints alone are insufficient: they can return success after the
+exporter component has exited. An unavailable remote collector uses the retry
+queue and does not by itself make the component graph unhealthy.
+
+Alloy retains its state under `/var/lib/lanrith/alloy`. Its unit exposes that
+directory at `/var/lib/lanrith-alloy` inside the service's mount namespace, so
+the unprivileged exporter can use it while `/var/lib/lanrith` remains root-only.
+The native test exercises that mount and permission boundary separately from
+the journal delivery pipeline. It also verifies that the supervisor's queue and
+failure observations reach a capability-free reader through the exporter group,
+while that reader cannot read the exporter credential and unrelated service
+identities cannot read the observation. The health collector rejects stale or
+previous-boot observations; it does not replace unavailable counters with zero.
+
+`tests/directory_native.py` qualifies the directory reader's generated host
+egress and the separate TLS observer in an offline namespace. Synthetic peers
+exercise both address families, LDAPS, StartTLS, incorrect names and authorities,
+expired certificates, plaintext refusal and slow peers. Working alternate
+listeners and interfaces provide positive controls before enforcement denies
+other users, sources, destinations, ports and egress interfaces. The probe sends
+no LDAP Bind request. StartTLS framing follows
+[RFC 4511 section 4.14](https://www.rfc-editor.org/rfc/rfc4511#section-4.14).
+The result binds the test, fixture, compiler and runtime digests, and is required
+by base qualification and consumer admission. Actual directory authentication,
+grants and the owner's complete image remain separate qualification work.
+
+`scripts/qualify-credentials.py` runs the generated credential socket and units
+under systemd in an offline disposable container. It resolves the reviewed local
+builder to an immutable image ID, mounts public source read-only, and supplies
+no owner input, key, physical disk, daemon socket or host cgroup bind. Readiness
+polls the same container through transient observation failures; the runner
+does not restart it. A timeout or failed cleanup cannot publish a passing result.
+
+`tests/credentials_native.py` checks operator staging/confirmation, rejected
+root and unrelated users, unchanged consumers after malformed input, native
+LoadCredential bytes, an empty capability set, no-new-privileges, INET/write
+denial and an uninterrupted completion observer. Completed failed requests are
+collected. Its consumer and completion observer are synthetic; actual SSH,
+encryption, backend authentication and full owner-image update/recovery still
+need their own evidence.
+
+Base qualification requires `credential-qualification.json` with all checks,
+matching test/runtime/runner digests, confirmed cleanup and an assessment no older
+than six hours. The qualification record and consumer admission bind its digest
+to the authenticated release asset. Local or pull-request results cannot set the
+production qualification flag.
 
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
