@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Choose the next patch version without overwriting a published tag."""
+"""Choose a patch version without reusing published or draft reservations."""
 import json
 import os
 from pathlib import Path
@@ -18,10 +18,19 @@ result = subprocess.run(['gh', 'api', '--paginate', '--slurp',
 pages = json.loads(result.stdout)
 if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
     raise ValueError('Published release enumeration is malformed.')
-published = [version(item['tag_name'][1:]) for page in pages for item in page
-             if not item['draft'] and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
+releases = [item for page in pages for item in page
+            if re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', item['tag_name'])]
+published = [version(item['tag_name'][1:]) for item in releases if not item['draft']]
 if published and desired <= max(published):
     last = max(published)
+    desired = (last[0], last[1], last[2]+1)
+# A partial upload can leave an unpublished draft tied to another source.
+# Preserve that reservation and its evidence. Future-major drafts must not
+# move this build to another release series before that series is published.
+reserved = [version(item['tag_name'][1:]) for item in releases
+            if version(item['tag_name'][1:])[:2] == desired[:2]]
+if reserved and desired <= max(reserved):
+    last = max(reserved)
     desired = (last[0], last[1], last[2]+1)
 selected='.'.join(map(str, desired))
 Path(os.environ['RUNNER_TEMP']+'/lanrith-version').write_text(selected+'\n')

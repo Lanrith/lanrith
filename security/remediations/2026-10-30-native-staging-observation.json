@@ -1,0 +1,307 @@
+{
+  "approval": "Fresh actual independent human GitHub review of the final head is required. Request it only after all required exact-head/current-base builds pass.",
+  "authenticated_inputs": {
+    "candidate_id": "159f77882917f20efb05c485687e6c0c98f661c9f5acd02c17e21898d0f32d76",
+    "changes": {
+      "build-inputs.json": {
+        "after_sha256": "be5ca5d8b0a0b41a0c55c230d6df78bc8662074b8ef439e96974f4ab4028efa2",
+        "before_sha256": "d89ea6658b5fe5fa6a64e1b56bd364ab4e4ae16b96806a6445856bbf336c52d9"
+      },
+      "builders/build-inputs.lock": {
+        "after_sha256": "f1e89e5f5e61b1453f7f66e6f849b00066d1de721494b3bc3ed901b7c6139f14",
+        "before_sha256": "353e3430cffb30a78a6482968dc8daf044ad73bc571f861df584c7dc55e49a34"
+      },
+      "security/policy.json": {
+        "after_sha256": "90134df41556dbe997b7914ee127f221eda35ca16d5df79eda3ae740f7d193a5",
+        "before_sha256": "663a457d02ada2c401f9fc9318b7c22c93aec3124325bbeab1053d25841240f6"
+      }
+    },
+    "checkpoint": "https://github.com/Lanrith/lanrith/releases/tag/audit-pr35-dpdk-security-20261030T194513Z",
+    "proposal_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-proposal-41117133631-1",
+    "reasons": [
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "7c0cac5ed936984d972e51e6628c32cecfd13ddbef47262b4b6c4a0dec1a7ce7",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-100236",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "7b692c21eaa6c767ec0c98f35f76ec15617b09d28193f06687ff9460e1f3fdf7",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86561",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "bdd6637d622ee3f06904f8fcc2a7eac7fdcbf82c8ce40fe7a7dd6e502acccc21",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86562",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "d2fe18ba0f6651b3439fcf94f63004ec1aa234cf8b030fd7447b1a6eb0fdbb79",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86563",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "ab832057789019eb4bccc2781cd8516de75f064c558aa2f1597774936a65471d",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86564",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "dc424bcb0a731f21ac7a33e89e06c4cf9f55334f11b69abd5f7ac3a624a78ad4",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86565",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "cce3c1dd18eb963e843779200909a27b9985ce8cb433e37c17c9dd25ca0a838a",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86566",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "de171e4a32b1e999a4aa6fd7ec4531e9b29cea55b59eaae5d7f7b014a087b2af",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86567",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "8654de35b89c45582d2c7583c48124ef702c8d8b66ab67d75f528de87f6eeabc",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86845",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "d1ef8572e35dd74c854a21aff844bc2b02158a70eea6db2dbd8e60ce8a59cd07",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86846",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "1de97128498c4ec54acc878b26a0efa537aa188d10d3103faf9016b768fae92d",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86847",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "d69160e8cc09353b7e7fe78ecdc47adb39d749e258e6bc1aef8c9b694960cf5a",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86848",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "45a4061ca7e7f02f2a4c9f4b0a27384bec34e8a8d96079640ef7c556f9c5e1b2",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86849",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "22b0fa56adbb8cdca68be0fbb00f38f8dcf1743086d5f826a2a1dac41b0998c4",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-86856",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Debian",
+        "evidence_sha256": "f0142e04758474571a30266c7e4d69d606c930f708327e2520a99ad7a3d6a5b3",
+        "fixed": "24.11.8-0+deb13u1",
+        "id": "CVE-2026-93683",
+        "installed": "24.11.4-0+deb13u1",
+        "package": "dpdk",
+        "source": "https://security-tracker.debian.org/tracker/data/json",
+        "type": "debian-security-fix"
+      },
+      {
+        "ecosystem": "Lanrith",
+        "evidence_sha256": "d8aad37d75e35611859cc4177980c674d003daad822da86cefb7e47151632d06",
+        "fixed": "v0.1.7",
+        "id": "Lanrith/discovery-bridge@v0.1.7",
+        "installed": "v0.1.6",
+        "package": "discovery-bridge",
+        "source": "https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.7",
+        "type": "qualified-component-update"
+      },
+      {
+        "ecosystem": "Lanrith",
+        "evidence_sha256": "b7330efe25bbfff3a5b3eacc9fe89dbc154b134dc9791243498c32d218acbd3f",
+        "fixed": "v0.1.9",
+        "id": "Lanrith/router-policy-agent@v0.1.9",
+        "installed": "v0.1.8",
+        "package": "router-policy-agent",
+        "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.9",
+        "type": "qualified-component-update"
+      }
+    ],
+    "scope": "Historical signed input selection included by the original PR42 head. PR35 subsequently merged independently with the later22:00 snapshot; this updated source repair preserves that merged snapshot exactly and only refreshes the Alloy package recipe hashes and local package revision."
+  },
+  "base_commit": "e79b0a8e7b1e2984778f7310ed772c2555d22141",
+  "created_at": "2026-10-30T22:07:36.145825+00:00",
+  "deployment_status": "Updated source and major dependency repair prepared for fresh full CI and actual independent human review. No approval, merge or production release is claimed for the new head. PR35 already merged independently; do not replay or close it as superseded.",
+  "failure": {
+    "compilation": "pass",
+    "debian_security": "pass; actionable_findings=0",
+    "head": "e2fe0a7acd78f9f767863a83a3e9b091a7284dc7",
+    "job": 124305380141,
+    "log_sha256": "67627a5bb6864818a53a89556d421a626f61459035643b069eee08dc8e95460e",
+    "native": "Did not observe the inactive-slot write before interruption.",
+    "native_report_sha256": "292ab8e2c0d1526e7edf45984b608a0ff9106e0879619cf6a7f262b3a1faed9f",
+    "pull_request": 35,
+    "run": 41117624534
+  },
+  "kind": "native-staging-fault-observation-repair",
+  "merged_security_baseline": {
+    "actual_independent_app_review": 5720355796,
+    "candidate_id": "278291ee4c56850530677bf3ffc1466289dc25522657001621aefa597cb2bfa0",
+    "head": "e60088c7cc2742dd5c225cbed4df08058b90a901",
+    "merge_commit": "e79b0a8e7b1e2984778f7310ed772c2555d22141",
+    "pull_request": 35,
+    "security_snapshot": "20261030T220000Z",
+    "signed_decision": "https://github.com/Lanrith/lanrith/releases/tag/audit-decision-41155112917-1"
+  },
+  "paid_ai": false,
+  "preceding_source_review": {
+    "actual_human_review": 5721946304,
+    "check_run": 41136184419,
+    "head": "e440c297e2abd307232def7744338414470cd01d",
+    "native_qualification_result": "success",
+    "native_qualification_run": 41136184416,
+    "scope": "Historical real approval and CI on the original source/input subject; they do not approve or qualify the updated head.",
+    "submitted_at": "2026-10-31T08:12:13Z"
+  },
+  "protection_bypass": false,
+  "reason": "The native fault observer used a90-second deadline starting before full staging authentication and recovery admission, repeatedly queried GPT through new guest SSH/PAM sessions, and left child output pipes undrained. It reached the deadline while the foreground stage command was still running. The old report does not identify the precise guest phase or prove which of these observation constraints dominated.",
+  "release_version_repair": {
+    "actual_read_only_allocation": "0.1.15",
+    "draft_release_id": 429122148,
+    "local_regression": {
+      "after": "pass",
+      "before_failures": 3,
+      "tests": 6
+    },
+    "publication_claimed": false,
+    "reason": "Root38 publication41049477297 stopped during asset upload, leaving draft v0.1.14 with10assets tied to source1128615. Ignoring drafts in next-version would allocate that same version to a later source.",
+    "repair": "Treat existing same-series release drafts as reservations, preserve future-major release-series behavior and all existing draft bytes. No deletion, clobber or source reuse.",
+    "reserved_draft": "v0.1.14",
+    "reserved_source": "1128615ece3235c9b5964ac974386be71b8d8389"
+  },
+  "repair": [
+    "Observe the actual disposable raw GPT on the host within the existing900-second normal staging budget.",
+    "Require initially populated slots and exactly one accepted partition for each role; reject changes to accepted partitions, other partitions or target geometry.",
+    "Cut guest power only while staging is still alive and a previously populated inactive partition actually becomes_empty.",
+    "Drain child output into temporary files and retain bounded transaction metadata without guest output or credentials.",
+    "Keep existing signature, admission, boot health, persistent-state, resume and fallback checks required."
+  ],
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "ui_security_fix": {
+    "advisory": "GHSA-g3hv-75wg-m249",
+    "advisory_source": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+    "alloy_commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
+    "compatibility": {
+      "eslint": "pass",
+      "production_build": "pass",
+      "unit_tests": {
+        "failed_suites": 1,
+        "failure": "Unknown file extension .css in @xyflow/react/dist/style.css",
+        "passed": 12,
+        "same_failure_reproduced_with_original_lock": true
+      }
+    },
+    "direct_package_versions_unchanged": true,
+    "fixed_package": "minimatch@11.0.1",
+    "install_hooks_disabled": true,
+    "kind": "verified-fixed-alloy-ui-minimatch-major-security-compatibility",
+    "limits": "No full UI unit-suite pass is claimed. The CSS suite failure exists on the unchanged baseline. Full hosted package/security/native qualification and fresh actual human approval remain required.",
+    "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
+    "npm_audit_vulnerabilities": 0,
+    "old_versions": [
+      "3.1.5",
+      "10.2.6"
+    ],
+    "package_manifest_change": "Add exact overrides.minimatch=11.0.1; retain existing overrides and scripts.",
+    "registry_signature_verification": "verified-minimatch-security-registry-signature.json",
+    "result": "pass-with-existing-upstream-test-limitation",
+    "schema": 1,
+    "verified_at": "2026-10-31T20:31:28.704375+00:00"
+  },
+  "updated_at": "2026-10-31T20:31:28.704375+00:00",
+  "validation": {
+    "focused": {
+      "method": "Real disposable GPT files and asynchronous child processes; reject early exit, no write, active-slot mutation and preexisting emptiness; delayed admission and full output buffers succeed only after an actual inactive write.",
+      "passed": 7,
+      "result": "pass",
+      "tests": 7
+    },
+    "full_suite": {
+      "existing_environment_skips": 15,
+      "passed": 840,
+      "result": "pass",
+      "tests": 855
+    },
+    "hosted_native": "Required on the final source PR head; not claimed by local tests.",
+    "normal_ui_resolver_replay": {
+      "changed": false,
+      "mocked_verifiers": false,
+      "result": "pass",
+      "state": "current"
+    }
+  }
+}
