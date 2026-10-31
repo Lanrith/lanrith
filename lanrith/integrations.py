@@ -390,6 +390,16 @@ def validate(value):
 def require_runtime(value, target_facts=None):
     """Keep contracts from being mistaken for admitted runtime implementations."""
     missing = []
+    if value.get('identity', {}).get('policy', {}).get('enabled', False):
+        from . import service_plane
+        # The pinned helper rejects an empty post-NAT source projection. Do
+        # not let validate/render claim that such a profile can be assembled.
+        dynamic_clients = any(not path['addresses'] for path in intent.uplink_nat(value))
+        dynamic_services = any(path['masquerade'] and not path.get('translated_addresses')
+                               for path in service_plane.egress(value))
+        if dynamic_clients or dynamic_services:
+            missing.append('directory policy with dynamic uplink source translation '
+                           '(select static addresses for translated uplink families)')
     if (value.get('routing', {}).get('asymmetric_replies') and
             not value.get('identity', {}).get('policy', {}).get('enabled', False)):
         missing.append('asymmetric replies without the policy guard runtime')

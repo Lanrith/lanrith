@@ -314,6 +314,16 @@ the optional endpoint on the next image boot. Application schemas, adapters and
 private account bindings remain extension responsibilities. Qualify the actual
 selected component and complete image as well as the launcher before deployment.
 
+The selected policy helper currently requires fixed post-NAT source addresses.
+Combining directory policy with client masquerade or managed-service source
+translation over a DHCP IPv4 or RA IPv6 uplink is rejected by `validate` and
+`render`, before native profile assembly. Select static addresses for the
+translated uplink families for that combination.
+An ordinary router without directory policy retains DHCP WAN support. A policy
+profile with no source translation can also use a dynamic uplink; a qualified
+live source-address producer is required before translated dynamic policy paths
+can be supported.
+
 An optional `replaces` list explicitly admits replacement of compiler-generated
 firewall, networkd, Kea, Unbound, Chrony or routing-sysctl files. This is for
 reviewed advanced policy, including service namespaces. Conflicts without that
