@@ -238,3 +238,10 @@ running as `freerad`, and a lease seeded before the real Kea daemon starts.
 These checks cannot establish RADIUS authentication, directory authority, DHCP
 packet behavior, translated traffic or complete-image startup and recovery.
 Development binaries cannot satisfy selected-release or package admission.
+
+Trusted companion fixtures can compose the Python `qualify` function with a
+configuration callback, an observer account at the fixture UID/GID, and an
+`observe_stage(stage, configuration, native_files)` callback. The stages are
+`applied`, `incomplete`, `bindings-recovered` and `directory-reconfirmed`. This
+allows an extension's own read-only client to observe the same real lifecycle.
+These are test-code hooks; neither directory input nor the CLI selects code.

@@ -74,7 +74,7 @@ while True:
 '''
 
 
-def qualify(candidate, collector_sha, output):
+def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
@@ -88,9 +88,15 @@ def qualify(candidate, collector_sha, output):
     component = base.candidate(candidate)
     shutil.copyfile(candidate/COLLECTOR, Path('/usr/bin')/COLLECTOR)
     (Path('/usr/bin')/COLLECTOR).chmod(0o755)
-    for uid, name in ((1701, 'router-policy-reader'), (1702, 'router-policy-operator'), (1801, 'example-agent')):
+    # Trusted companion fixtures can observe the same lifecycle through their
+    # own admitted-style reader. These hooks are Python-only test composition;
+    # no runtime command, directory input or CLI option can select executable code.
+    observer = dict(base.OBSERVER if observer is None else observer)
+    require(observer['uid'] == observer['gid'] == 1801, 'Fixture observer identity differs.')
+    for uid, name in ((1701, 'router-policy-reader'), (1702, 'router-policy-operator'), (1801, observer['user'])):
         base.run('useradd', '--uid', str(uid), '--user-group', '--no-create-home', '--shell', '/usr/sbin/nologin', name)
     value = declaration()
+    if configure is not None: value = configure(value)
     value['networks']['devices']['dhcp4']['id'] = 22
     value = config.normalize(value)
     interfaces = base.prepare_interfaces(value)
@@ -98,7 +104,7 @@ def qualify(candidate, collector_sha, output):
         for address in network['addresses']:
             base.run('ip', 'address', 'add', address, 'dev', network['name'], *(['nodad'] if ':' in address else []))
     files = config.render(value)
-    files.update(policy_agent.render(value, observer=base.OBSERVER))
+    files.update(policy_agent.render(value, observer=observer))
     contract = json.loads(files['etc/router-policy-agent/runtime/runtime.json'])
     require(contract['binding_collector']['subnet_id'] == 22, 'Generated DHCP scope differs.')
     policy_runtime.CONTRACT.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +180,9 @@ def qualify(candidate, collector_sha, output):
         pid = base.run('systemctl', 'show', '--property=MainPID', '--value', base.HELPER).stdout.strip()
         initial = submit()
         require(initial.get('status') == 'applied' and initial['grant_count'] == 0,
-            'First directory enrollment must be deny-only without ownership evidence.')
+            'First directory enrollment must be deny-only without ownership evidence: '+
+            json.dumps({'receipt': initial, 'binding': bindings(), 'status': base.request(base.STATUS,
+                {'schema_version': 1, 'operation': 'status'}, uid=1702, gid=1702)}, sort_keys=True))
         require(policy_runtime.cohort(contract) == [MAC], 'Actual helper did not persist the enrolled cohort.')
         checks.append('directory-enrollment-persists-nonempty-cohort-without-ownership-or-permission')
         wait(lambda: bindings()['complete'] and bindings()['records'])
@@ -191,6 +199,7 @@ def qualify(candidate, collector_sha, output):
         require(grant['complete'] and grant['total'] > 0, 'Actual nonempty policy observation missing.')
         observed.update(binding=first, grant_snapshot=grant)
         checks.append('fresh-directory-and-collected-ownership-produce-nonempty-enforcing-observation')
+        if observe_stage is not None: observe_stage('applied', value, files)
         # Pause the real daemon while preserving its dependency state. An
         # explicit unit stop would also stop its Requires= dependents.
         paused = int(base.run('systemctl', 'show', '--property=MainPID', '--value', 'kea-dhcp4-server.service').stdout)
@@ -217,13 +226,16 @@ def qualify(candidate, collector_sha, output):
         observed['collector_negative_markers'] = negative_markers
         checks.append('native-collector-negative-marker-retains-loader-contract-through-source-deadline')
         checks.append('kea-source-loss-invalidates-complete-export-and-denies-directory-request')
+        if observe_stage is not None: observe_stage('incomplete', value, files)
         os.kill(paused, signal.SIGCONT); paused = None
         wait(lambda: bindings()['complete'] and bindings()['records'])
         require(base.run('systemctl', 'show', '--property=MainPID', '--value', base.HELPER).stdout.strip() == pid,
             'Evidence source recovery restarted the enforcing helper.')
         status = base.request(base.STATUS, {'schema_version': 1, 'operation': 'status'}, uid=1702, gid=1702)['reply']
         require(status['report']['permit_state'] == 'sealed', 'Recovered ownership restored a cached directory grant.')
+        if observe_stage is not None: observe_stage('bindings-recovered', value, files)
         require(submit().get('grant_count', 0) > 0, 'Fresh directory confirmation did not restore permission.')
+        if observe_stage is not None: observe_stage('directory-reconfirmed', value, files)
         checks.append('recovered-producer-needs-fresh-directory-confirmation-without-helper-restart')
     except BaseException:
         raw = base.run('journalctl', '--no-pager', '-n', '60', '-u', base.HELPER, '-u', base.DEPENDENCIES[1],
