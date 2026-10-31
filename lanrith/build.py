@@ -148,7 +148,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
-                   'metrics_runtime.py', 'router_metrics_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
+                   'metrics_runtime.py', 'router_metrics_runtime.py', 'ntp_health_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
                    'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
                    'credential_operation.py', 'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
@@ -176,6 +176,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         metrics_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
                                    'from lanrith.router_metrics_runtime import main\nsys.exit(main())\n')
         metrics_wrapper.chmod(0o755)
+        if value['services']['ntp']['enabled']:
+            ntp_wrapper = overlay/'usr/lib/lanrith/ntp-health'
+            ntp_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'
+                                   'from lanrith.ntp_health_runtime import main\nsys.exit(main())\n')
+            ntp_wrapper.chmod(0o755)
         if value.get('identity', {}).get('policy', {}).get('enabled'):
             directory_wrapper = overlay/'usr/lib/lanrith/directory-health'
             directory_wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0, "/usr/lib/lanrith")\n'

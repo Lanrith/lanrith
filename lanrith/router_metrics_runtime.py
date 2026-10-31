@@ -284,8 +284,12 @@ def collect(policy, *, previous_inventory=0):
                        for row in json.loads(text)['nftables']))
     metrics.emit('nftables_loaded', query('nftables', ['nft', '-j', 'list', 'tables'], nftables) or 0)
     if policy['ntp']:
-        metrics.emit('chrony_synchronised', query('chrony', ['chronyc', '-h', '/run/chrony/chronyd.sock',
-                                                          '-n', '-c', 'tracking'], tracking) or 0)
+        from .ntp_health_runtime import read_observation
+        state = metrics.query('chrony', read_observation)
+        if state is not None:
+            metrics.queries['chrony'] = int(state['query_success'])
+            metrics.emit('chrony_synchronised', int(state['synchronised']))
+            metrics.emit('chrony_observation_timestamp_seconds', state['observed_timestamp_seconds'])
     if policy['logs']:
         from .logs_runtime import read_observation
         state = metrics.query('alloy', read_observation)

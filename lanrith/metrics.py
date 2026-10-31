@@ -87,7 +87,10 @@ def render(value):
         groups.append('alloy')
     if value.get('identity', {}).get('policy', {}).get('enabled'):
         groups.append('lanrith-directory-health')
+    if value['services']['ntp']['enabled']:
+        groups.append('_chrony')
     return {
+        **(ntp_observer() if value['services']['ntp']['enabled'] else {}),
         'usr/share/lanrith/metrics.json': canonical(settings).decode(),
         'usr/share/lanrith/router-metrics.json': canonical(router_manifest(value)).decode(),
         'usr/lib/sysusers.d/80-lanrith-metrics.conf': 'u lanrith-metrics - "Metrics proxy" /\n',
@@ -138,6 +141,34 @@ def render(value):
             'MemoryMax=64M\nTasksMax=8\nLimitNOFILE=128\n'
             'Restart=on-failure\nRestartSec=2s\n'
             '[Install]\nWantedBy=multi-user.target\n'),
+    }
+
+
+def ntp_observer():
+    return {
+        'usr/lib/systemd/system/lanrith-ntp-health.service': (
+            '[Unit]\nDescription=Observe Chrony without exposing its control socket\n'
+            'Requires=lanrith-services.service\nBindsTo=lanrith-services.service\n'
+            'After=lanrith-services.service chrony.service\n'
+            '[Service]\nType=oneshot\nUser=_chrony\nGroup=_chrony\n'
+            'NetworkNamespacePath=/run/netns/lanrith-services\n'
+            'ExecStart=/usr/lib/lanrith/ntp-health\n'
+            'RuntimeDirectory=lanrith-ntp-health\nRuntimeDirectoryMode=0750\n'
+            'RuntimeDirectoryPreserve=yes\nUMask=0027\nTimeoutStartSec=5s\nTimeoutStopSec=2s\n'
+            'NoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nProtectHome=yes\n'
+            'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
+            'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            # chronyc creates its reply socket beside the daemon socket. Only
+            # the existing service identity may write this private directory.
+            'ReadWritePaths=/run/lanrith-ntp-health -/run/chrony\n'
+            'InaccessiblePaths=-/run/router-policy-reader -/run/router-policy-ipc -/var/lib/lanrith\n'
+            'RestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\n'
+            'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
+            'MemoryMax=64M\nMemorySwapMax=0\nTasksMax=8\nLimitNOFILE=64\n'),
+        'usr/lib/systemd/system/lanrith-ntp-health.timer': (
+            '[Unit]\nDescription=Refresh isolated NTP observations\n'
+            '[Timer]\nOnBootSec=10s\nOnUnitActiveSec=30s\nRandomizedDelaySec=5s\nAccuracySec=1s\n'
+            'Unit=lanrith-ntp-health.service\n[Install]\nWantedBy=timers.target\n'),
     }
 
 

@@ -27,6 +27,7 @@ All router health families use the `lanrith_router_` prefix:
 | `interface_present`, `interface_admin_up`, `interface_carrier_up`, `interface_operational_up`, `interface_up` | Distinct host interface states |
 | `interface_receive_*_total`, `interface_transmit_*_total` | Host interface byte, packet, error and drop counters |
 | `nftables_loaded`, `chrony_synchronised` | Core table presence and upstream clock synchronization |
+| `chrony_observation_timestamp_seconds` | Original service-account NTP observation time |
 | `alloy_queue_capacity_bytes`, `alloy_queue_size_bytes` | Configured logical log queue capacity and current occupancy |
 | `alloy_enqueue_failed_records_total`, `alloy_send_failed_records_total` | Rejected enqueue records and failed send attempts |
 | `directory_tls_verified`, `directory_tls_endpoints_total`, `directory_tls_endpoints_verified` | Verified TLS across every pinned directory endpoint |
@@ -44,6 +45,29 @@ details are limited to 256 entries per interface and 1024 in total; exceeding
 those bounds marks inventory incomplete. A failed or truncated inventory keeps
 the last complete timestamp. Collector output is limited to 1 MiB. These bounds
 also constrain metric cardinality and memory use.
+
+When NTP and metrics are both enabled, `lanrith-ntp-health.timer` runs a
+capability-empty observer as the packaged `_chrony` account in the service
+network namespace. It executes only the fixed numeric CSV `tracking` query.
+Chrony's control directory remains mode 0700. The observer can create the
+temporary reply socket required by `chronyc` in that directory, as described
+by the [upstream client implementation](https://github.com/mlichvar/chrony/blob/4.6/client.c#L199-L225).
+It shares Chrony's service identity and is trusted within that service boundary.
+
+The observer atomically publishes `/run/lanrith-ntp-health/health.json` with
+mode 0640 in a mode-0750 directory. The host collector receives the `_chrony`
+read group and retains only `CAP_NET_ADMIN`. This does not let it traverse
+Chrony's control directory. It rejects old-boot, wrong-namespace, malformed
+or more than 90-second-old observations. The exported NTP timestamp retains
+the original observation time across later host collections.
+
+A successful query with no external synchronization emits
+`chrony_synchronised` zero with `metrics_query_success{collector="chrony"}` one.
+A daemon/query failure emits query success zero. A missing or rejected snapshot
+also omits the synchronization and NTP timestamp families. Disabling NTP removes
+the observer service, timer, query and read-group membership; disabling metrics
+removes the observer while NTP continues independently. No control listener or
+owner configuration source is added.
 
 When logging is enabled, the Alloy supervisor publishes a bounded observation
 in `/run/lanrith-logs/health.json`. The collector reads it through a supplementary

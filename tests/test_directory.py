@@ -44,7 +44,7 @@ class DirectoryTests(unittest.TestCase):
         self.assertNotIn('bind_dn', json.dumps(probe))
         self.assertIn('lanrith-directory-health.timer', json.loads(files['usr/share/lanrith/health.json'])['units'])
         collector = files['usr/lib/systemd/system/lanrith-router-metrics.service']
-        self.assertIn('SupplementaryGroups=lanrith-directory-health\n', collector)
+        self.assertIn('SupplementaryGroups=lanrith-directory-health _chrony\n', collector)
         self.assertIn('CapabilityBoundingSet=CAP_NET_ADMIN\n', collector)
 
     def test_metrics_off_removes_probe_but_retains_only_reader_connectivity(self):
