@@ -43,12 +43,15 @@ def qualify(output, *, systemd=False):
         # Finish the unrelated package unit's runtime-directory cleanup before
         # starting our clock-disabled fixture daemon with that private path.
         run('systemctl', 'stop', 'chrony.service')
-    assert not runtime.CONTROL.exists() and not runtime.OUTPUT.exists()
     assert output is None or not output.exists()
     if not systemd:
+        # A hosted runner can have its own packaged Chrony socket. Hide that
+        # runtime before checking our empty fixture; never stop its service or
+        # alter its socket, directory permissions or clock.
         run('mount', '-t', 'tmpfs', '-o', 'mode=0755', 'tmpfs', '/run')
     else:
         assert Path('/proc/1/comm').read_text().strip() == 'systemd'
+    assert not runtime.CONTROL.exists() and not runtime.OUTPUT.exists()
     account = pwd.getpwnam('_chrony')
     run('ip', 'netns', 'add', 'lanrith-services')
     namespace = ['nsenter', '--net=/run/netns/lanrith-services', '--']
