@@ -190,11 +190,11 @@
         "type": "qualified-component-update"
       }
     ],
-    "scope": "The exact three already authenticated input files are included so source-repair qualification uses the fixed Debian snapshot and qualified component releases. No new automatic candidate is fabricated; the complete combined source PR requires actual independent human review."
+    "scope": "Historical signed input selection included by the original PR42 head. PR35 subsequently merged independently with the later22:00 snapshot; this updated source repair preserves that merged snapshot exactly and only refreshes the Alloy package recipe hashes and local package revision."
   },
-  "base_commit": "0a327da3518620393a328997e193681a6de40a5c",
+  "base_commit": "e79b0a8e7b1e2984778f7310ed772c2555d22141",
   "created_at": "2026-10-30T22:07:36.145825+00:00",
-  "deployment_status": "Prepared source only; no approval, merge, release or completed hosted native qualification is claimed. PR35 remains blocked; supersede it only after this source PR is actually qualified, human-approved and protected-merged.",
+  "deployment_status": "Updated source and major dependency repair prepared for fresh full CI and actual independent human review. No approval, merge or production release is claimed for the new head. PR35 already merged independently; do not replay or close it as superseded.",
   "failure": {
     "compilation": "pass",
     "debian_security": "pass; actionable_findings=0",
@@ -207,9 +207,41 @@
     "run": 41117624534
   },
   "kind": "native-staging-fault-observation-repair",
+  "merged_security_baseline": {
+    "actual_independent_app_review": 5720355796,
+    "candidate_id": "278291ee4c56850530677bf3ffc1466289dc25522657001621aefa597cb2bfa0",
+    "head": "e60088c7cc2742dd5c225cbed4df08058b90a901",
+    "merge_commit": "e79b0a8e7b1e2984778f7310ed772c2555d22141",
+    "pull_request": 35,
+    "security_snapshot": "20261030T220000Z",
+    "signed_decision": "https://github.com/Lanrith/lanrith/releases/tag/audit-decision-41155112917-1"
+  },
   "paid_ai": false,
+  "preceding_source_review": {
+    "actual_human_review": 5721946304,
+    "check_run": 41136184419,
+    "head": "e440c297e2abd307232def7744338414470cd01d",
+    "native_qualification_result": "success",
+    "native_qualification_run": 41136184416,
+    "scope": "Historical real approval and CI on the original source/input subject; they do not approve or qualify the updated head.",
+    "submitted_at": "2026-10-31T08:12:13Z"
+  },
   "protection_bypass": false,
   "reason": "The native fault observer used a90-second deadline starting before full staging authentication and recovery admission, repeatedly queried GPT through new guest SSH/PAM sessions, and left child output pipes undrained. It reached the deadline while the foreground stage command was still running. The old report does not identify the precise guest phase or prove which of these observation constraints dominated.",
+  "release_version_repair": {
+    "actual_read_only_allocation": "0.1.15",
+    "draft_release_id": 429122148,
+    "local_regression": {
+      "after": "pass",
+      "before_failures": 3,
+      "tests": 6
+    },
+    "publication_claimed": false,
+    "reason": "Root38 publication41049477297 stopped during asset upload, leaving draft v0.1.14 with10assets tied to source1128615. Ignoring drafts in next-version would allocate that same version to a later source.",
+    "repair": "Treat existing same-series release drafts as reservations, preserve future-major release-series behavior and all existing draft bytes. No deletion, clobber or source reuse.",
+    "reserved_draft": "v0.1.14",
+    "reserved_source": "1128615ece3235c9b5964ac974386be71b8d8389"
+  },
   "repair": [
     "Observe the actual disposable raw GPT on the host within the existing900-second normal staging budget.",
     "Require initially populated slots and exactly one accepted partition for each role; reject changes to accepted partitions, other partitions or target geometry.",
@@ -219,6 +251,38 @@
   ],
   "repository": "Lanrith/lanrith",
   "schema": 1,
+  "ui_security_fix": {
+    "advisory": "GHSA-g3hv-75wg-m249",
+    "advisory_source": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+    "alloy_commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
+    "compatibility": {
+      "eslint": "pass",
+      "production_build": "pass",
+      "unit_tests": {
+        "failed_suites": 1,
+        "failure": "Unknown file extension .css in @xyflow/react/dist/style.css",
+        "passed": 12,
+        "same_failure_reproduced_with_original_lock": true
+      }
+    },
+    "direct_package_versions_unchanged": true,
+    "fixed_package": "minimatch@11.0.1",
+    "install_hooks_disabled": true,
+    "kind": "verified-fixed-alloy-ui-minimatch-major-security-compatibility",
+    "limits": "No full UI unit-suite pass is claimed. The CSS suite failure exists on the unchanged baseline. Full hosted package/security/native qualification and fresh actual human approval remain required.",
+    "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
+    "npm_audit_vulnerabilities": 0,
+    "old_versions": [
+      "3.1.5",
+      "10.2.6"
+    ],
+    "package_manifest_change": "Add exact overrides.minimatch=11.0.1; retain existing overrides and scripts.",
+    "registry_signature_verification": "verified-minimatch-security-registry-signature.json",
+    "result": "pass-with-existing-upstream-test-limitation",
+    "schema": 1,
+    "verified_at": "2026-10-31T20:31:28.704375+00:00"
+  },
+  "updated_at": "2026-10-31T20:31:28.704375+00:00",
   "validation": {
     "focused": {
       "method": "Real disposable GPT files and asynchronous child processes; reject early exit, no write, active-slot mutation and preexisting emptiness; delayed admission and full output buffers succeed only after an actual inactive write.",
@@ -228,10 +292,16 @@
     },
     "full_suite": {
       "existing_environment_skips": 15,
-      "passed": 834,
+      "passed": 840,
       "result": "pass",
-      "tests": 849
+      "tests": 855
     },
-    "hosted_native": "Required on the final source PR head; not claimed by local tests."
+    "hosted_native": "Required on the final source PR head; not claimed by local tests.",
+    "normal_ui_resolver_replay": {
+      "changed": false,
+      "mocked_verifiers": false,
+      "result": "pass",
+      "state": "current"
+    }
   }
 }

@@ -54,7 +54,7 @@
   "local_package_sources": {
     "alloy": {
       "source": "alloy",
-      "version": "1.20.1-1+lanrith4"
+      "version": "1.20.1-1+lanrith5"
     },
     "discovery-bridge": {
       "source": "discovery-bridge",
@@ -110,7 +110,7 @@
     }
   },
   "required_exact_packages": {
-    "alloy": "1.20.1-1+lanrith4",
+    "alloy": "1.20.1-1+lanrith5",
     "discovery-bridge": "0.1.7",
     "lanrith-tayga-internal": "0.9.6-1",
     "libunbound8": "1.26.2-0+deb13u1",
