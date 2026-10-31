@@ -149,7 +149,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
-                   'radius_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
+                   'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
                    'credential_operation.py', 'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',
                    'early_unlock.py', 'tpm_migration.py', 'measured_boot.py', 'security_profile.py',

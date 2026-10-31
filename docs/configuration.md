@@ -36,6 +36,15 @@ owner file before reordering existing networks or changing a persisted layout.
 Disabled scopes reserve no ID. IDs are compiled into native configuration and
 bounded runtime contracts; owner YAML remains build-only.
 
+Selecting RADIUS admission also configures Kea's private Unix control socket
+and the packaged lease-command hook used by its bounded admission collector.
+Before startup completes, an unprivileged post-start check verifies the main
+daemon's UID/PID and tightens its own socket to mode `0600`. Missing readiness
+is bounded; an unsafe path or different peer fails startup. Disabling RADIUS
+omits the socket, hook and post-start check. The socket remains administrative IPC owned by
+Kea's service account; ordinary users and observation-only consumers must not
+receive access to it. Lease observations alone grant no forwarding permission.
+
 ## Access rules
 
 Use the same rules for every routed destination. Network names come from your

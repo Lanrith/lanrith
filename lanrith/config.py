@@ -484,6 +484,12 @@ def render(value, *, target_facts=None, retained_allocations=None):
             'valid-lifetime': 3600, 'subnet4': scopes}
         if value.get('identity', {}).get('radius', {}).get('enabled', False):
             dhcp4['control-socket'] = {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
+            # The qualified x86-64 Kea package supplies the commands used by
+            # the bounded admission collector. A socket alone cannot serve them.
+            dhcp4['hooks-libraries'] = [{'library': '/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so'}]
+            files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'] = (
+                '[Service]\nExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n'
+                'TimeoutStartSec=20s\n')
         files['etc/kea/kea-dhcp4.conf'] = json.dumps({'Dhcp4': dhcp4}, indent=2) + '\n'
     files.update(service_plane.render(value))
     files.update(authoritative.render(value))

@@ -129,3 +129,7 @@ print('Dormant hardware ownership unit passed native systemd verification withou
 # Lease identity is shared by native Kea, retained memfile state and policy
 # admission. Exercise real renewal/restart in another private mount/netns.
 subprocess.run([sys.executable, str(Path(__file__).with_name('dhcp_native.py'))], check=True, timeout=75)
+
+# The generated admission socket must actually implement its lease queries.
+# Its own mount/net namespace keeps the packaged daemon and lease store private.
+subprocess.run([sys.executable, str(Path(__file__).with_name('kea_control_native.py'))], check=True, timeout=90)
