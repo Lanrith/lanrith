@@ -127,7 +127,10 @@ def qualify(result):
             for name in names:
                 (directory/name).unlink(missing_ok=True)
             command('systemctl', 'daemon-reload')
+    from policy_observer_native import qualify as qualify_policy_observer
+    policy_observer = qualify_policy_observer()
     report = {'schema': 1, 'test': 'offline-systemd-optional-extension', 'result': 'pass',
+              'policy_observer': policy_observer,
               'assessed_at': datetime.now(timezone.utc).isoformat(), 'private_image_qualified': False,
               'container_only_mount_failures_reset': sorted(failed),
               'checks': ['generated-unit-verification', 'optional-failure-after-core-acceptance',

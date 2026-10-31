@@ -292,6 +292,28 @@ Typed network declarations cannot be combined with a complete firewall
 replacement. The build emits native rules only; no runtime extension parser or
 owner YAML is needed. Removing a declaration removes its new-connection grant.
 
+An optional `observations` manifest list selects a read-only policy endpoint:
+
+```json
+[{"service": "policy", "user": "example-agent"}]
+```
+
+The reader and its primary group must belong to that extension's identities.
+Policy must be enabled, and only one reader across the active extensions is
+supported. Lanrith generates the fixed socket
+`/run/lanrith-policy-observations/observations.sock` and pins the reader UID.
+The component checks kernel peer credentials and accepts only bounded observation
+requests. This grants no proposal, status/operator or mutation endpoint access.
+
+The core helper launcher prepares the root-owned, group-scoped socket and then
+becomes the existing helper process. It uses the helper's existing capability
+set and one supplementary reader group. Endpoint setup failures leave the two
+mandatory helper sockets available; they create no failed optional socket unit
+and do not change the native boot failure gate. Removing the declaration removes
+the optional endpoint on the next image boot. Application schemas, adapters and
+private account bindings remain extension responsibilities. Qualify the actual
+selected component and complete image as well as the launcher before deployment.
+
 An optional `replaces` list explicitly admits replacement of compiler-generated
 firewall, networkd, Kea, Unbound, Chrony or routing-sysctl files. This is for
 reviewed advanced policy, including service namespaces. Conflicts without that

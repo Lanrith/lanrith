@@ -7,7 +7,7 @@ import shutil
 import stat
 
 from .release import HEX, canonical, file_record, read, require, unique
-from . import extension_network
+from . import extension_network, extension_observations
 
 
 PROTECTED = (
@@ -55,7 +55,7 @@ def admit(directory, expected):
     value = json.loads(read(directory / 'extension.json', 1024 * 1024), object_pairs_hook=unique)
     required = {'schema', 'id', 'features', 'health_units', 'files'}
     require(isinstance(value, dict) and required <= set(value) <= required | {
-                'replaces', 'identities', 'health_units_by_feature', 'start_units', 'network'} and
+                'replaces', 'identities', 'health_units_by_feature', 'start_units', 'network', 'observations'} and
             value['schema'] == 1 and isinstance(value['id'], str) and
             re.fullmatch(r'[a-z][a-z0-9-]{0,47}', value['id']), 'Invalid integration manifest.')
     require(isinstance(value['features'], list) and len(value['features']) <= 32 and
@@ -72,6 +72,7 @@ def admit(directory, expected):
     require(isinstance(value['files'], dict) and 0 < len(value['files']) <= 4096, 'Invalid integration inventory.')
     identities = identity_declarations(value.get('identities', {}))
     extension_network.declarations(value.get('network', {}), identities)
+    extension_observations.declarations(value.get('observations', []), identities)
     start_units = value.get('start_units', [])
     require(isinstance(start_units, list) and len(start_units) <= 64 and
             all(isinstance(unit, str) and re.fullmatch(
@@ -121,6 +122,7 @@ def admit(directory, expected):
 def overlay(configuration, selected, destination, base_files=None):
     require(set(selected) == set(configuration['extensions']), 'Integration selections differ from configuration.')
     units, digests, written, identities, starts, declarations, replaced = [], {}, set(), [], [], [], set()
+    observations = []
     for identity in sorted(selected):
         directory, expected = selected[identity]
         value = admit(directory, expected)
@@ -150,8 +152,10 @@ def overlay(configuration, selected, destination, base_files=None):
             units.extend(value['health_units'])
             starts.extend(value.get('start_units', []))
             declarations.append(extension_network.declarations(value.get('network', {}), identities[-1]))
+            observations.append(extension_observations.declarations(value.get('observations', []), identities[-1]))
         replaced.update(value.get('replaces', []))
         digests[identity] = expected
+    extension_observations.install(configuration, observations, destination)
     plan = extension_network.resolve(configuration, declarations)
     if any(plan.values()):
         require('etc/nftables.conf' not in replaced,
