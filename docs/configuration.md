@@ -39,8 +39,11 @@ bounded runtime contracts; owner YAML remains build-only.
 Selecting RADIUS admission also configures Kea's private Unix control socket
 and the packaged lease-command hook used by its bounded admission collector.
 Before startup completes, an unprivileged post-start check verifies the main
-daemon's UID/PID and tightens its own socket to mode `0600`. Missing readiness
-is bounded; an unsafe path or different peer fails startup. Disabling RADIUS
+daemon's UID/PID and service group, then removes execute/other access with mode
+`0660`. The `_kea` group is reserved for the daemon and explicitly admitted
+service collectors. Admission collectors retain empty capability sets; they
+need no DAC override. Missing readiness is bounded; an unsafe path or different
+peer fails startup. Disabling RADIUS
 omits the socket, hook and post-start check. The socket remains administrative IPC owned by
 Kea's service account; ordinary users and observation-only consumers must not
 receive access to it. Lease observations alone grant no forwarding permission.

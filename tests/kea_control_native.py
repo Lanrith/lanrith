@@ -29,7 +29,7 @@ def command(*args):
 
 def query(name, arguments):
     mode = stat.S_IMODE(Path('/run/kea/kea4-ctrl-socket').stat().st_mode)
-    assert mode == 0o600, f'Kea administrative socket has incompatible mode {mode:04o}.'
+    assert mode == 0o660, f'Kea administrative socket has incompatible mode {mode:04o}.'
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
         stream.settimeout(2)
         stream.connect('/run/kea/kea4-ctrl-socket')
@@ -49,6 +49,38 @@ def query(name, arguments):
     return value['arguments']['leases']
 
 
+def collector_access():
+    """Exercise the declared root collector without DAC or other capabilities."""
+    account = pwd.getpwnam('_kea')
+    program = '''
+import json,os,pathlib,socket,struct,sys
+assert os.getuid()==os.geteuid()==0
+status=dict(line.split(':',1) for line in pathlib.Path('/proc/self/status').read_text().splitlines())
+assert int(status['CapEff'],16)==int(status['CapBnd'],16)==0 and status['NoNewPrivs'].strip()=='1'
+with socket.socket(socket.AF_UNIX) as connection:
+ connection.settimeout(2)
+ try: connection.connect('/run/kea/kea4-ctrl-socket')
+ except PermissionError: sys.exit(10)
+ _,uid,_=struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+ assert uid==int(sys.argv[1])
+ connection.sendall(b'{"command":"lease4-get-page","arguments":{"from":"0.0.0.0","limit":128}}')
+ connection.shutdown(socket.SHUT_WR)
+ raw=bytearray()
+ while True:
+  block=connection.recv(4096)
+  if not block: break
+  raw.extend(block);assert len(raw)<=65536
+ value=json.loads(raw);assert value['result']==0 and len(value['arguments']['leases'])==1
+'''
+    for groups, expected in ((str(account.pw_gid), 0), ('', 10)):
+        result = subprocess.run(['setpriv', '--reuid=0', '--regid=0',
+            *(['--groups='+groups] if groups else ['--clear-groups']), '--bounding-set=-all',
+            '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs',
+            sys.executable, '-c', program, str(account.pw_uid)], capture_output=True, timeout=5)
+        assert result.returncode == expected, (
+            'Declared capability-empty collector access differs: '+str(result.returncode)+' expected '+str(expected))
+
+
 def qualify(output):
     assert os.geteuid() == 0
     assert not Path('/usr/share/lanrith/installed.json').exists(), 'Refuse an installed router.'
@@ -66,6 +98,9 @@ def qualify(output):
     raw = files['etc/kea/kea-dhcp4.conf'].encode()
     post = files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf']
     assert 'ExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n' in post
+    collector_unit = ROOT/'mkosi/base/mkosi.extra/usr/lib/systemd/system/lanrith-policy-bindings.service'
+    assert all(line in collector_unit.read_text().splitlines() for line in
+               ('User=root', 'Group=root', 'SupplementaryGroups=_kea', 'CapabilityBoundingSet=', 'NoNewPrivileges=yes'))
     hardening = ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/30-lanrith-hardening.conf'
     mask, = [line.split('=', 1)[1] for line in hardening.read_text().splitlines() if line.startswith('UMask=')]
     checks, names = [], []
@@ -131,6 +166,10 @@ def qualify(output):
                         '--inh-caps=-all,+net_bind_service,+net_raw',
                         '--ambient-caps=-all,+net_bind_service,+net_raw', '--no-new-privs',
                         sys.executable, str(ROOT/'lanrith/kea_runtime.py'), str(process.pid))
+                    collector_access()
+                    if not iteration:
+                        checks.extend(['capability-empty root collector with declared _kea group can read',
+                                       'capability-empty root without _kea group denied'])
                     for name, arguments in query_types:
                         leases = query(name, arguments)
                         assert len(leases) == 1 and leases[0]['ip-address'] == lease['address']
@@ -171,10 +210,12 @@ def qualify(output):
             'native_configuration_modified': False, 'service_uid': account.pw_uid,
             'effective_and_bounding_capabilities': ['CAP_NET_BIND_SERVICE', 'CAP_NET_RAW'],
             'no_new_privileges': True, 'full_systemd_sandbox_qualified': False,
-            'socket_mode': '0600', 'generated_post_start_operation': True,
+            'socket_mode': '0660', 'generated_post_start_operation': True,
+            'collector_dac_capabilities': [], 'collector_supplementary_group': '_kea',
             'source_sha256': {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in
                 ('lanrith/config.py', 'lanrith/build.py', 'lanrith/kea_runtime.py', 'tests/kea_control_native.py',
                  'tests/test_radius.py', 'tests/native.py',
+                 'mkosi/base/mkosi.extra/usr/lib/systemd/system/lanrith-policy-bindings.service',
                  'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/30-lanrith-hardening.conf')},
             'private_image_qualified': False, 'production_changed': False}
         with output.open('x') as stream:

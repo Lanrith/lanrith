@@ -18,7 +18,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT/'tests')]
 from lanrith import config
-from kea_control_native import command, query
+from kea_control_native import command, query, collector_access
 from test_radius import declaration
 
 
@@ -81,14 +81,17 @@ def qualify(output):
             assert int(status['Uid'].split()[1]) == account.pw_uid
             assert int(status['CapEff'], 16) == int(status['CapBnd'], 16) == 0x2400
             assert status['NoNewPrivs'].strip() == '1'
-            assert stat.S_IMODE(Path('/run/kea/kea4-ctrl-socket').stat().st_mode) == 0o600
+            assert stat.S_IMODE(Path('/run/kea/kea4-ctrl-socket').stat().st_mode) == 0o660
+            collector_access()
             for name, arguments in [('lease4-get-by-hw-address', {'hw-address': lease['hwaddr']}),
                                     ('lease4-get-page', {'from': '0.0.0.0', 'limit': 128})]:
                 rows = query(name, arguments)
                 assert len(rows) == 1 and rows[0]['subnet-id'] == 79
                 assert rows[0]['cltt']+rows[0]['valid-lft'] == expire
-            observations.append({'main_pid': pid, 'socket_mode': '0600', 'uid': account.pw_uid,
-                                 'original_expiry': expire, 'lease_queries': 'pass'})
+            observations.append({'main_pid': pid, 'socket_mode': '0660', 'uid': account.pw_uid,
+                                 'original_expiry': expire, 'lease_queries': 'pass',
+                                 'capability_empty_collector_with_declared_group': 'pass',
+                                 'capability_empty_root_without_group': 'denied'})
         assert path.read_bytes() == raw
     except Exception:
         diagnostic = subprocess.run(['journalctl', '--no-pager', '-u', 'kea-dhcp4-server.service', '-n', '25'],
