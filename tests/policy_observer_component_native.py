@@ -122,7 +122,7 @@ def candidate(directory):
 # the reader boundary. No caller input becomes source code or a shell command.
 CLIENT = r'''
 import json,socket,struct,sys
-path,body,raw=sys.argv[1:]
+path,body,raw,response_timeout=sys.argv[1:]
 payload=bytes.fromhex(body)
 def exact(sock,count):
  result=b''
@@ -133,7 +133,7 @@ def exact(sock,count):
  return result
 try:
  with socket.socket(socket.AF_UNIX) as sock:
-  sock.settimeout(4);sock.connect(path)
+  sock.settimeout(float(response_timeout));sock.connect(path)
   sock.sendall(payload if raw=='raw' else struct.pack('!I',len(payload))+payload)
   count=struct.unpack('!I',exact(sock,4))[0]
   assert 0<count<=512*1024
@@ -144,9 +144,11 @@ except (OSError,EOFError):
 '''
 
 
-def request(path, value, *, uid=1801, gid=1801, raw=False):
+def request(path, value, *, uid=1801, gid=1801, raw=False, response_timeout=4):
+    require(type(response_timeout) in (int, float) and 0 < response_timeout <= 10,
+            'Native fixture response deadline differs.')
     data = value if isinstance(value, bytes) else canonical(value)
-    result = run('/usr/bin/python3', '-I', '-c', CLIENT, str(path), data.hex(), 'raw' if raw else 'framed',
+    result = run('/usr/bin/python3', '-I', '-c', CLIENT, str(path), data.hex(), 'raw' if raw else 'framed', str(response_timeout),
                  user=uid, group=gid, extra_groups=[])
     return json.loads(result.stdout)
 
