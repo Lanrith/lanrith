@@ -80,6 +80,19 @@ def main():
     mappings = list(manifest['mappings'].values())
     for entry in mappings[1:]:
         ns('servers-test', 'ip', 'address', 'add', entry['ipv6']+'/64', 'dev', 'eth0', 'nodad')
+    # Link-local DAD can still be running on fast container fixtures even
+    # though the explicit global addresses use nodad. Neighbour resolution
+    # needs ready link-local sources on both ends before packet deadlines start.
+    deadline = time.monotonic()+5
+    while True:
+        addresses = json.loads(run('ip', '-6', '-j', 'address', 'show', 'dev', 'servers').stdout)
+        addresses += json.loads(ns('servers-test', 'ip', '-6', '-j', 'address', 'show', 'dev', 'eth0').stdout)
+        states = [item for row in addresses for item in row.get('addr_info', [])]
+        assert not any(item.get('dadfailed') for item in states), 'Fixture IPv6 address DAD failed.'
+        if not any(item.get('tentative') for item in states):
+            break
+        assert time.monotonic() < deadline, 'Fixture IPv6 address readiness expired.'
+        time.sleep(.05)
     ns('lan-test', 'ip', 'address', 'add', '192.168.10.90/24', 'dev', 'eth0')
     run('sysctl', '-qw', 'net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1',
         'net.ipv4.conf.all.rp_filter=0', 'net.ipv4.conf.default.rp_filter=0')
