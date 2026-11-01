@@ -121,7 +121,12 @@ def append_journal(root, count, marker):
 def local_records():
     records = []
     for path in logs_runtime.LOCAL.glob('events*.jsonl'):
-        for line in path.read_bytes().splitlines():
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError:
+            # Rotation can remove a generation after glob enumerates it.
+            continue
+        for line in content.splitlines():
             # The observer may sample while the exporter finishes a line.
             try:
                 document = json.loads(line)
