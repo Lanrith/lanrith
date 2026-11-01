@@ -419,8 +419,10 @@ hook and rule identity to a bounded IPv4/IPv6 TCP/UDP/ICMP tuple. Packet payload
 MAC headers, marks and socket-owner details are omitted. Health separates
 rejections, failed writes, overwritten records, kernel sequence gaps, netlink
 overrun signals and startup gaps. These cannot establish complete packet counts
-or original client identity through translation. This candidate still needs its
-mandatory base/admission gate and complete-image qualification before release.
+or original client identity through translation. The mandatory base/admission
+gate binds the executable, shared libraries, implementation and generated service
+tested in a disposable container. Complete-image and consumer integration
+qualification remain required before release.
 
 DNS starts with a bounded, optional socket dependency and has no collector
 readiness dependency. The collector retries at five-second intervals without

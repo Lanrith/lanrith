@@ -270,6 +270,8 @@ def main():
         '--base', str(args.output/'lanrith-base.tar.gz'), '--result', str(args.output/'ids-qualification.json'))
     run(sys.executable, str(PROJECT/'scripts/qualify-dns.py'), '--builder', builder,
         '--base', str(args.output/'lanrith-base.tar.gz'), '--result', str(args.output/'dns-qualification.json'))
+    run(sys.executable, str(PROJECT/'scripts/qualify-firewall.py'), '--builder', builder,
+        '--base', str(args.output/'lanrith-base.tar.gz'), '--result', str(args.output/'firewall-qualification.json'))
     # Qualification has its own disposable authority and regular-file disks.
     # No production key or owner configuration enters the public build.
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',

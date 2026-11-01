@@ -227,7 +227,7 @@ def instrument(text):
     """
     require(isinstance(text, str) and 0 < len(text) <= 8*1024*1024)
     require(text.startswith('#!/usr/sbin/nft -f\nflush ruleset\ntable inet lanrith {\n'))
-    require(text.count('table inet lanrith {') == 1 and 'LN_D1_' not in text and 'group '+str(GROUP) not in text)
+    require(text.count('table inet lanrith {') == 1 and 'log prefix "LN_D1_' not in text and 'group '+str(GROUP) not in text)
     digest = hashlib.sha256(text.encode()).hexdigest()
     lines, prefixes = text.splitlines(), {}
     for hook, code in (('input', 'I'), ('forward', 'F')):

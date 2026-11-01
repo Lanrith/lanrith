@@ -140,6 +140,14 @@ class FirewallMetadataTests(unittest.TestCase):
                      original+'table inet lanrith {\n}\n', original.replace(' chain input {', ' chain other {')):
             with self.subTest(length=len(text)), self.assertRaises(ValueError):wire.instrument(text)
 
+    def test_valid_interface_name_does_not_become_a_reserved_logging_statement(self):
+        value = minimal()
+        value['hardware']['interfaces']['lan']['name'] = 'LN_D1_lan'
+        original = config.render(value)['etc/nftables.conf']
+        observed, contract = wire.instrument(original)
+        self.assertIn('iifname "LN_D1_lan"', observed)
+        self.assertEqual(len(contract['prefixes']), 2)
+
 
 if __name__ == '__main__':
     unittest.main()

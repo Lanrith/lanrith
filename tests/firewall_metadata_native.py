@@ -2,11 +2,13 @@
 """Offline NFLOG feasibility gate; not an admitted image/runtime endpoint."""
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -20,6 +22,8 @@ from test_intent import minimal
 
 
 def run(*args, input=None, check=True, timeout=5):
+    if args[0] == 'nft':
+        args = ('/usr/sbin/nft', *args[1:])
     return subprocess.run(args, input=input, capture_output=True, timeout=timeout, check=check)
 
 
@@ -70,6 +74,7 @@ def main():
     parser.add_argument('--receive', type=Path)
     parser.add_argument('--result', type=Path)
     parser.add_argument('--service', action='store_true')
+    parser.add_argument('--base', type=Path)
     args = parser.parse_args()
     if args.receive:
         receive(args.receive)
@@ -79,6 +84,29 @@ def main():
     for kind in ('net', 'mnt'):
         outer = os.environ.get('LANRITH_FIXTURE_OUTER_'+kind.upper(), '')
         assert outer.isdecimal() and os.stat('/proc/self/ns/'+kind).st_ino != int(outer), 'Use a disposable isolated fixture.'
+    subject, sources, userspace, dependencies, nft_version = None, None, None, None, None
+    if args.base:
+        assert args.service
+        from lanrith import firewall_qualification as gate
+        from lanrith.release import file_record
+        subject, sources = file_record(args.base), gate.implementation(SOURCE)
+        with tempfile.TemporaryDirectory(prefix='nft-subject.', dir='/run') as temporary:
+            candidate = Path(temporary)
+            selected = gate.subject(args.base, destination=candidate)
+            assert Path('/usr/sbin/nft').is_file() and not Path('/usr/sbin/nft').is_symlink()
+            shutil.copyfile(candidate/'nft', '/usr/sbin/nft')
+            Path('/usr/sbin/nft').chmod(0o755)
+        # Trace the staged subject, then prove that every loaded shared object
+        # matches the archive. No builder executable or library fallback.
+        for key in tuple(os.environ):
+            if key.startswith('LD_'):
+                del os.environ[key]
+        os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
+        dependencies = gate.library_inventory()
+        userspace = gate.subject(args.base, dependencies)
+        assert userspace == {gate.NFT: selected[gate.NFT], **dependencies}, 'Staged nft libraries differ from the exact base.'
+        assert file_record(Path('/usr/sbin/nft'))['sha256'] == selected[gate.NFT]
+        nft_version = run('/usr/sbin/nft', '--version').stdout.decode('ascii').strip()
     root = Path(tempfile.mkdtemp(prefix='firewall-metadata.', dir='/run'))
     root.chmod(0o750)
     os.chown(root, 2001, 2001)
@@ -135,7 +163,7 @@ def main():
             duplicate.close()
             raise AssertionError('NFLOG group ownership was replaced.')
         stranger = run('setpriv', '--reuid=2002', '--regid=2002', '--clear-groups', '--bounding-set=-all', '--no-new-privs',
-            'python3', '-B', '-c', 'from lanrith.firewall_metadata import kernel_listener;kernel_listener()', check=False)
+            'python3', '-I', '-c', 'import sys;sys.path.insert(0,"/source");from lanrith.firewall_metadata import kernel_listener;kernel_listener()', check=False)
         assert stranger.returncode != 0 and b'PermissionError' in stranger.stderr
         server_code = '''import json,pathlib,socket,threading,time
 received=[]
@@ -215,6 +243,12 @@ while True:time.sleep(1)
                        'no earlier guard, explicit-owner deny, policy-helper, translator, output or service-namespace observations',
                        'TCP/ICMP validation proves sampled drop-path metadata; no claim of allowed TCP/ICMP application service',
                        'synthetic namespaces/packets; no full image or persistent lifecycle']}
+        if args.base:
+            assert file_record(args.base) == subject and gate.implementation(SOURCE) == sources
+            result.update(test='offline-firewall-observations', assessed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                filesystem_sha256=subject['sha256'], source_sha256=sources, base_userspace_sha256=userspace,
+                builder_libraries_sha256=dependencies, nft_sha256=userspace[gate.NFT], nft_version=nft_version,
+                kernel_release=os.uname().release, image_boot_qualified=False)
         args.result.write_text(json.dumps(result, sort_keys=True, indent=2)+'\n')
         print(json.dumps({'result': 'pass', 'records': len(actual), 'default_drops': counter['packets']}))
     finally:

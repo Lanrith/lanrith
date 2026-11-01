@@ -9,6 +9,7 @@ import unittest
 from lanrith import admission, release
 from ids_fixture import report as ids_report
 from dns_fixture import report as dns_report
+from firewall_fixture import report as firewall_report
 
 
 NOW = datetime.datetime(2026, 1, 2, tzinfo=datetime.timezone.utc)
@@ -32,6 +33,7 @@ class AdmissionTests(unittest.TestCase):
         record['native_sha256'] = selection['files']['native-qualification.json'] = release.file_record(root/'native-qualification.json')['sha256']
         (root/'ids-qualification.json').write_bytes(release.canonical(ids_report(record['filesystem_sha256'], NOW)))
         (root/'dns-qualification.json').write_bytes(release.canonical(dns_report(record['filesystem_sha256'], NOW)))
+        (root/'firewall-qualification.json').write_bytes(release.canonical(firewall_report(record['filesystem_sha256'], NOW)))
         (root/'inventory.json').write_bytes(b'{"synthetic":true}\n')
         digest = selection['files']['inventory.json'] = release.file_record(root/'inventory.json')['sha256']
         security = {'schema': 1, 'inventory_sha256': digest, 'assessed_at': NOW.isoformat(), 'production_qualified': True,
@@ -42,6 +44,7 @@ class AdmissionTests(unittest.TestCase):
     def bind(self, root, selection, record, security):
         record['ids_sha256'] = selection['files']['ids-qualification.json'] = release.file_record(root/'ids-qualification.json')['sha256']
         record['dns_sha256'] = selection['files']['dns-qualification.json'] = release.file_record(root/'dns-qualification.json')['sha256']
+        record['firewall_sha256'] = selection['files']['firewall-qualification.json'] = release.file_record(root/'firewall-qualification.json')['sha256']
         (root/'qualification.json').write_bytes(release.canonical(record))
         digest = selection['files']['qualification.json'] = release.file_record(root/'qualification.json')['sha256']
         security['qualification']['record_sha256'] = digest

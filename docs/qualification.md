@@ -356,5 +356,23 @@ pseudo-filesystem mount units before testing; any other initial failure is
 rejected. It never clears an observer or core failure to pass the boot check.
 The generated unit keeps its 64 MiB, eight-task, 24-descriptor and 5%-of-one-CPU
 bounds. The remaining NET_ADMIN bounding bit cannot restore cleared capabilities
-under NoNewPrivileges. Mandatory base/admission integration, consumer mapping
-and complete-image qualification remain required before release.
+under NoNewPrivileges. Consumer mapping and complete-image qualification remain
+required before release.
+
+`scripts/qualify-firewall.py` is a required base-build gate. It stages the exact
+archived nft executable at its fixed native path and checks its complete loaded
+shared-library closure against ordinary root-owned files in the same archive.
+Missing, duplicate, linked or unsafe targets fail qualification. A broken
+executable or mismatched library cannot fall back to a builder executable.
+The container has no external network, and its source and subject mounts are
+read-only. The runner checks both inputs again after execution and publishes
+`firewall-qualification.json` only after removing its own container.
+
+Base qualification requires this receipt within six hours, with current source
+bindings, matching archive bytes and every generated-service check. Admission
+authenticates its artifact digest and validates the receipt at the base's
+original qualification time; a later security reassessment does not turn an
+old native test into a fresh test. The receipt records the actual host kernel
+and userspace versions. Tests using a component-only archive establish that
+component boundary; they do not qualify a complete base, its image kernel,
+translated paths or a signed owner image.

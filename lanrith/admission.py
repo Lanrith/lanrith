@@ -43,6 +43,7 @@ def assess(directory, selection, now=None):
                         ('credentials_sha256', 'credential-qualification.json'),
                         ('ids_sha256', 'ids-qualification.json'),
                         ('dns_sha256', 'dns-qualification.json'),
+                        ('firewall_sha256', 'firewall-qualification.json'),
                         ('filesystem_sha256', 'lanrith-base.tar.gz'),
                         ('initrd_sha256', 'lanrith-initrd-base.tar.gz')):
         require(record.get(field) == selection['files'].get(name) == file_record(directory/name)['sha256'],
@@ -63,4 +64,7 @@ def assess(directory, selection, now=None):
     from . import dns_qualification
     dns_qualification.validate(json.loads(read(directory/'dns-qualification.json', 262144), object_pairs_hook=unique),
                                record['filesystem_sha256'], now=qualified_at)
+    from . import firewall_qualification
+    firewall_qualification.validate(json.loads(read(directory/'firewall-qualification.json', 262144), object_pairs_hook=unique),
+                                    record['filesystem_sha256'], now=qualified_at)
     return value

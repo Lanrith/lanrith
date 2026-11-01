@@ -22,6 +22,8 @@ DIRECTORY = Path('/run/lanrith-firewall-observations')
 
 
 def run(*args, check=True):
+    if args[0] == 'nft':
+        args = ('/usr/sbin/nft', *args[1:])
     result = subprocess.run(args, capture_output=True, timeout=8)
     if check and result.returncode:
         sys.stderr.buffer.write((result.stdout+result.stderr)[-8192:])

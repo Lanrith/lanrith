@@ -12,7 +12,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, document, file_record, read, require, unique
-from lanrith import ids_qualification, dns_qualification
+from lanrith import ids_qualification, dns_qualification, firewall_qualification
 
 REQUIREMENTS = {'appropriate-platform', 'consistent-process', 'distributed-provenance',
                 'provenance-exists', 'provenance-authentic', 'provenance-unforgeable',
@@ -172,6 +172,8 @@ def qualify(directory, project, environment, *, now=None):
         file_record(directory/'lanrith-base.tar.gz')['sha256'], project=project, now=now)
     dns_qualification.validate(value(directory/'dns-qualification.json'),
         file_record(directory/'lanrith-base.tar.gz')['sha256'], project=project, now=now)
+    firewall_qualification.validate(value(directory/'firewall-qualification.json'),
+        file_record(directory/'lanrith-base.tar.gz')['sha256'], project=project, now=now)
     assessment = value(project/'security/slsa-assessment.json')
     require(assessment.get('schema') == 1 and assessment.get('specification') == 'SLSA v1.2' and
             assessment.get('target') == 'Build L3' and assessment.get('result') == 'design-assessed' and
@@ -218,6 +220,7 @@ def qualify(directory, project, environment, *, now=None):
         'credentials_sha256': file_record(directory/'credential-qualification.json')['sha256'],
         'ids_sha256': file_record(directory/'ids-qualification.json')['sha256'],
         'dns_sha256': file_record(directory/'dns-qualification.json')['sha256'],
+        'firewall_sha256': file_record(directory/'firewall-qualification.json')['sha256'],
         'filesystem_sha256': file_record(directory/'lanrith-base.tar.gz')['sha256'],
         'initrd_sha256': file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
         'requires_consumer_verified_file_and_oci_provenance': True}
