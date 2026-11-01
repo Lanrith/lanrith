@@ -8,6 +8,7 @@ qualify RADIUS authentication, LDAP, DHCP packets, translators or any image.
 """
 
 import argparse
+import copy
 import csv
 from datetime import datetime, timezone
 import hashlib
@@ -74,7 +75,8 @@ while True:
 '''
 
 
-def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None):
+def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None,
+            prepare_interfaces=None, prepare_ruleset=None):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
@@ -91,6 +93,9 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     # Trusted companion fixtures can observe the same lifecycle through their
     # own admitted-style reader. These hooks are Python-only test composition;
     # no runtime command, directory input or CLI option can select executable code.
+    # A companion may supply a disposable packet topology and the final native
+    # ruleset after its own extension wiring. The same finalization compiler then
+    # binds that ruleset; the normalized baseline is never replaced by the hook.
     observer = dict(base.OBSERVER if observer is None else observer)
     require(observer['uid'] == observer['gid'] == 1801, 'Fixture observer identity differs.')
     for uid, name in ((1701, 'router-policy-reader'), (1702, 'router-policy-operator'), (1801, observer['user'])):
@@ -99,12 +104,22 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     if configure is not None: value = configure(value)
     value['networks']['devices']['dhcp4']['id'] = 22
     value = config.normalize(value)
-    interfaces = base.prepare_interfaces(value)
+    interfaces = base.prepare_interfaces(value) if prepare_interfaces is None else prepare_interfaces(copy.deepcopy(value))
     for network in value['networks'].values():
         for address in network['addresses']:
             base.run('ip', 'address', 'add', address, 'dev', network['name'], *(['nodad'] if ':' in address else []))
     files = config.render(value)
     files.update(policy_agent.render(value, observer=observer))
+    library = Path('/usr/lib/lanrith/lanrith'); require(not library.exists(), 'Runtime library exists.')
+    library.mkdir(parents=True)
+    for name in ('__init__.py', 'release.py', 'policy_runtime.py', 'kea_runtime.py'):
+        shutil.copyfile(ROOT/'lanrith'/name, library/name)
+    wrapper = library.parent/'policy-runtime'
+    wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0,"/usr/lib/lanrith")\n'
+                       'from lanrith.policy_runtime import main\nsys.exit(main())\n'); wrapper.chmod(0o755)
+    ruleset = files['etc/nftables.conf'] if prepare_ruleset is None else prepare_ruleset(copy.deepcopy(value), dict(files))
+    require(isinstance(ruleset, str) and 0 < len(ruleset.encode()) <= 8*1024*1024,
+            'Companion native ruleset is missing or oversized.')
     contract = json.loads(files['etc/router-policy-agent/runtime/runtime.json'])
     require(contract['binding_collector']['subnet_id'] == 22, 'Generated DHCP scope differs.')
     policy_runtime.CONTRACT.parent.mkdir(parents=True, exist_ok=True)
@@ -115,7 +130,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         path.mkdir(mode=0o700, parents=True, exist_ok=True); path.chmod(0o700)
     with tempfile.TemporaryDirectory(prefix='nonempty-profile.') as temporary:
         work = Path(temporary)
-        (work/'base.nft').write_text(files['etc/nftables.conf'])
+        (work/'base.nft').write_text(ruleset)
         base.run('nft', '-f', str(work/'base.nft'))
         (work/'baseline.json').write_bytes(canonical(policy_agent.baseline(value)))
         (work/'ruleset.json').write_bytes(base.run('nft', '-j', 'list', 'ruleset').stdout)
@@ -132,13 +147,6 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     policy_runtime.publish_runtime(contract, metadata, 'c'*64)
     policy_runtime.empty_bindings()
     base.run('/usr/bin/router-policy-helper', '-config-directory', str(policy_runtime.CONFIG), '-initialize-state')
-    library = Path('/usr/lib/lanrith/lanrith'); require(not library.exists(), 'Runtime library exists.')
-    library.mkdir(parents=True)
-    for name in ('__init__.py', 'release.py', 'policy_runtime.py', 'kea_runtime.py'):
-        shutil.copyfile(ROOT/'lanrith'/name, library/name)
-    wrapper = library.parent/'policy-runtime'
-    wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0,"/usr/lib/lanrith")\n'
-                       'from lanrith.policy_runtime import main\nsys.exit(main())\n'); wrapper.chmod(0o755)
     units = Path('/run/systemd/system')
     names = (base.HELPER, *base.SOCKETS, *base.DEPENDENCIES, 'kea-dhcp4-server.service', 'freeradius.service')
     for name in (base.HELPER, base.DEPENDENCIES[1]):
@@ -242,6 +250,12 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         if observe_stage is not None: observe_stage('directory-reconfirmed', value, files)
         checks.append('recovered-producer-needs-fresh-directory-confirmation-without-helper-restart')
     except BaseException:
+        try:
+            diagnostic = {'result': 'failure-diagnostic-only', 'bindings': bindings(),
+                'links': json.loads(base.run('ip', '-d', '-j', 'link').stdout)}
+            output.with_suffix('.failure.json').write_bytes(canonical(diagnostic))
+        except Exception:
+            pass  # Preserve the original failure if its diagnostic read fails.
         raw = base.run('journalctl', '--no-pager', '-n', '60', '-u', base.HELPER, '-u', base.DEPENDENCIES[1],
             '-u', 'kea-dhcp4-server.service', check=False).stdout
         sys.stderr.buffer.write(raw[-16000:])  # Only isolated synthetic data.

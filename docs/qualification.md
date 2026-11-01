@@ -323,6 +323,12 @@ configuration callback, an observer account at the fixture UID/GID, and an
 `applied`, `incomplete`, `bindings-recovered` and `directory-reconfirmed`. This
 allows an extension's own read-only client to observe the same real lifecycle.
 These are test-code hooks; neither directory input nor the CLI selects code.
+`prepare_interfaces(configuration)` may create a companion's disposable topology
+and return its root interface names for cleanup. `prepare_ruleset(configuration,
+native_files)` may return the final native firewall after extension wiring.
+The fixture still compiles the unchanged normalized policy baseline against that
+actual loaded ruleset, matching image finalization order. Both hooks are local
+test composition only; they grant no image or selected-package admission.
 
 The experimental `tests/firewall_metadata_native.py` fixture tests an NFLOG
 codec and generated default-deny instrumentation. Its `--service` variant adds
