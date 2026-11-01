@@ -18,6 +18,7 @@ class Nat64RuntimeClockTests(unittest.TestCase):
         manifest = {'interface': 'nat64', 'state_directory': '/synthetic-state'}
         component = {'pending_set': 'native_n64_0_pending'}
         observation = {'pid': 123, 'start_ticks': '456', 'monotonic': 100000,
+                       'executable_device': 1, 'executable_inode': 2,
                        'configuration_sha256': hashlib.sha256(configuration).hexdigest()}
 
         def read(path, maximum):
@@ -29,7 +30,8 @@ class Nat64RuntimeClockTests(unittest.TestCase):
             if path.name == 'stat':
                 return '123 (tayga) '+' '.join(['S']+['0']*18+['456'])
             if path.name == 'status':
-                return 'Uid:\t1001\t1001\t1001\t1001\nCapEff:\t0000000000000000\n'
+                return 'Uid:\t1001\t1001\t1001\t1001\n'+''.join(
+                    key+':\t0000000000000000\n' for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'))
             raise AssertionError('Unexpected clock or process input: '+str(path))
 
         with ExitStack() as stack:
@@ -41,6 +43,7 @@ class Nat64RuntimeClockTests(unittest.TestCase):
                     (runtime, 'read', {'side_effect': read}),
                     (runtime.time, 'monotonic', {'return_value': 10}),
                     (runtime.pwd, 'getpwnam', {'return_value': SimpleNamespace(pw_uid=1001)}),
+                    (Path, 'stat', {'return_value': SimpleNamespace(st_dev=1, st_ino=2)}),
                     (Path, 'read_text', {'autospec': True, 'side_effect': read_text}),
                     (Path, 'read_bytes', {'return_value': b'/usr/sbin/tayga\0--nodetach\0--config\0/run/lanrith-nat64/tayga.conf\0'})):
                 stack.enter_context(patch.object(target, attribute, **options))
@@ -49,6 +52,12 @@ class Nat64RuntimeClockTests(unittest.TestCase):
                 with self.subTest(timestamp=timestamp):
                     observation['monotonic'] = timestamp
                     with self.assertRaisesRegex(ReleaseError, 'stale'):
+                        runtime.status(manifest, component)
+            observation['monotonic'] = 100000
+            for inode in (0, 3, True, 2.0):
+                with self.subTest(executable_inode=inode):
+                    observation['executable_inode'] = inode
+                    with self.assertRaises(ReleaseError):
                         runtime.status(manifest, component)
 
 

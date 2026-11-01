@@ -1,11 +1,13 @@
 """Publish retained NAT64 identities before starting an unprivileged translator."""
 
+import ctypes
 import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import pwd
+import select
 import signal
 import stat
 import subprocess
@@ -88,6 +90,106 @@ def kernel_uptime():
     return float(Path('/proc/uptime').read_text(encoding='ascii').split()[0])
 
 
+def process_identity(child, account):
+    """Attest this supervisor's child without granting ptrace to enforcement.
+
+    Linux restricts /proc/PID/exe to the target UID or a ptrace-capable reader.
+    A bounded fork drops to that UID, checks the immutable ELF, then exits. Its
+    private pipe and non-dumpable state prevent a translator from forging the
+    result. Only the existing root supervisor publishes the resulting witness.
+    """
+    require(os.geteuid() == 0 and account.pw_uid > 0 and account.pw_gid > 0 and
+            child.poll() is None and isinstance(child.args, list) and child.args and
+            all(isinstance(item, str) and '\0' not in item for item in child.args),
+            'Invalid NAT64 supervised child.')
+    expected = b'\0'.join(item.encode() for item in child.args)+b'\0'
+    require(len(expected) <= 4096, 'NAT64 child command exceeds its bound.')
+    incoming, outgoing = os.pipe2(os.O_CLOEXEC)
+    try:
+        worker = os.fork()
+    except BaseException:
+        os.close(incoming)
+        os.close(outgoing)
+        raise
+    if worker == 0:
+        try:
+            os.close(incoming)
+            libc = ctypes.CDLL(None, use_errno=True)
+            # Set both before and after dropping IDs: no same-UID process may
+            # attach to the worker or open its inherited private descriptors.
+            require(libc.prctl(4, 0, 0, 0, 0) == 0 and libc.prctl(38, 1, 0, 0, 0) == 0,
+                    'NAT64 identity worker isolation failed.')
+            os.setgroups([])
+            os.setresgid(account.pw_gid, account.pw_gid, account.pw_gid)
+            os.setresuid(account.pw_uid, account.pw_uid, account.pw_uid)
+            require(libc.prctl(4, 0, 0, 0, 0) == 0, 'NAT64 identity worker is dumpable.')
+            with Path('/proc/self/status').open('r', encoding='ascii') as stream:
+                worker_status = dict(line.split(':', 1) for line in stream.read(8192).splitlines())
+            require(os.getresuid() == (account.pw_uid,)*3 and os.getresgid() == (account.pw_gid,)*3 and
+                    os.getgroups() == [] and worker_status['NoNewPrivs'].strip() == '1' and
+                    all(int(worker_status[key].strip(), 16) == 0
+                        for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb')),
+                    'NAT64 identity worker retained authority.')
+            moment = kernel_uptime()
+            process = Path('/proc', str(child.pid))
+            with (process/'stat').open('rb') as stream:
+                before = stream.read(4097)
+            fields = before.rsplit(b') ', 1)[1].split()
+            require(len(before) <= 4096 and len(fields) > 19 and fields[0] not in (b'Z', b'X'),
+                    'NAT64 child identity unavailable.')
+            with (process/'cmdline').open('rb') as stream:
+                require(stream.read(4097) == expected, 'NAT64 child command changed.')
+            descriptor = os.open(process/'exe', os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                actual = os.fstat(descriptor)
+                pinned = os.stat(child.args[0], follow_symlinks=False)
+                require(stat.S_ISREG(actual.st_mode) and actual.st_uid == 0 and actual.st_nlink == 1 and
+                        actual.st_mode & (0o022 | stat.S_ISUID | stat.S_ISGID) == 0 and
+                        4 <= actual.st_size <= 64 << 20 and os.read(descriptor, 4) == b'\x7fELF' and
+                        (actual.st_dev, actual.st_ino) == (pinned.st_dev, pinned.st_ino) and
+                        os.readlink(process/'exe') == child.args[0], 'NAT64 child executable changed.')
+            finally:
+                os.close(descriptor)
+            with (process/'stat').open('rb') as stream:
+                after = stream.read(4097)
+            require(after.rsplit(b') ', 1)[1].split()[19] == fields[19], 'NAT64 child was replaced.')
+            payload = canonical({'pid': child.pid, 'start_ticks': fields[19].decode('ascii'),
+                'monotonic': moment, 'executable_device': actual.st_dev, 'executable_inode': actual.st_ino})
+            require(len(payload) <= 4096 and os.write(outgoing, payload) == len(payload),
+                    'NAT64 identity worker output failed.')
+        except BaseException:
+            os._exit(1)
+        os._exit(0)
+    os.close(outgoing)
+    reaped = False
+    deadline = time.monotonic()+2
+    try:
+        require(select.select([incoming], [], [], max(0, deadline-time.monotonic()))[0],
+                'NAT64 identity worker timed out.')
+        payload = os.read(incoming, 4097)
+        while True:
+            finished, status = os.waitpid(worker, os.WNOHANG)
+            if finished:
+                reaped = True
+                require(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+                        'NAT64 identity worker rejected the child.')
+                break
+            require(time.monotonic() < deadline, 'NAT64 identity worker timed out.')
+            time.sleep(.005)
+        value = json.loads(payload)
+        require(len(payload) <= 4096 and value['pid'] == child.pid and child.poll() is None,
+                'NAT64 child stopped during identity capture.')
+        return value
+    finally:
+        os.close(incoming)
+        if not reaped:
+            try:
+                os.kill(worker, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.waitpid(worker, 0)
+
+
 def status(manifest, component=None):
     component = runtime_contract(manifest) if component is None else component
     translation_runtime.status(manifest)
@@ -102,9 +204,12 @@ def status(manifest, component=None):
         require(set(snapshot(component, 'ready')) == set(current),
                 'NAT64 source identities are not installed.')
     observation = json.loads(read(runtime/'status.json', 4096))
-    require(set(observation) == {'pid', 'start_ticks', 'monotonic', 'configuration_sha256'} and
+    require(set(observation) == {'pid', 'start_ticks', 'monotonic', 'configuration_sha256',
+                                'executable_device', 'executable_inode'} and
             type(observation['pid']) is int and observation['pid'] > 1 and
             type(observation['monotonic']) in (int, float) and
+            all(type(observation[key]) is int and observation[key] > 0
+                for key in ('executable_device', 'executable_inode')) and
             observation['configuration_sha256'] == hashlib.sha256(configuration).hexdigest() and
             0 <= kernel_uptime()-observation['monotonic'] < 4, 'NAT64 runtime observation is stale.')
     process = Path('/proc', str(observation['pid']))
@@ -112,9 +217,13 @@ def status(manifest, component=None):
             'NAT64 translator process identity changed.')
     fields = dict(line.split(':', 1) for line in process.joinpath('status').read_text().splitlines())
     uid = pwd.getpwnam('lanrith-'+manifest['interface']).pw_uid
-    require(set(fields['Uid'].split()) == {str(uid)} and int(fields['CapEff'].strip(), 16) == 0,
+    require(set(fields['Uid'].split()) == {str(uid)} and
+            all(int(fields[key].strip(), 16) == 0 for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb')),
             'NAT64 translator privileges differ from the required account.')
     binary = '/usr/lib/lanrith/tayga-internal' if manifest['interface'] == 'nat64-internal' else '/usr/sbin/tayga'
+    image = Path(binary).stat()
+    require((observation['executable_device'], observation['executable_inode']) == (image.st_dev, image.st_ino),
+            'NAT64 translator executable identity changed.')
     expected = [binary, '--nodetach', '--config', str(runtime/'tayga.conf')]
     require(process.joinpath('cmdline').read_bytes().split(b'\0') == [part.encode() for part in expected]+[b''],
             'NAT64 translator command changed.')
@@ -166,12 +275,11 @@ def supervise(manifest, *, stop=None):
                                              user=account.pw_uid, group=account.pw_gid, extra_groups=[],
                                              stdin=subprocess.DEVNULL)
                 require(child.poll() is None, 'NAT64 translator exited unexpectedly.')
-                start_ticks = Path('/proc', str(child.pid), 'stat').read_text().rsplit(') ', 1)[1].split()[19]
+                identity = process_identity(child, account)
                 configuration_sha256 = hashlib.sha256(
                     allocations.configuration(manifest, current)).hexdigest()
                 allocations.atomic_write(runtime/'status.json', canonical(
-                    {'pid': child.pid, 'start_ticks': start_ticks, 'monotonic': kernel_uptime(),
-                     'configuration_sha256': configuration_sha256}), mode=0o644)
+                    {**identity, 'configuration_sha256': configuration_sha256}), mode=0o644)
                 # A burst of new clients causes at most one restart per second.
                 # Static mappings and both conntrack legs survive that restart.
                 time.sleep(1)

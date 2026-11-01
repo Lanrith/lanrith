@@ -235,7 +235,8 @@ raise AssertionError('Expected a correlated NAT64 port error')
                 runtime = Path('/run/lanrith-'+manifest['interface'])
                 observation = json.loads((runtime/'status.json').read_bytes())
                 self_digest = hashlib.sha256((runtime/'tayga.conf').read_bytes()).hexdigest()
-                assert set(observation) == {'pid', 'start_ticks', 'monotonic', 'configuration_sha256'}
+                assert set(observation) == {'pid', 'start_ticks', 'monotonic', 'configuration_sha256',
+                                            'executable_device', 'executable_inode'}
                 assert observation['configuration_sha256'] == self_digest
                 assert 0 <= float(Path('/proc/uptime').read_text().split()[0])-observation['monotonic'] < 4
             checks.append('the allocator owns retained state; both translator children have no effective capabilities and verified readiness')
