@@ -10,10 +10,10 @@ TEMPORARY = re.compile(r'^(?:unsigned-package-(?:qualification|stage)|qualified-
                        r'unsigned-build-cache|untrusted-build-cache|verified-build-cache|synthetic-inline-cache|'
                        r'qualified-release|attested-release|qualified-(?:amd64|arm64)|'
                        r'assessed-inventories|signed-assessments|security-proposal|security-decision|'
-                       r'runner-disk-(?:packages|native)|publication-verification|attested-publication|security-proposal-audit|security-proposal-result|'
-                       r'security-approved-decision|security-admission-decision|package-security-diagnostics|cleanup-plan|cleanup-result|attested-maintenance-(?:proposal|decision|cleanup|cleanup-result|publication))(?:-[0-9]+)?$')
+                       r'runner-capacity-(?:plan|result)|runner-disk-(?:packages|native)|publication-verification|attested-publication|security-proposal-audit|security-proposal-result|'
+                       r'security-approved-decision|security-admission-decision|package-security-diagnostics|cleanup-plan|cleanup-result|attested-maintenance-(?:proposal|decision|cleanup|cleanup-result|publication|capacity-plan|capacity-result))(?:-[0-9]+)?$')
 WORKFLOWS = {'Package qualification', 'Release', 'Retained release security', 'Check', 'CI',
-             'Propose dependency updates', 'Security update review'}
+             'Propose dependency updates', 'Security update review', 'Recover insufficient runner capacity'}
 
 
 def plan(repo, *, get=api, clock=None):

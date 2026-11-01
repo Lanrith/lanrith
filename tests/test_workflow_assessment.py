@@ -18,6 +18,8 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
             shutil.copytree(ROOT/'.github/workflows', root/'.github/workflows')
             (root/'security').mkdir()
             (root/'scripts').mkdir()
+            (root/'automation').mkdir()
+            shutil.copyfile(ROOT/'automation/capacity.py', root/'automation/capacity.py')
             shutil.copyfile(ROOT/'security/slsa-assessment.json', root/'security/slsa-assessment.json')
             shutil.copyfile(ROOT/'scripts/check-workflows.py', root/'scripts/check-workflows.py')
             shutil.copyfile(ROOT/'scripts/publish-release.py', root/'scripts/publish-release.py')
@@ -116,3 +118,14 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
         result=self.check(change)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('60 GiB build budget',result.stderr)
+
+    def test_capacity_retry_cannot_skip_its_archive_or_use_untrusted_checkout(self):
+        changes = (
+            lambda s:s.replace('needs: [plan, archive-plan]','needs: plan',1),
+            lambda s:s.replace('ref: ${{ job.workflow_sha }}','ref: main',1),
+            lambda s:s.replace('python3 tools/scripts/retry-runner-capacity.py plan','python3 pr/scripts/retry-runner-capacity.py plan',1),
+            lambda s:s.replace('      contents: read\n      actions: write','      contents: write\n      actions: write',1),
+        )
+        for transform in changes:
+            with self.subTest(transform=transform):
+                self.assertNotEqual(self.changed_workflow('.github/workflows/retry-runner-capacity.yml',transform).returncode,0)

@@ -13,7 +13,8 @@ reviewed = assessment.get('reviewed_workflows', {})
 assert set(reviewed) == {'.github/workflows/build-base.yml', '.github/workflows/release.yml',
     '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
     '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
-    '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'}, \
+    '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml',
+    '.github/workflows/retry-runner-capacity.yml'}, \
     'The reviewed workflow set is incomplete; review the platform assessment before building.'
 for name, expected in reviewed.items():
     assert isinstance(expected, str) and re.fullmatch('[0-9a-f]{64}', expected) and \
@@ -157,6 +158,35 @@ for path in (root/'.github/workflows').glob('*.yml'):
         assert value['permissions'] == {} and set(value['jobs']) == {'signal'}, path.name
         assert value['jobs']['signal']['steps'] == [{'run': 'true'}], 'Untrusted PR routing can only signal, without checkout or write permissions'
         assert set(value[True]['pull_request']['types']) == {'opened', 'reopened', 'synchronize', 'ready_for_review'}, path.name
+    if path.name == 'retry-runner-capacity.yml':
+        assert value['permissions'] == {} and value.get('cache-mode') == 'none', path.name
+        assert value[True] == {'workflow_run': {'workflows': ['Release', 'Package qualification'], 'types': ['completed']}}, path.name
+        assert value['concurrency'] == {'group': 'runner-capacity-${{ github.event.workflow_run.id }}', 'cancel-in-progress': False}, path.name
+        jobs = value['jobs']
+        assert set(jobs) == {'plan','archive-plan','retry','archive-result'}, path.name
+        assert jobs['plan']['if'] == ("github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && "
+            "github.event.workflow_run.conclusion == 'failure'"), 'Capacity planning must use trusted Main failure events only'
+        assert jobs['plan']['permissions'] == {'contents':'read','actions':'read','pull-requests':'read'}, path.name
+        assert jobs['retry']['permissions'] == {'contents':'read','actions':'write','pull-requests':'read'}, path.name
+        assert jobs['archive-plan']['needs'] == 'plan' and jobs['archive-plan']['if'] == "needs.plan.outputs.archive == 'true'", 'Ignored capacity events must not create archives'
+        upload = next(step for step in jobs['plan']['steps'] if step.get('id') == 'upload')
+        assert upload['if'] == "steps.plan.outputs.archive == 'true'", 'Ignored capacity events must not upload temporary records'
+        assert set(jobs['retry']['needs']) == {'plan','archive-plan'} and jobs['retry']['if'] == "needs.plan.outputs.eligible == 'true'", 'Retry must wait for archived eligible intent'
+        for name in ('plan','retry'):
+            job = jobs[name]
+            assert job['runs-on'] == 'ubuntu-24.04' and job['timeout-minutes'] == 5 and \
+                job['env']['LANRITH_TOOLS_SHA'] == '${{ github.workflow_sha }}', path.name
+            checkout = job['steps'][0]
+            assert checkout['uses'].startswith('actions/checkout@') and checkout['with'] == {
+                'repository':'${{ job.workflow_repository }}','ref':'${{ job.workflow_sha }}',
+                'path':'tools','persist-credentials':False}, 'Capacity recovery must never execute PR source'
+            commands = [step['run'] for step in job['steps'] if 'run' in step]
+            assert len(commands)==1 and commands[0].startswith('python3 tools/scripts/retry-runner-capacity.py '+('plan ' if name=='plan' else 'execute ')), path.name
+            assert 'build-base.py' not in str(job) and 'setup-go@' not in str(job), path.name
+        for name, topic in (('archive-plan','capacity-plan'),('archive-result','capacity-result')):
+            assert jobs[name]['uses'] == './.github/workflows/archive-evidence.yml' and jobs[name]['with']['topic'] == topic, path.name
+        assert jobs['archive-result']['if'] == "always() && needs.retry.outputs.result-id != ''", path.name
+        assert 'MAX_ATTEMPTS = 3' in (root/'automation/capacity.py').read_text(), 'Capacity retries must remain bounded'
     if path.name == 'request-human-review.yml':
         job = value['jobs']['notify']
         assert "github.ref == 'refs/heads/main'" in job['if'] and 'environment' not in job, path.name
