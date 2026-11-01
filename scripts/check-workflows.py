@@ -55,6 +55,20 @@ for path in (root/'.github/workflows').glob('*.yml'):
         handoff = next(step for step in jobs['attest']['steps'] if step.get('id') == 'cache-download')
         assert handoff['with']['artifact-ids'] == '${{ needs.packages.outputs.cache-artifact-id }}', path.name
         assert "needs.build.outputs.production-qualified == 'true'" in handoff['if'], path.name
+    if path.name in ('build-base.yml', 'package-check.yml'):
+        for job_name, role in (('packages', 'packages'), ('build', 'native')):
+            steps = value['jobs'][job_name]['steps']
+            preparation = next(i for i, step in enumerate(steps) if step.get('id') == 'runner-disk')
+            assert steps[preparation]['run'] == 'python3 scripts/prepare-runner.py', 'Build jobs must share the reviewed disk preparation'
+            first_download = next(i for i, step in enumerate(steps) if step.get('uses', '').startswith('actions/download-artifact@'))
+            assert preparation < first_download, 'Disk preparation must precede artifact downloads'
+            report = steps[preparation+1]
+            assert report['if'] == 'always()' and report['uses'].startswith('actions/upload-artifact@') and report['with'] == {
+                'name': 'runner-disk-'+role+'-${{ github.run_attempt }}',
+                'path': '${{ runner.temp }}/runner-disk.json', 'if-no-files-found': 'ignore', 'retention-days': 1}, \
+                'Disk failures must retain bounded one-day diagnostics'
+        preparation_source = (root/'scripts/prepare-runner.py').read_text()
+        assert 'MINIMUM_FREE_BYTES = 60 * 1024**3' in preparation_source, 'The reviewed 60 GiB build budget must remain enforced'
     if path.name == 'package-check.yml':
         jobs = value['jobs']
         assert jobs['preflight']['uses'] == './.github/workflows/check.yml', path.name

@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "kind": "hosted-runner-disk-preparation-repair",
+  "recorded_at": "2026-11-01T12:25:12.403856+00:00",
+  "reason": "The native release job failed its unchanged 60 GiB free-space guard before downloading the successful package stage. The old inline cleanup neither reclaimed the documented Swift/GHCup installation directories nor reported the measured space.",
+  "actual_failure": {
+    "run": 41298764267,
+    "attempt": 1,
+    "job": 124844219670,
+    "source": "df7600c696b36340b20d5a70de7c118a16fc9582",
+    "stage": "Reserve disk for image and native qualification",
+    "error": "AssertionError: At least 60 GiB free disk is required",
+    "measured_free_bytes": null,
+    "measurement_limit": "The old guard did not log the actual available bytes. No exact shortage is inferred.",
+    "runner": {
+      "image": "ubuntu-24.04",
+      "version": "20261018.96.1",
+      "cloud": "AWS",
+      "region": "us-east-1"
+    },
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/41298764267"
+  },
+  "same_source_successful_pr_qualification": {
+    "run": 41289732431,
+    "job": 124811326431,
+    "runner": {
+      "image": "ubuntu-24.04",
+      "version": "20261025.353.1",
+      "cloud": "Azure",
+      "region": "northcentralus"
+    },
+    "qualification": "pass"
+  },
+  "bounded_operational_recovery": {
+    "run": 41298764267,
+    "attempt": 2,
+    "source": "df7600c696b36340b20d5a70de7c118a16fc9582",
+    "package_artifact": 13083002769,
+    "request": "One normal failed-job/dependants retry on a new hosted runner; successful package compilation is reused.",
+    "observed": "The unchanged disk guard passed and image/native assembly started. Full production qualification and immutable publication remain separate pending checks.",
+    "source_changes": [],
+    "disk_requirement_lowered": false,
+    "security_validation_bypassed": false
+  },
+  "repair": {
+    "shared_preparation": "scripts/prepare-runner.py",
+    "jobs": [
+      "build-base/packages",
+      "build-base/build",
+      "package-check/packages",
+      "package-check/build"
+    ],
+    "minimum_free_bytes": 64424509440,
+    "cleanup_scope": "Fixed unused SDK directories on disposable GitHub-hosted Linux only, including /usr/share/swift and /usr/local/.ghcup. No environment-supplied cleanup paths.",
+    "protected_paths": "Source, Go, Python, Node action runtimes, Docker, package artifacts and build caches are not cleanup targets.",
+    "diagnostics": "Whitelisted runner identity, actual free/used/total bytes before and after cleanup, fixed cleanup paths and pass/fail reason. No full environment or privileged work tree is collected.",
+    "retention": "One small JSON artifact per package/native job, uploaded even on preparation failure, expires after one day and is eligible for the existing two-hour completed-run cleanup.",
+    "preflight": "Reject omission of shared preparation, reduced disk budget, late preparation or missing failure diagnostics before expensive compilation."
+  },
+  "validation": {
+    "local_suite": {
+      "tests": 889,
+      "passed": 874,
+      "existing_environment_skips": 15,
+      "result": "pass"
+    },
+    "cases": [
+      "Original 60 GiB boundary and one byte below it",
+      "Insufficient space retains actual measurements",
+      "Cleanup errors fail without claiming space was reclaimed",
+      "Local/self-hosted/non-Linux execution cannot invoke cleanup",
+      "Symlinked report cannot redirect writes",
+      "Runner temporary directory aliases work",
+      "Environment overrides cannot change fixed SDK cleanup targets",
+      "Diagnostics omit credential canaries",
+      "Every package/native workflow prepares disk before artifact download",
+      "Only completed known diagnostics enter bounded cleanup",
+      "Matching assessment hashes cannot waive disk preparation or failure reports"
+    ],
+    "hosted_final_head_qualification": "required-before-human-review-request"
+  },
+  "approval": "A new source/workflow change needs actual independent human review on its final qualified head. The prior PR47 approval does not approve this repair.",
+  "traceability": "Exact source, failure logs, successful same-source PR qualification, single retry intent/result and complete local validation are archived immutably before PR publication. Future hosted qualification, approval, protected merge and production publication are recorded separately.",
+  "references": [
+    "https://docs.github.com/en/actions/concepts/runners/github-hosted-runners",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/variables",
+    "https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-swift.sh",
+    "https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-haskell.sh"
+  ],
+  "paid_ai": false,
+  "protection_bypass": false,
+  "production_publication_verified": false
+}
