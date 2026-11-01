@@ -21,6 +21,7 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
             shutil.copyfile(ROOT/'security/slsa-assessment.json', root/'security/slsa-assessment.json')
             shutil.copyfile(ROOT/'scripts/check-workflows.py', root/'scripts/check-workflows.py')
             shutil.copyfile(ROOT/'scripts/publish-release.py', root/'scripts/publish-release.py')
+            shutil.copyfile(ROOT/'scripts/prepare-runner.py', root/'scripts/prepare-runner.py')
             if mutation:
                 mutation(root)
             return subprocess.run([sys.executable, str(root/'scripts/check-workflows.py')],
@@ -56,7 +57,8 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
             path.write_text(transform(path.read_text()))
             assessment = root/'security/slsa-assessment.json'
             value = json.loads(assessment.read_text())
-            value['reviewed_workflows'][name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            if name in value['reviewed_workflows']:
+                value['reviewed_workflows'][name] = hashlib.sha256(path.read_bytes()).hexdigest()
             assessment.write_text(json.dumps(value))
         return self.check(change)
 
@@ -92,3 +94,25 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
         for transform in changes:
             with self.subTest(transform=transform):
                 self.assertNotEqual(self.changed_workflow('.github/workflows/publish-release.yml',transform).returncode,0)
+
+    def test_disk_preparation_cannot_be_skipped_even_with_matching_workflow_hash(self):
+        for name in ('.github/workflows/build-base.yml','.github/workflows/package-check.yml'):
+            with self.subTest(workflow=name):
+                result = self.changed_workflow(name,lambda s:s.replace('python3 scripts/prepare-runner.py','true',1))
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('share the reviewed disk preparation',result.stderr)
+
+    def test_failed_disk_preparation_cannot_hide_its_diagnostics(self):
+        for name in ('.github/workflows/build-base.yml','.github/workflows/package-check.yml'):
+            with self.subTest(workflow=name):
+                result = self.changed_workflow(name,lambda s:s.replace('if: always()','if: success()',1))
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('retain bounded one-day diagnostics',result.stderr)
+
+    def test_lowering_the_disk_budget_is_rejected_before_expensive_work(self):
+        def change(root):
+            path=root/'scripts/prepare-runner.py'
+            path.write_text(path.read_text().replace('MINIMUM_FREE_BYTES = 60 *','MINIMUM_FREE_BYTES = 30 *'))
+        result=self.check(change)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('60 GiB build budget',result.stderr)
