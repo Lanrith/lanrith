@@ -38,7 +38,7 @@ jobs:
           root=pathlib.Path('evidence')
           files=list(root.iterdir())
           assert 0 < len(files) <= 20
-          assert all(p.is_file() and not p.is_symlink() and p.name in ('update-record.json','proposed-inputs.tar.gz','input-evidence.tar.gz','cleanup-record.json','publication-verification.json') and 0 < p.stat().st_size <= 32*1024**2 for p in files)
+          assert all(p.is_file() and not p.is_symlink() and p.name in ('update-record.json','proposed-inputs.tar.gz','input-evidence.tar.gz','cleanup-record.json','publication-verification.json','capacity-record.json') and 0 < p.stat().st_size <= 32*1024**2 for p in files)
           for p in files:
               if p.suffix=='.json': assert json.loads(p.read_text())['schema']==1
           PY
@@ -77,7 +77,7 @@ jobs:
       - id: publish
         name: Publish an append-only audit release
         run: |
-          [[ "$TOPIC" =~ ^(proposal|decision|cleanup|cleanup-result|publication)$ ]]
+          [[ "$TOPIC" =~ ^(proposal|decision|cleanup|cleanup-result|publication|capacity-plan|capacity-result)$ ]]
           tag="audit-$TOPIC-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --draft --prerelease --latest=false --title "Maintenance $TOPIC evidence" \
