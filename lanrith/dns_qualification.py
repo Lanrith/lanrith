@@ -18,7 +18,7 @@ CHECKS = {'packaged-unbound-dnstap', 'generated-unit-verification',
     'collector-restart-epoch-and-reconnect', 'dns-survives-absent-collector-and-socket',
     'disabled-selection-removes-endpoint-and-keeps-dns'}
 IMPLEMENTATION = {'lanrith/dns_observations.py', 'lanrith/dns_observations_runtime.py', 'lanrith/dns_metadata.py',
-    'lanrith/dns_qualification.py', 'lanrith/extension_observations.py', 'lanrith/extensions.py',
+    'lanrith/dns_qualification.py', 'lanrith/observation_accounts.py', 'lanrith/observation_spool.py', 'lanrith/extension_observations.py', 'lanrith/extensions.py',
     'tests/test_dns_observations.py', 'tests/dns_observations_native.py', 'lanrith/build.py', 'lanrith/config.py',
     'lanrith/intent.py', 'lanrith/service_plane.py', 'lanrith/policy_runtime.py', 'lanrith/release.py',
     'builders/unbound-source.lock', 'tests/test_extension_network.py', 'examples/minimal.yaml',
@@ -28,7 +28,7 @@ IMPLEMENTATION = {'lanrith/dns_observations.py', 'lanrith/dns_observations_runti
 HEX = re.compile(r'[0-9a-f]{64}\Z')
 ASSEMBLY = set(dns_observations.render({'user': 'example-agent', 'uid': 1801, 'gid': 1801})) | {
     'etc/passwd', 'etc/group', 'usr/lib/lanrith/lanrith/dns_metadata.py',
-    'usr/lib/lanrith/lanrith/dns_observations_runtime.py'}
+    'usr/lib/lanrith/lanrith/dns_observations_runtime.py', 'usr/lib/lanrith/lanrith/observation_spool.py'}
 
 
 def implementation(project):

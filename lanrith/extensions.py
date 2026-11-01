@@ -159,7 +159,8 @@ def overlay(configuration, selected, destination, base_files=None):
                 identity, value.get('credentials', []), value['files']), bool(active or value['health_units'])))
         replaced.update(value.get('replaces', []))
         digests[identity] = expected
-    extension_observations.install(configuration, observations, destination)
+    require(extension_observations.resolve(configuration, observations, service='firewall') is None or
+            'etc/nftables.conf' not in replaced, 'Firewall observations require the compiled core ruleset.')
     credential_catalogs = extension_credential_config.install(credentials, destination,
         configuration.get('administration', {}).get('username', 'admin'))
     plan = extension_network.resolve(configuration, declarations)
@@ -171,6 +172,9 @@ def overlay(configuration, selected, destination, base_files=None):
         if plan['services']:
             (destination/'etc/lanrith/services.nft').write_text(service_plane.namespace_firewall(
                 configuration, service_plane.topology(configuration), extension_rules=plan))
+    # Observation binding follows the final typed network projection, so adding
+    # listeners cannot overwrite the sampled drop path or its ruleset digest.
+    extension_observations.install(configuration, observations, destination)
     return {'digests': digests, 'health_units': sorted(set(units)), 'identities': identities,
             'start_units': sorted(set(starts)), 'credential_catalogs': credential_catalogs}
 
@@ -203,8 +207,9 @@ def identity_declarations(value):
 
 
 def account_overlay(accounts, declarations, destination, reserved_name='admin'):
-    from . import dns_observations
+    from . import dns_observations, firewall_observations
     declarations = [*declarations, *dns_observations.account_declarations(accounts, declarations, destination)]
+    declarations = [*declarations, *firewall_observations.account_declarations(accounts, declarations, destination)]
     if not any(value['users'] or value['groups'] for value in declarations):
         return
     require(set(accounts) == {'passwd', 'group'}, 'Admitted base account registry is missing.')

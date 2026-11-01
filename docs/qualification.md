@@ -325,8 +325,9 @@ allows an extension's own read-only client to observe the same real lifecycle.
 These are test-code hooks; neither directory input nor the CLI selects code.
 
 The experimental `tests/firewall_metadata_native.py` fixture tests an NFLOG
-codec and generated default-deny instrumentation. It is not connected to image
-assembly, extension admission or a deployed collector. Run it only in an
+codec and generated default-deny instrumentation. Its `--service` variant adds
+actual build-allocated accounts, generated systemd wiring and the bounded spool.
+The candidate has no current release or full-image admission. Run it only in an
 offline disposable container with separate mount/network namespaces, read-only
 source and one writable result directory. The fixture checks both namespace
 identities against controller-supplied `LANRITH_FIXTURE_OUTER_NET` and
@@ -348,5 +349,12 @@ exhausting the sampler must leave denied packets blocked and explicitly allowed
 UDP replies available. Sampling and startup gaps prevent a complete packet-count
 claim. Earlier guards, explicit-owner rules, policy-agent and translator paths,
 output and service namespaces are outside this fixture's observation coverage.
-Account allocation, a bounded service/spool, admission, consumer integration and
-complete-image qualification remain required before exposing this endpoint.
+The service variant also checks reader write/credential denial, forced restart,
+an invalid contract actually exiting and the real global boot checker, and
+disabled endpoint removal. Its rootless fixture masks only four known kernel
+pseudo-filesystem mount units before testing; any other initial failure is
+rejected. It never clears an observer or core failure to pass the boot check.
+The generated unit keeps its 64 MiB, eight-task, 24-descriptor and 5%-of-one-CPU
+bounds. The remaining NET_ADMIN bounding bit cannot restore cleared capabilities
+under NoNewPrivileges. Mandatory base/admission integration, consumer mapping
+and complete-image qualification remain required before release.

@@ -69,6 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--receive', type=Path)
     parser.add_argument('--result', type=Path)
+    parser.add_argument('--service', action='store_true')
     args = parser.parse_args()
     if args.receive:
         receive(args.receive)
@@ -112,15 +113,19 @@ def main():
         run('sysctl', '-w', 'net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1')
         run('nft', '-c', '-f', '-', input=observed.encode())
         run('nft', '-f', '-', input=observed.encode())
-        receiver = subprocess.Popen(['setpriv', '--reuid=2001', '--regid=2001', '--clear-groups',
-            '--inh-caps=+net_admin', '--ambient-caps=+net_admin', '--bounding-set=-all,+net_admin', '--no-new-privs',
-            'python3', '-B', str(Path(__file__)), '--receive', str(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if args.service:
+            from firewall_service_native import Receiver
+            receiver = Receiver(value, baseline, root)
+        else:
+            receiver = subprocess.Popen(['setpriv', '--reuid=2001', '--regid=2001', '--clear-groups',
+                '--inh-caps=+net_admin', '--ambient-caps=+net_admin', '--bounding-set=-all,+net_admin', '--no-new-privs',
+                'python3', '-B', str(Path(__file__)), '--receive', str(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         children.append(receiver)
         def ready():
             assert receiver.poll() is None, receiver.communicate()
             return json.loads((root/'ready.json').read_text()) if (root/'ready.json').exists() else None
         role = wait(ready)
-        assert role['uid'] == 2001 and all(int(role['capabilities'][key], 16) == 0 for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'))
+        assert role['uid'] != 0 and all(int(role['capabilities'][key], 16) == 0 for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'))
         assert role['firewall_write_denied'] and role['reconfiguration_denied']
         try:
             duplicate = wire.kernel_listener()
@@ -193,17 +198,20 @@ while True:time.sleep(1)
         counter = next(item['counter'] for item in default['expr'] if 'counter' in item)
         assert counter['packets'] >= 1100
         assert any('drop' in item for item in default['expr'])
+        extra_checks = receiver.qualify_lifecycle(udp) if args.service else []
         result = {'schema': 1, 'result': 'pass', 'scope': 'NFLOG codec and unchanged generated default-deny proof only',
             'implementation_sha256': {'lanrith/firewall_metadata.py': hashlib.sha256((SOURCE/'lanrith/firewall_metadata.py').read_bytes()).hexdigest(),
                                       'tests/firewall_metadata_native.py': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
             'checks': ['exact generated nft syntax and original rules preserved', 'nonroot receiver discards all effective/permitted/inheritable/ambient capabilities',
                 'receiver cannot write firewall or reconfigure the group', 'group cannot be stolen; unrelated UID cannot bind',
                 'real IPv4/IPv6 TCP/UDP/ICMP input and forward default-deny tuples',
-                'stalled and absent receiver plus exhausted sampling never admits denied traffic or blocks allowed traffic'],
+                'stalled and absent receiver plus exhausted sampling never admits denied traffic or blocks allowed traffic', *extra_checks],
             'receiver': role, 'records': actual, 'unconditional_forward_drops': counter['packets'],
             'allowed_echoes': len(received), 'payload_exported': False, 'runtime_endpoint_admitted': False,
+            'generated_service_tested': args.service,
+            'assembly_sha256': receiver.assembly if args.service else None,
             'private_image_qualified': False, 'external_network': False,
-            'limits': ['no service, spool, account-allocation or extension admission integration',
+            'limits': ['no current release, base or full-image admission' if args.service else 'no service, spool, account-allocation or extension admission integration',
                        'no earlier guard, explicit-owner deny, policy-helper, translator, output or service-namespace observations',
                        'TCP/ICMP validation proves sampled drop-path metadata; no claim of allowed TCP/ICMP application service',
                        'synthetic namespaces/packets; no full image or persistent lifecycle']}

@@ -340,7 +340,8 @@ An optional `observations` manifest list selects fixed read-only endpoints:
 ```json
 [{"service": "policy", "user": "example-agent"},
  {"service": "logs", "user": "example-agent"},
- {"service": "dns", "user": "example-agent"}]
+ {"service": "dns", "user": "example-agent"},
+ {"service": "firewall", "user": "example-agent"}]
 ```
 
 The reader and its primary group must belong to that extension's identities.
@@ -394,6 +395,32 @@ and rejected records, failed writes, overwritten records and disconnects.
 These are collection counters; loss inside Unbound or before the collector is
 not fully measurable. Consumers must report gaps and avoid claiming complete
 DNS history. A quiet file is not a resolver health signal.
+
+The candidate `firewall` endpoint records sampled host input/forward default
+drops. Assembly preserves all existing rules, then adds a bounded logging
+statement immediately before an unconditional counter/drop in each default-deny
+path. Typed extension listeners are resolved first, and the manifest binds the
+final generated ruleset. A whole-firewall replacement cannot select this
+endpoint. Earlier guards, explicit-owner rules, policy-agent, translator,
+output and service-namespace decisions remain outside its observation coverage.
+
+Its locked account is allocated at build time, independently of the DNS
+collector. The service briefly needs NET_ADMIN to bind one fixed NFLOG group;
+before decoding packets it clears effective, permitted, inheritable and ambient
+capabilities. The bounding set remains NET_ADMIN only, and NoNewPrivileges
+prevents regaining it through exec. The admitted reader receives only group
+read access to `/run/lanrith-firewall-observations`, with no kernel socket or
+firewall-control authority. Stopping the receiver or exhausting the log sampler
+does not affect the unconditional drop.
+
+The shared volatile spool has the same three-file and line bounds as DNS. Each
+record binds original kernel time, boot, producer epoch, ordinal, ruleset hash,
+hook and rule identity to a bounded IPv4/IPv6 TCP/UDP/ICMP tuple. Packet payloads,
+MAC headers, marks and socket-owner details are omitted. Health separates
+rejections, failed writes, overwritten records, kernel sequence gaps, netlink
+overrun signals and startup gaps. These cannot establish complete packet counts
+or original client identity through translation. This candidate still needs its
+mandatory base/admission gate and complete-image qualification before release.
 
 DNS starts with a bounded, optional socket dependency and has no collector
 readiness dependency. The collector retries at five-second intervals without

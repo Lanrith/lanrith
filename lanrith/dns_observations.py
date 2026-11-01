@@ -73,27 +73,5 @@ def install(configuration, observer, destination):
 
 
 def account_declarations(accounts, declarations, destination):
-    """Allocate the locked collector account while building the immutable /etc.
-
-    Never defer a new account or UID decision to a deployed read-only image.
-    Both registries and all extension identities reserve their numbers first.
-    """
-    if not (destination/CONFIG).exists():
-        return []
-    require(set(accounts) == {'passwd', 'group'}, 'DNS collector needs admitted base accounts.')
-    rows = {kind: [line.split(':') for line in text.decode().splitlines() if line]
-            for kind, text in accounts.items()}
-    require(all(row[0] != ACCOUNT for entries in rows.values() for row in entries),
-            'Base already has an unreviewed DNS collector identity.')
-    used = {int(row[2]) for entries in rows.values() for row in entries}
-    for declaration in declarations:
-        for kind in ('users', 'groups'):
-            for entry in declaration[kind]:
-                require(entry['name'] != ACCOUNT, 'Integration collides with the DNS collector.')
-                used.add(entry['gid'])
-                if kind == 'users':
-                    used.add(entry['uid'])
-    selected = next((uid for uid in range(100, 1000) if uid not in used), None)
-    require(selected is not None, 'No unused system identity for the DNS collector.')
-    return [{'users': [{'name': ACCOUNT, 'uid': selected, 'gid': selected}],
-             'groups': [{'name': ACCOUNT, 'gid': selected}]}]
+    from .observation_accounts import allocate
+    return allocate(accounts, declarations, destination, name=ACCOUNT, manifest=CONFIG)

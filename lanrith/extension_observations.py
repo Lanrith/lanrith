@@ -4,14 +4,14 @@ from .release import require
 
 
 def declarations(value, identities):
-    require(isinstance(value, list) and len(value) <= 3,
-            'Integration observations must select at most three supported endpoints.')
+    require(isinstance(value, list) and len(value) <= 4,
+            'Integration observations must select at most four supported endpoints.')
     users = {entry['name']: entry for entry in identities['users']}
     groups = {entry['gid'] for entry in identities['groups']}
     result = []
     for entry in value:
         require(isinstance(entry, dict) and set(entry) == {'service', 'user'} and
-                entry['service'] in ('policy', 'logs', 'dns') and isinstance(entry['user'], str) and
+                entry['service'] in ('policy', 'logs', 'dns', 'firewall') and isinstance(entry['user'], str) and
                 entry['user'] in users, 'Invalid integration observation declaration.')
         user = users[entry['user']]
         require(user['gid'] in groups,
@@ -23,12 +23,13 @@ def declarations(value, identities):
 
 
 def resolve(configuration, declarations, *, service='policy'):
-    require(service in ('policy', 'logs', 'dns'), 'Unsupported observation endpoint.')
+    require(service in ('policy', 'logs', 'dns', 'firewall'), 'Unsupported observation endpoint.')
     readers = [entry for declaration in declarations for entry in declaration if entry['service'] == service]
     require(len(readers) <= 1, 'Only one admitted reader per observation endpoint is supported.')
     if not readers:
         return None
-    selected = (configuration.get('identity', {}).get('policy', {}) if service == 'policy' else
+    selected = ({'enabled': True} if service == 'firewall' else
+                configuration.get('identity', {}).get('policy', {}) if service == 'policy' else
                 configuration.get('services', {}).get('dns', {}) if service == 'dns' else
                 configuration.get('observability', {}).get('logs', {}))
     require(selected.get('enabled', False), 'Observations require the selected component.')
@@ -40,6 +41,7 @@ def install(configuration, declarations, destination):
     observer = resolve(configuration, declarations)
     log_observer = resolve(configuration, declarations, service='logs')
     dns_observer = resolve(configuration, declarations, service='dns')
+    firewall_observer = resolve(configuration, declarations, service='firewall')
     # Core-owned generation is the only writer of this wiring. Extensions may
     # select a reader, but cannot supply a helper unit, command, path or parser.
     if observer is not None:
@@ -53,6 +55,9 @@ def install(configuration, declarations, destination):
     if dns_observer is not None:
         from . import dns_observations
         dns_observations.install(configuration, dns_observer, destination)
+    if firewall_observer is not None:
+        from . import firewall_observations
+        firewall_observations.install(firewall_observer, destination)
     if log_observer is not None:
         from . import logs
         files = logs.render(configuration, observer=log_observer)

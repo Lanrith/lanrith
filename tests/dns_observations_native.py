@@ -126,7 +126,7 @@ def qualify(result, base):
         tree = root/'assembly/mkosi.extra'
         assembly_sha256 = {name: sha(tree/name) for name in (*generation.render(observer),
             'etc/passwd', 'etc/group', 'usr/lib/lanrith/lanrith/dns_metadata.py',
-            'usr/lib/lanrith/lanrith/dns_observations_runtime.py')}
+            'usr/lib/lanrith/lanrith/dns_observations_runtime.py', 'usr/lib/lanrith/lanrith/observation_spool.py')}
         for name in ('etc/passwd', 'etc/group'):
             shutil.copyfile(tree/name, Path('/')/name)
         shutil.copytree(tree/'usr/lib/lanrith/lanrith', '/usr/lib/lanrith/lanrith', dirs_exist_ok=True)
