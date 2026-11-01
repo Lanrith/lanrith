@@ -373,6 +373,14 @@ The admitted reader receives read access to
 `/run/lanrith-dns-observations/events.jsonl` and `health.json`. It cannot write
 the directory or impersonate the resolver. Metadata includes client address,
 transport, question, producer time, transaction hash and bounded answer summaries.
+Each record carries its boot ID, producer epoch and successful-write ordinal.
+When Unbound supplies a bounded query-start timestamp, it is retained exactly
+as nanoseconds alongside the response time; consumers need not reconstruct it
+from floating-point latency. Old spool files retain their original producer
+identity across collector restart, allowing replay detection independently of
+current health counters.
+The compiled collector manifest advertises `record_schema: 1`; an admitted
+adapter can require that contract while building its image.
 TXT and other arbitrary record payloads, raw DNS packets and server identity
 are omitted. A and AAAA addresses and NS, CNAME, PTR and MX targets are retained
 for up to 16 answers. Unsupported, oversized, stale or malformed messages are

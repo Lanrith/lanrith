@@ -26,9 +26,10 @@ MAX = 2**63-1
 
 
 def load(path=MANIFEST, *, owner=0):
-    value = exact(decode(read(path, 4096, owner=owner), 4096), {'schema', 'observer'}, 'DNS observations')
+    value = exact(decode(read(path, 4096, owner=owner), 4096), {'schema', 'record_schema', 'observer'}, 'DNS observations')
     observer = exact(value['observer'], {'user', 'uid', 'gid'}, 'DNS reader')
     if (type(value['schema']) is not int or value['schema'] != 1 or
+            type(value['record_schema']) is not int or value['record_schema'] != 1 or
             not isinstance(observer['user'], str) or
             re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', observer['user']) is None or
             any(type(observer[k]) is not int or not 100 <= observer[k] <= 59999 for k in ('uid', 'gid'))):
@@ -96,6 +97,10 @@ class Spool:
         self.counters[name] = min(MAX, self.counters[name]+count)
 
     def append(self, value):
+        if self.counters['emitted'] == MAX:
+            raise ValueError('DNS observation sequence exhausted.')
+        value = {**value, 'producer_epoch': self.epoch, 'boot_id': self.boot,
+                 'sequence': self.counters['emitted']+1}
         data = json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()+b'\n'
         if len(data) > LINE:
             self.bump('rejected')

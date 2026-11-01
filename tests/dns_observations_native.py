@@ -200,6 +200,15 @@ def qualify(result, base):
                 queries(family, transport)
         until(lambda: len(records()) >= 8)
         observations = records()
+        query_times = {r['transaction']: r['observed_ns'] for r in observations if r['phase'] == 'query'}
+        clock_deltas = [r['query_observed_ns']-query_times[r['transaction']] for r in observations
+                        if r['phase'] == 'response' and r['query_observed_ns'] is not None and r['transaction'] in query_times]
+        require([r['sequence'] for r in observations] == list(range(1, len(observations)+1)) and
+                len({r['producer_epoch'] for r in observations}) == 1 and
+                all(r['boot_id'] == Path('/proc/sys/kernel/random/boot_id').read_text().strip() and
+                    ((type(r['query_observed_ns']) is int and r['query_observed_ns'] <= r['observed_ns']) or
+                     (r['phase'] == 'response' and r['query_observed_ns'] is None and r['latency_ms'] is None)) for r in observations),
+                'DNS record producer identity, ordinal or query time differs.')
         require({(r['client_ip'], r['protocol'], r['phase']) for r in observations} >=
                 {(ip, protocol, phase) for ip in ('127.0.0.1', '::1') for protocol in ('udp', 'tcp') for phase in ('query', 'response')},
                 'Native DNS observations omit a transport/family/phase.')
@@ -246,7 +255,7 @@ def qualify(result, base):
         restarted_at = time.time_ns()
         manifest = Path('/')/generation.CONFIG
         original_manifest = manifest.read_bytes()
-        manifest.write_text(json.dumps({'schema': 1, 'observer': {**observer, 'uid': 1802}}))
+        manifest.write_text(json.dumps({'schema': 1, 'record_schema': 1, 'observer': {**observer, 'uid': 1802}}))
         run('systemctl', 'kill', '--signal=KILL', generation.SERVICE)
         time.sleep(6)
         require(run('systemctl', 'show', '--property=NRestarts', '--value', generation.SERVICE).stdout.strip() != b'0',
@@ -284,6 +293,7 @@ def qualify(result, base):
         record = {'schema': 1, 'result': 'pass', 'assessed_at': datetime.now(timezone.utc).isoformat(),
                   'scope': 'Offline systemd component; generated units and actual packaged resolver; synthetic namespace/firewall/local zone',
                   'checks': checks, 'traffic': traffic, 'collector_uid': collector_uid,
+                  'query_response_clock_deltas_ns': clock_deltas,
                   'test': 'offline-dns-observations', 'filesystem_sha256': subject['sha256'],
                   'base_binaries_sha256': base_binaries, 'effective_capabilities': int(status['CapEff'], 16),
                   'bounding_capabilities': int(status['CapBnd'], 16), 'no_new_privileges': status['NoNewPrivs'].strip() == '1',

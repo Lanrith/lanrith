@@ -175,7 +175,8 @@ def normalize(frame, *, now_ns):
     transaction = repr((str(address), port, protocol, raw[:2], result['query'].lower(), result['type'])).encode()
     result.update(schema=1, phase='response' if response else 'query', observed_ns=observed,
                   client_ip=str(address), client_port=port, protocol='udp' if protocol == 1 else 'tcp',
-                  transaction=hashlib.sha256(transaction).hexdigest(), latency_ms=None)
+                  transaction=hashlib.sha256(transaction).hexdigest(), latency_ms=None,
+                  query_observed_ns=observed if not response else None)
     if response and 8 in value:
         query_nanoseconds = field(value, 9, 5, 0)
         if query_nanoseconds >= 10**9:
@@ -183,6 +184,7 @@ def normalize(frame, *, now_ns):
         started = field(value, 8, 0)*10**9+query_nanoseconds
         if 0 <= observed-started <= 300*10**9:
             result['latency_ms'] = (observed-started)/10**6
+            result['query_observed_ns'] = started
     return result
 
 

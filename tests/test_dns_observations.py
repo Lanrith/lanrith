@@ -70,7 +70,7 @@ class DnsObservationAdmissionTests(unittest.TestCase):
             self.assertEqual(installed['health_units'], [])
             for name in ('etc/nftables.conf', 'etc/lanrith/services.nft', 'usr/share/lanrith/health.json', generation.RESOLVER):
                 self.assertEqual((output/name).read_text(), original[name])
-            self.assertEqual(json.loads((output/generation.CONFIG).read_bytes()), {'schema': 1, 'observer': OBSERVER})
+            self.assertEqual(json.loads((output/generation.CONFIG).read_bytes()), {'schema': 1, 'record_schema': 1, 'observer': OBSERVER})
             files = generation.render(OBSERVER)
             service = files['etc/systemd/system/'+generation.SERVICE]
             self.assertIn('User=lanrith-dns-observer\n', service)
@@ -107,7 +107,7 @@ class DnsObservationAdmissionTests(unittest.TestCase):
                 extensions.identity_declarations(identities)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)/'runtime.json'
-            path.write_text(json.dumps({'schema': 1, 'observer': OBSERVER}))
+            path.write_text(json.dumps({'schema': 1, 'record_schema': 1, 'observer': OBSERVER}))
             with patch.object(runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=1801, pw_gid=1801)):
                 self.assertEqual(runtime.load(path, owner=os.getuid()), OBSERVER)
             with patch.object(runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=1802, pw_gid=1801)):
@@ -171,6 +171,8 @@ class DnsMetadataTests(unittest.TestCase):
             self.assertEqual(response['query'], 'answer.example')
             self.assertEqual(response['latency_ms'], 1.)
             self.assertEqual(response['observed_ns'], NOW+2000000)
+            self.assertEqual(query['query_observed_ns'], NOW+1000000)
+            self.assertEqual(response['query_observed_ns'], query['query_observed_ns'])
             self.assertEqual(query['result'], 'UNOBSERVED_RESPONSE')
             self.assertEqual(response['result'], 'NOERROR')
             self.assertEqual(response['answer_records'][0]['value'], '2001:db8::7' if ipv6 else '203.0.113.7')
@@ -244,7 +246,7 @@ class DnsSpoolTests(unittest.TestCase):
         with patch.object(runtime, 'LIMIT', 1024), patch.object(runtime, 'LINE', 1024):
             spool = self.spool()
             for count in range(30):
-                spool.append({'sequence': count, 'padding': 'x'*250})
+                spool.append({'fixture_index': count, 'padding': 'x'*250})
             spool.health()
             self.assertEqual(spool.counters['emitted'], 30)
             remaining = sum(len((self.path/name).read_bytes().splitlines()) for name in spool.counts)
@@ -283,13 +285,15 @@ class DnsSpoolTests(unittest.TestCase):
         spool = self.spool()
         self.assertEqual(file.read_bytes(), b'{}\n')
         with patch.object(runtime.os, 'write', return_value=2), self.assertRaises(OSError):
-            spool.append({'sequence': 1})
+            spool.append({'fixture_index': 1})
         self.assertEqual(file.read_bytes(), b'{}\n')
-        spool.append({'sequence': 2})
-        self.assertEqual(json.loads(file.read_bytes().splitlines()[-1]), {'sequence': 2})
+        spool.append({'fixture_index': 2, 'sequence': 99, 'producer_epoch': 'forged', 'boot_id': 'forged'})
+        written = file.read_bytes()
+        self.assertEqual(json.loads(written.splitlines()[-1]), {'fixture_index': 2, 'sequence': 1,
+            'producer_epoch': spool.epoch, 'boot_id': spool.boot})
         spool.append({'too_big': 'x'*runtime.LINE})
         self.assertEqual(spool.counters['rejected'], 1)
-        self.assertEqual(file.read_bytes(), b'{}\n{"sequence":2}\n')
+        self.assertEqual(file.read_bytes(), written)
 
 
 if __name__ == '__main__':

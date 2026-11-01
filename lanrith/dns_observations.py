@@ -14,7 +14,7 @@ ACCOUNT = 'lanrith-dns-observer'
 
 def render(observer):
     return {
-        CONFIG: canonical({'schema': 1, 'observer': observer}).decode(),
+        CONFIG: canonical({'schema': 1, 'record_schema': 1, 'observer': observer}).decode(),
         'etc/unbound/unbound.conf.d/62-lanrith-observations.conf': (
             'dnstap:\n  dnstap-enable: yes\n  dnstap-bidirectional: yes\n'
             '  dnstap-socket-path: "'+TAP+'"\n'
