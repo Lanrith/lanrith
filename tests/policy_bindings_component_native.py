@@ -76,7 +76,8 @@ while True:
 
 
 def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None,
-            prepare_interfaces=None, prepare_ruleset=None, after_profile=None):
+            prepare_interfaces=None, prepare_ruleset=None, after_profile=None,
+            retained_allocations=None, snapshot_provider=None):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
@@ -108,7 +109,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     for network in value['networks'].values():
         for address in network['addresses']:
             base.run('ip', 'address', 'add', address, 'dev', network['name'], *(['nodad'] if ':' in address else []))
-    files = config.render(value)
+    files = config.render(value, retained_allocations=copy.deepcopy(retained_allocations))
     files.update(policy_agent.render(value, observer=observer))
     library = Path('/usr/lib/lanrith/lanrith'); require(not library.exists(), 'Runtime library exists.')
     library.mkdir(parents=True)
@@ -132,7 +133,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         work = Path(temporary)
         (work/'base.nft').write_text(ruleset)
         base.run('nft', '-f', str(work/'base.nft'))
-        (work/'baseline.json').write_bytes(canonical(policy_agent.baseline(value)))
+        (work/'baseline.json').write_bytes(canonical(policy_agent.baseline(value, retained_allocations)))
         (work/'ruleset.json').write_bytes(base.run('nft', '-j', 'list', 'ruleset').stdout)
         destination = work/'profile'; destination.mkdir(mode=0o700)
         base.run('/usr/bin/router-policy-profile', '-baseline', str(work/'baseline.json'),
@@ -184,7 +185,11 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     def bindings(): return json.loads((policy_runtime.BINDINGS/'bindings.json').read_bytes())
     # Follow the selected helper's bounded processing cap. This changes only
     # the test client's wait, never source freshness or authorization expiry.
-    def submit(): return base.request(base.PROPOSAL, snapshot(), uid=1701, gid=1701,
+    # Both providers are trusted Python-only fixture inputs. Retained maps use
+    # the real compiler/baseline contract; directory proposals still enter the
+    # same authenticated reader socket and independently checked source path.
+    proposal = snapshot if snapshot_provider is None else snapshot_provider
+    def submit(): return base.request(base.PROPOSAL, proposal(), uid=1701, gid=1701,
                                       response_timeout=10 if contract['translation_manifests'] else 7).get('reply', {})
     def observe(): return base.request(policy_runtime.OBSERVATIONS, base.OBSERVE).get('reply', {})
     try:
