@@ -182,11 +182,10 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     os.chown(path, account.pw_uid, account.pw_gid); path.chmod(0o600)
     checks, observed, paused = [], {}, None
     def bindings(): return json.loads((policy_runtime.BINDINGS/'bindings.json').read_bytes())
-    # The generated helper admits a five-second processing budget. The test
-    # client must allow that complete budget plus reply delivery; this never
-    # changes the server deadline, evidence freshness or authorization lease.
+    # Follow the selected helper's bounded processing cap. This changes only
+    # the test client's wait, never source freshness or authorization expiry.
     def submit(): return base.request(base.PROPOSAL, snapshot(), uid=1701, gid=1701,
-                                      response_timeout=7).get('reply', {})
+                                      response_timeout=10 if contract['translation_manifests'] else 7).get('reply', {})
     def observe(): return base.request(policy_runtime.OBSERVATIONS, base.OBSERVE).get('reply', {})
     try:
         base.run('systemctl', 'daemon-reload')

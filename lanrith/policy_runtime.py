@@ -365,7 +365,11 @@ def publish_runtime(contract, profile, mapping):
               'generation_directory': contract['generation_directory'],
               'state_directory': contract['state_directory'],
               'nft_executable': contract['nft_executable'], 'reader_uid': reader,
-              'operator_uid': operator, 'request_timeout_ms': 5000,
+              'operator_uid': operator,
+              # Translation adds independently checked native and wire paths.
+              # Select the helper's existing supported cap from this narrow
+              # image contract; evidence and grant expiry anchors are unchanged.
+              'request_timeout_ms': 10000 if contract['translation_manifests'] else 5000,
               'request_socket': '/run/router-policy-ipc/requests.sock',
               'status_socket': '/run/router-policy-ipc/status.sock',
               'expected_generation': generation}
