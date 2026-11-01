@@ -12,6 +12,7 @@ from unittest import mock
 
 from lanrith import release
 from ids_fixture import report as ids_report, sources as ids_sources
+from dns_fixture import report as dns_report, sources as dns_sources
 
 spec = importlib.util.spec_from_file_location('qualify_base', Path(__file__).parents[1]/'scripts/qualify-base.py')
 qualification = importlib.util.module_from_spec(spec)
@@ -85,6 +86,9 @@ class QualificationTests(unittest.TestCase):
         ids_sources(project)
         (directory/'ids-qualification.json').write_bytes(release.canonical(ids_report(
             release.file_record(directory/'lanrith-base.tar.gz')['sha256'], now, project)))
+        dns_sources(project)
+        (directory/'dns-qualification.json').write_bytes(release.canonical(dns_report(
+            release.file_record(directory/'lanrith-base.tar.gz')['sha256'], now, project)))
         workflows = {}
         for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
                      '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
@@ -131,6 +135,7 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(record['directory_sha256'], release.file_record(directory/'directory-qualification.json')['sha256'])
             self.assertEqual(record['credentials_sha256'], release.file_record(directory/'credential-qualification.json')['sha256'])
             self.assertEqual(record['ids_sha256'], release.file_record(directory/'ids-qualification.json')['sha256'])
+            self.assertEqual(record['dns_sha256'], release.file_record(directory/'dns-qualification.json')['sha256'])
             self.assertEqual(security['qualification']['record_sha256'], release.file_record(directory/'qualification.json')['sha256'])
             artifact = next(item for item in release.document((directory/'release.json').read_bytes())['artifacts']
                             if item['role'] == 'security')

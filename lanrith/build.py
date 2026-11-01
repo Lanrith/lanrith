@@ -148,6 +148,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     library.mkdir(parents=True)
     for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
+                   'dns_observations_runtime.py', 'dns_metadata.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'ntp_health_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
                    'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',

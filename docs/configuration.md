@@ -339,12 +339,13 @@ An optional `observations` manifest list selects fixed read-only endpoints:
 
 ```json
 [{"service": "policy", "user": "example-agent"},
- {"service": "logs", "user": "example-agent"}]
+ {"service": "logs", "user": "example-agent"},
+ {"service": "dns", "user": "example-agent"}]
 ```
 
 The reader and its primary group must belong to that extension's identities.
 Each endpoint supports one reader across active extensions and requires its
-corresponding component to be enabled. Either endpoint may be selected alone.
+corresponding component to be enabled. Each endpoint may be selected alone.
 For policy, Lanrith generates the fixed socket
 `/run/lanrith-policy-observations/observations.sock` and pins the reader UID.
 The component checks kernel peer credentials and accepts only bounded observation
@@ -358,6 +359,42 @@ and do not change the native boot failure gate. Removing the declaration removes
 the optional endpoint on the next image boot. Application schemas, adapters and
 private account bindings remain extension responsibilities. Qualify the actual
 selected component and complete image as well as the launcher before deployment.
+
+For DNS, the declaration enables Unbound's client query and response dnstap
+messages. Resolver and forwarder copies, server identity and version are excluded.
+The fixed ingress `/run/lanrith-dns-tap.sock` admits only Unbound's Unix UID.
+A separate locked collector account is allocated during image assembly from
+unused system IDs, after base and extension IDs have been reserved. It needs
+no capabilities, Internet sockets, DNS credentials or persistent state. Its
+confined process receives the boot ID through one read-only bind; no runtime
+owner configuration or account provisioning is needed.
+
+The admitted reader receives read access to
+`/run/lanrith-dns-observations/events.jsonl` and `health.json`. It cannot write
+the directory or impersonate the resolver. Metadata includes client address,
+transport, question, producer time, transaction hash and bounded answer summaries.
+TXT and other arbitrary record payloads, raw DNS packets and server identity
+are omitted. A and AAAA addresses and NS, CNAME, PTR and MX targets are retained
+for up to 16 answers. Unsupported, oversized, stale or malformed messages are
+rejected. Query metadata without a corresponding response does not prove a DNS
+timeout or a firewall decision.
+
+The volatile spool holds at most three 1 MiB files, with complete JSON lines
+bounded to 16 KiB. Rotation discards older observations. Health reports a new
+producer epoch on each collector start, same-boot monotonic freshness, emitted
+and rejected records, failed writes, overwritten records and disconnects.
+These are collection counters; loss inside Unbound or before the collector is
+not fully measurable. Consumers must report gaps and avoid claiming complete
+DNS history. A quiet file is not a resolver health signal.
+
+DNS starts with a bounded, optional socket dependency and has no collector
+readiness dependency. The collector retries at five-second intervals without
+entering the boot check's terminal failed-unit set for a rejected runtime
+contract. Its resource limits and log rate limit remain in force. An absent or
+stalled reader does not grant access or stop resolution. Removing the observation
+declaration removes its native configuration, account, socket and collector from
+the next image; DNS remains enabled independently. The private DNS64 upstream
+resolver is not tapped, so translated recursive copies are not counted twice.
 
 The generated helper unit uses `Type=notify` and a 100-second startup limit.
 Its selected component must implement the bounded post-start binding handoff:

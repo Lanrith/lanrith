@@ -186,6 +186,7 @@ def identity_declarations(value):
             optional = {'home'} if kind == 'users' else {'members'}
             require(isinstance(item, dict) and required <= set(item) <= required | optional and
                     isinstance(item['name'], str) and re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', item['name']) and
+                    item['name'] != 'lanrith-dns-observer' and
                     all(type(item[field]) is int and 100 <= item[field] <= 59999
                         for field in ('uid', 'gid') if field in required), 'Invalid locked integration identity.')
             if kind == 'users':
@@ -202,6 +203,8 @@ def identity_declarations(value):
 
 
 def account_overlay(accounts, declarations, destination, reserved_name='admin'):
+    from . import dns_observations
+    declarations = [*declarations, *dns_observations.account_declarations(accounts, declarations, destination)]
     if not any(value['users'] or value['groups'] for value in declarations):
         return
     require(set(accounts) == {'passwd', 'group'}, 'Admitted base account registry is missing.')

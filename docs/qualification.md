@@ -176,6 +176,25 @@ the complete image, its deployed libraries, actual WAN hardware or the owner's
 topology. A standalone component run without `--base` emits diagnostic output
 only; publishing native evidence requires both `--base` and `--result`.
 
+The DNS observation gate also runs before base promotion. `scripts/qualify-dns.py`
+starts a fresh offline systemd container, with source and base archive mounted
+read-only and only a private result directory writable. It extracts only the two
+canonical root-owned Unbound and checkconf executables into that disposable
+fixture. It checks their actual bytes, builds the synthetic owner overlay, and
+uses its locked accounts, curated runtime modules and generated units. The
+receipt binds all implementation inputs and the assembled runtime/account files.
+Archive aliases, links, duplicates, changed inputs, failed cleanup or incomplete
+evidence prevent a passing result from being published.
+
+The native checks cover IPv4 and IPv6 client observations over UDP and TCP,
+reader/producer custody, crash and reconnect, absent and stalled readers,
+disabled selection and the global boot check during a collector failure.
+`qualify-base.py` requires fresh evidence for the same filesystem. Consumer
+admission authenticates its hash and rechecks the claim at the original base
+qualification time; a later security reassessment can retain the exact unchanged
+base. These component checks do not qualify full-image DNSSEC, recursion,
+authoritative updates, translated clients, packet load or image recovery.
+
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only
