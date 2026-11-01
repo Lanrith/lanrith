@@ -28,7 +28,8 @@
     "run": 41323619306,
     "attempt": 2,
     "mode": "One manually initiated normal failed-job retry on unchanged independently approved source.",
-    "observed": "The unchanged60GiB guard passed and package compilation started. Production publication of this source remains pending."
+    "observed": "Production attempt2 completed successfully. Immutable v0.1.16 from unchanged source1c59269a816cc19d5214189e6fc3291f8266eca0 independently verified, including provenance, native/storage/security/SLSA evidence and fresh signed assessment.",
+    "verified_release": "https://github.com/Lanrith/lanrith/releases/tag/v0.1.16"
   },
   "automation": {
     "root_repository_only": "Lanrith/lanrith",
@@ -55,8 +56,8 @@
   },
   "validation": {
     "local_suite": {
-      "tests": 908,
-      "passed": 893,
+      "tests": 912,
+      "passed": 897,
       "existing_environment_skips": 15,
       "result": "pass"
     },
@@ -73,7 +74,10 @@
       "Exact immutable intent and hosted signer required",
       "Ambiguous POST issued once",
       "Normal PR admission refresh only",
-      "Active/durable artifact cleanup boundaries"
+      "Active/durable artifact cleanup boundaries",
+      "Actual repository assessment reaches the final native qualifier.",
+      "Shared preflight/qualification catalog rejects omitted, extra or changed recovery workflows.",
+      "Incomplete platform requirements fail before native evidence is read."
     ],
     "hosted_final_head_qualification": "required-before-human-review-request",
     "automatic_deployment": "not-performed"
@@ -87,5 +91,20 @@
   "paid_ai": false,
   "disk_requirement_lowered": false,
   "security_validation_bypassed": false,
-  "production_publication_verified": false
+  "production_publication_verified": true,
+  "qualification_assessment_correction": {
+    "recorded_at": "2026-11-01T20:50:40.689848+00:00",
+    "failed_head": "5dd014d96165e930a1fcfea1cef9750437e7282b",
+    "run": 41330128797,
+    "attempt": 2,
+    "job": 124942097517,
+    "failure": "All three actual UEFI profiles and storage qualification passed. The final qualifier then rejected the nine reviewed workflows against its stale duplicated eight-workflow set.",
+    "cause": "The recovery workflow was added to the preflight and assessment but omitted from the separately hardcoded final qualifier. Synthetic qualification fixtures repeated the stale catalog.",
+    "correction": "One fixed reviewed workflow catalog and one complete platform validator are shared by preflight and qualification. All fourteen SLSA requirement checks and exact workflow hashes are enforced during cheap preflight as well as before native evidence is read.",
+    "regression": "The actual repository assessment reproduces the old hosted error and passes after the correction. Real-workflow mutations and missing/unsatisfied requirements remain rejected by both paths.",
+    "no_capacity_retry_for_this_failure": true,
+    "fresh_final_head_hosted_qualification_required": true,
+    "previous_head_review": "Actual owner review5729351035 applies only to the old head. A fresh independent human review of the new head is required; request it only after all current-head builds pass.",
+    "security_native_signature_and_disk_gates_unchanged": true
+  }
 }

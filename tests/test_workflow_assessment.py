@@ -16,6 +16,7 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copytree(ROOT/'.github/workflows', root/'.github/workflows')
+            shutil.copytree(ROOT/'lanrith', root/'lanrith', ignore=shutil.ignore_patterns('__pycache__'))
             (root/'security').mkdir()
             (root/'scripts').mkdir()
             (root/'automation').mkdir()
@@ -52,6 +53,43 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
         result = self.check(change)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('reviewed workflow set is incomplete', result.stderr)
+
+    def test_incomplete_platform_requirements_fail_the_preflight(self):
+        for alteration in ('missing-requirement', 'unsatisfied-requirement', 'missing-evidence', 'wrong-specification'):
+            def change(root):
+                path = root/'security/slsa-assessment.json'
+                value = json.loads(path.read_bytes())
+                if alteration == 'missing-requirement':
+                    del value['requirements']['isolated-signing']
+                elif alteration == 'unsatisfied-requirement':
+                    value['requirements']['isolated-signing']['result'] = 'not-assessed'
+                elif alteration == 'missing-evidence':
+                    del value['requirements']['isolated-signing']['evidence']
+                else:
+                    value['specification'] = 'unreviewed-specification'
+                path.write_text(json.dumps(value))
+            with self.subTest(alteration=alteration):
+                result = self.check(change)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('complete requirement assessment', result.stderr)
+
+    def test_recovery_workflow_cannot_be_omitted_added_or_changed_after_assessment(self):
+        for alteration in ('missing', 'extra', 'changed'):
+            def change(root):
+                path = root/'security/slsa-assessment.json'
+                value = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    del value['reviewed_workflows']['.github/workflows/retry-runner-capacity.yml']
+                elif alteration == 'extra':
+                    value['reviewed_workflows']['.github/workflows/unreviewed.yml'] = 'a'*64
+                else:
+                    (root/'.github/workflows/retry-runner-capacity.yml').write_text('unreviewed authority')
+                path.write_text(json.dumps(value))
+            with self.subTest(alteration=alteration):
+                result = self.check(change)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Assessed workflow hash differs' if alteration == 'changed' else
+                              'reviewed workflow set is incomplete', result.stderr)
 
     def changed_workflow(self, name, transform):
         def change(root):
