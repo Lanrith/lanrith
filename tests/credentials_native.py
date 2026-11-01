@@ -19,7 +19,7 @@ import tarfile
 import tempfile
 import time
 
-from lanrith import build, config, release
+from lanrith import build, config, extension_observations, logs, release
 from test_intent import minimal
 import extension_credentials_native as extension_fixture
 
@@ -39,6 +39,64 @@ def wait(predicate):
 
 def active(unit):
     return subprocess.run(['systemctl', 'is-active', '--quiet', unit], timeout=5).returncode == 0
+
+
+def generated_log_staging(tree, units, raw, value):
+    """Exercise the real generated pre-start path with a nonroot consumer."""
+    run('systemctl', 'stop', 'alloy.service')
+    accounts = Path('/run/log-staging-accounts.conf')
+    accounts.write_text('u alloy - "Synthetic log exporter" /nonexistent\n')
+    run('systemd-sysusers', str(accounts))
+    dropin = units/'alloy.service.d'
+    import pwd
+    other = pwd.getpwnam('fixture-other')
+    identities = {'users': [{'name': 'fixture-other', 'uid': other.pw_uid, 'gid': other.pw_gid}],
+                  'groups': [{'name': 'fixture-other', 'gid': other.pw_gid}]}
+    selected = extension_observations.declarations([{'service': 'logs', 'user': 'fixture-other'}], identities)
+    observer = extension_observations.resolve(config.normalize(value), [selected], service='logs')
+    files = logs.render(config.normalize(value), observer=observer)
+    Path('/usr/share/lanrith/logs.json').write_text(files['usr/share/lanrith/logs.json'])
+    (dropin/'60-lanrith.conf').write_text(files['etc/systemd/system/alloy.service.d/60-lanrith.conf'])
+    for name in ('lanrith-services.service', 'nftables.service'):
+        (units/name).write_text('[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
+    # Only the daemon command and unavailable fixture namespace are replaced.
+    # Credential source, generated root staging command and filesystem sandbox
+    # are the real compiled contract. No protected store read is substituted.
+    (dropin/'90-staging-fixture.conf').write_text('[Unit]\nRequires=\nAfter=\nBindsTo=\n'
+        '[Service]\nType=oneshot\nNotifyAccess=none\nWatchdogSec=0\nRestart=no\nNetworkNamespacePath=\n'
+        'ExecStart=\nExecStart=/usr/bin/python3 /usr/lib/lanrith/fixture-log-staging.py\n')
+    proof = Path('/usr/lib/lanrith/fixture-log-staging.py')
+    proof.write_text('import hashlib,json,os,pathlib,stat\n'
+        'p=pathlib.Path("/run/lanrith-logs/password");s=p.stat()\n'
+        'assert os.geteuid()!=0 and s.st_uid==os.geteuid() and stat.S_IMODE(s.st_mode)==0o400 and s.st_nlink==1\n'
+        'status=dict(line.split(":",1) for line in pathlib.Path("/proc/self/status").read_text().splitlines())\n'
+        'assert int(status["CapEff"],16)==0 and status["NoNewPrivs"].strip()=="1"\n'
+        'try:pathlib.Path("/var/lib/lanrith/credentials/ingest").read_bytes()\n'
+        'except PermissionError:pass\n'
+        'else:raise AssertionError("consumer can read protected credential store")\n'
+        'd=pathlib.Path("/run/lanrith-log-observations");assert stat.S_IMODE(d.stat().st_mode)==0o2750\n'
+        'pathlib.Path("/run/lanrith-log-observations/events.jsonl").write_text("fixture metadata only\\n")\n'
+        'pathlib.Path("/run/lanrith-logs/staging-proof.json").write_text(json.dumps({'
+        '"uid":os.geteuid(),"sha256":hashlib.sha256(p.read_bytes()).hexdigest()}))\n')
+    run('systemctl', 'daemon-reload')
+    try:
+        run('systemctl', 'start', 'alloy.service')
+    except AssertionError:
+        diagnostic = subprocess.run(['journalctl', '-b', '-u', 'alloy.service', '--no-pager', '-n', '30'],
+                                    capture_output=True, timeout=10)
+        print(diagnostic.stdout[-12000:].decode(errors='replace'), flush=True)
+        raise
+    result = json.loads(Path('/run/lanrith-logs/staging-proof.json').read_bytes())
+    assert result['uid'] != 0 and result['sha256'] == hashlib.sha256(raw).hexdigest()
+    assert Path('/run/lanrith-log-observations').stat().st_gid == other.pw_gid
+    probe = ('from pathlib import Path; assert Path("/run/lanrith-log-observations/events.jsonl").read_text(); '
+             '\ntry: Path("/run/lanrith-logs/password").read_bytes()'
+             '\nexcept PermissionError: pass'
+             '\nelse: raise AssertionError("observer can read log credential")')
+    run('runuser', '-u', 'fixture-other', '--', 'python3', '-c', probe)
+    denied = subprocess.run(['runuser', '-u', 'fixture-other', '--', '/usr/lib/lanrith/logs-runtime', 'stage'],
+                            capture_output=True, timeout=10)
+    assert denied.returncode != 0, 'Another user can invoke privileged log staging.'
 
 
 def main():
@@ -155,6 +213,7 @@ def main():
         assert not Path('/run/fixture-completion-stopped').exists()
         assert active('alloy.service')
         extension_checks = extension_fixture.exercise(installed, tree, units, run, wait, active)
+        generated_log_staging(tree, units, raw, value)
         result = {'schema': 1, 'result': 'pass', 'test': 'offline-systemd-credential-provisioning',
             'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -167,6 +226,7 @@ def main():
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/credential_runtime.py',
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py',
+                             'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/policy_runtime.py', 'lanrith/extension_observations.py',
                              *extension_fixture.IMPLEMENTATION)},
             'systemd_version': run('systemctl', '--version').decode().splitlines()[0],
             'external_network': False, 'private_image_qualified': False,
@@ -175,7 +235,7 @@ def main():
                        'failed-requests-collected',
                        'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
                        'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
-                       'active-completion-observer-not-stopped', *extension_checks],
+                       'active-completion-observer-not-stopped', 'generated-log-credential-staging', *extension_checks],
             'limits': ['synthetic-consumers', 'synthetic-core-boot-acceptance-products',
                        'no-ssh-or-encryption-acceptance', 'no-full-image-or-backend-qualification']}
         args.result.parent.mkdir(parents=True, exist_ok=True)

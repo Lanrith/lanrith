@@ -33,7 +33,7 @@ CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journa
           'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
           'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
           'local-metadata-body-withheld', 'local-reader-and-credential-boundary',
-          'local-bounded-rotation', 'local-filesystem-failure-independent-delivery'}
+          'local-bounded-rotation', 'local-filesystem-failure-independent-delivery', 'local-producer-restart-identity'}
 MARKER = b'LANRITH_SYNTHETIC_QUEUED_RECORD'
 SELF = b'LANRITH_SYNTHETIC_EXPORTER_SELF_RECORD'
 SECRET = b'lanrith-disposable-secret-value'
@@ -328,12 +328,14 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             physical = sum(path.stat().st_size for path in (root/'queue').rglob('*') if path.is_file())
             assert physical <= 160*1024*1024, 'Queue physical storage exceeded its tested bound.'
             assert (root/'alloy.log').stat().st_size < 2*1024*1024, 'Exporter outage amplified its own log.'
+            old_epoch = logs_runtime.read_observation(logs_runtime.LOCAL/'health.json', owner=account.pw_uid)['producer_epoch']
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
             assert ready_notifications.empty(), 'Exporter emitted duplicate readiness.'
             process = launch()
             until(lambda: ready(process), 30)
             assert metric(metrics(), 'otelcol_exporter_queue_size') > 0, 'Persistent retry queue was lost.'
+            assert logs_runtime.read_observation(logs_runtime.LOCAL/'health.json', owner=account.pw_uid)['producer_epoch'] != old_epoch
             server = HTTPServer(('192.0.2.31', 443), Collector)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2

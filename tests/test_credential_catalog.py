@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from lanrith import config, credential_config, credential_values, logs_runtime, policy_runtime, radius_runtime, routing_runtime
@@ -164,6 +165,7 @@ class CredentialCatalogTests(unittest.TestCase):
                 item = {'format': kind, 'parameters': {}}
                 with self.subTest(kind=kind, raw=raw), mock.patch.dict(os.environ, CREDENTIALS_DIRECTORY='/unused'), \
                         mock.patch.object(logs_runtime, 'read', return_value=raw), \
+                        mock.patch.object(logs_runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=997)), \
                         mock.patch.object(radius_runtime, 'read', return_value=raw), \
                         mock.patch.object(policy_runtime, 'read', return_value=raw):
                     try:

@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -28,6 +29,26 @@ def exporter_metrics():
 
 
 class LogSupervisorTests(unittest.TestCase):
+    def test_copied_credential_requires_the_exporter_owner_and_private_single_file(self):
+        owner = 2001 if os.geteuid() == 0 else os.geteuid()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root/'ingest'
+            path.write_bytes(b'synthetic-credential\n')
+            if os.geteuid() == 0:os.chown(path, owner, owner)
+            path.chmod(0o400)
+            with mock.patch.dict(os.environ, CREDENTIALS_DIRECTORY=str(root)), \
+                    mock.patch.object(runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=owner)):
+                self.assertEqual(runtime.credential('ingest'), b'synthetic-credential')
+                path.chmod(0o440)
+                with self.assertRaises(ValueError):runtime.credential('ingest')
+                path.chmod(0o400)
+                os.link(path, root/'alias')
+                with self.assertRaises(ValueError):runtime.credential('ingest')
+                (root/'alias').unlink()
+                with mock.patch.object(runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=owner+1)):
+                    with self.assertRaises(ValueError):runtime.credential('ingest')
+
     def test_complete_root_graph_is_required(self):
         for value in (metrics(), metrics(12), metrics(exited=0, unknown=0)):
             self.assertTrue(runtime.pipeline_healthy(value))
@@ -168,12 +189,13 @@ class LogSupervisorTests(unittest.TestCase):
         with mock.patch.object(runtime.subprocess, 'Popen', return_value=child), \
                 mock.patch.object(runtime, 'health', return_value=state) as health, \
                 mock.patch.object(runtime, 'publish_observation', side_effect=publish) as output, \
-                mock.patch.object(runtime.time, 'sleep'), mock.patch.object(runtime, 'notify') as notify:
+                mock.patch.object(runtime.time, 'sleep'), mock.patch.object(runtime, 'notify') as notify, \
+                mock.patch.object(runtime.uuid, 'uuid4', return_value=SimpleNamespace(hex='a'*32)):
             with self.assertRaisesRegex(runtime.LogsRuntimeError, 'exporter exited'):
                 runtime.supervise(local=True)
             health.assert_called_once_with(local=True)
             self.assertEqual(output.call_args_list, [mock.call(state, runtime.OBSERVATION),
-                                                    mock.call(state, runtime.LOCAL/'health.json')])
+                                                    mock.call({**state, 'producer_epoch': 'a'*32}, runtime.LOCAL/'health.json')])
             self.assertEqual(notify.call_args_list, [mock.call('READY=1'), mock.call('WATCHDOG=1')])
 
 

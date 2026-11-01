@@ -40,7 +40,7 @@ LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-jo
     'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
     'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
     'local-metadata-body-withheld', 'local-reader-and-credential-boundary',
-    'local-bounded-rotation', 'local-filesystem-failure-independent-delivery'}
+    'local-bounded-rotation', 'local-filesystem-failure-independent-delivery', 'local-producer-restart-identity'}
 DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
     'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
     'reader-and-observer-exact-egress', 'other-identities-destination-port-source-interface-denied',
@@ -55,11 +55,13 @@ CREDENTIAL_CHECKS = {'generated-unit-verification', 'operator-uid-socket-stage-a
     'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
     'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
     'active-completion-observer-not-stopped', 'extension-native-loadcredential-unprivileged-readers',
+    'generated-log-credential-staging',
     'extension-operator-uid-boundary', 'extension-exact-writable-namespace',
     'optional-extension-current-boot-acceptance-gate', 'optional-extension-no-core-service-control',
     'required-extension-committed-readiness', 'extension-invalid-and-fallback-values-preserve-consumers'}
 CREDENTIAL_IMPLEMENTATION = {'lanrith/credential_operation.py', 'lanrith/credential_config.py',
     'lanrith/credential_store.py', 'lanrith/credential_values.py', 'lanrith/build.py',
+    'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/policy_runtime.py', 'lanrith/extension_observations.py',
     'lanrith/runtime.py', 'lanrith/image_operation.py', 'lanrith/config.py', 'tests/test_intent.py',
     'scripts/qualify-credentials.py', 'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_credentials.py',
     'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',

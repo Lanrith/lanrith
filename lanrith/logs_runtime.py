@@ -16,6 +16,7 @@ import stat
 import subprocess
 import tempfile
 import time
+import uuid
 from urllib.parse import urlsplit
 
 from .policy_runtime import decode, exact, read
@@ -79,7 +80,7 @@ def credential(name):
     root = os.environ.get('CREDENTIALS_DIRECTORY')
     if not root or '/' in name or name in ('', '.', '..'):
         raise LogsRuntimeError('Log credential transport differs.')
-    raw = read(Path(root)/name, 4097, private=True)
+    raw = read(Path(root)/name, 4097, owner=pwd.getpwnam('alloy').pw_uid, private=True)
     if raw.endswith(b'\n'):
         raw = raw[:-1]
     if not 1 <= len(raw) <= 4096 or b'\x00' in raw or b'\n' in raw or b'\r' in raw:
@@ -121,7 +122,8 @@ def stage(path=MANIFEST):
 def prepare_local(observer, account, path=LOCAL):
     """Keep the optional reader out of the credential group and all write paths.
 
-    systemd creates the fixed RuntimeDirectory. A missing/reassigned reader
+    Root prepares this separate fixed directory: systemd must not reset its
+    reader group between pre-start and the main command. A missing/reassigned reader
     closes only read access; the exporter can continue writing private metadata.
     Existing aliases or unexpected files are never repaired or followed.
     """
@@ -129,9 +131,20 @@ def prepare_local(observer, account, path=LOCAL):
         info = parent.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
             raise LogsRuntimeError('Log observation ancestor differs.')
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         info = os.fstat(descriptor)
+        # Recover only an empty, unpublished directory left between mkdir and
+        # chown. An existing root-owned nonempty/unexpected path is not adopted.
+        if info.st_uid == 0 and account.pw_uid != 0:
+            if info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700 or os.listdir(descriptor):
+                raise LogsRuntimeError('Unpublished log observation directory differs.')
+            os.fchown(descriptor, account.pw_uid, account.pw_gid)
+            info = os.fstat(descriptor)
         if info.st_uid != account.pw_uid or info.st_gid not in (account.pw_gid, observer['gid']) or info.st_mode & 0o027:
             raise LogsRuntimeError('Log observation directory differs.')
         try:
@@ -144,7 +157,8 @@ def prepare_local(observer, account, path=LOCAL):
         if len(entries) > 8:
             raise LogsRuntimeError('Log observation inventory exceeds its bound.')
         for name in entries:
-            if name != 'health.json' and not re.fullmatch(
+            temporary = re.fullmatch(r'\.health\.[a-z0-9_]{8}', name) is not None
+            if not temporary and name != 'health.json' and not re.fullmatch(
                     r'events(?:-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3})?\.jsonl', name):
                 raise LogsRuntimeError('Log observation filename differs.')
             file = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
@@ -152,10 +166,13 @@ def prepare_local(observer, account, path=LOCAL):
                 current = os.fstat(file)
                 if (not stat.S_ISREG(current.st_mode) or current.st_uid != account.pw_uid or
                         current.st_nlink != 1 or current.st_mode & 0o022 or
-                        current.st_size > (4096 if name == 'health.json' else 1024*1024)):
+                        current.st_size > (4096 if name == 'health.json' or temporary else 1024*1024)):
                     raise LogsRuntimeError('Log observation file differs.')
-                os.fchown(file, account.pw_uid, gid)
-                os.fchmod(file, 0o640)
+                if temporary:
+                    os.unlink(name, dir_fd=descriptor)
+                else:
+                    os.fchown(file, account.pw_uid, gid)
+                    os.fchmod(file, 0o640)
             finally:
                 os.close(file)
         os.fchown(descriptor, account.pw_uid, gid)
@@ -265,7 +282,11 @@ def read_observation(path=OBSERVATION, *, owner=None, now=None, boot_id=None):
     boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip() if boot_id is None else boot_id
     value = decode(read(path, 4096, owner=owner), 4096)
     fields = set(LOCAL_COUNTERS) if isinstance(value, dict) and set(value) & LOCAL_COUNTERS.keys() else set()
-    value = exact(value, {'schema', 'boot_id', 'observed_monotonic_ns', *COUNTERS, *fields}, 'Log observation')
+    epoch = {'producer_epoch'} if isinstance(value, dict) and 'producer_epoch' in value else set()
+    value = exact(value, {'schema', 'boot_id', 'observed_monotonic_ns', *COUNTERS, *fields, *epoch}, 'Log observation')
+    if epoch and (not fields or not isinstance(value['producer_epoch'], str) or
+                  re.fullmatch(r'[a-f0-9]{32}', value['producer_epoch']) is None):
+        raise LogsRuntimeError('Local log producer epoch differs.')
     # A concurrent atomic publication can be newer than a clock sampled before
     # opening the file. Compare against the time after this snapshot was read.
     now = time.monotonic_ns() if now is None else now
@@ -297,6 +318,7 @@ def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path
 
     previous = {name: signal.signal(name, stop) for name in (signal.SIGTERM, signal.SIGINT)}
     child = None
+    epoch = uuid.uuid4().hex if local else None
     try:
         environment = {key: value for key, value in os.environ.items()
                        if key not in ('NOTIFY_SOCKET', 'WATCHDOG_PID', 'WATCHDOG_USEC')}
@@ -311,7 +333,7 @@ def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path
                 publish_observation(value, observation_path)
                 if local:
                     try:
-                        publish_observation(value, LOCAL/'health.json')
+                        publish_observation({**value, 'producer_epoch': epoch}, LOCAL/'health.json')
                     except (OSError, LogsRuntimeError):
                         # An optional local filesystem fault must not stop
                         # remote journal delivery or its liveness watchdog.

@@ -52,7 +52,9 @@ class LogObservationContractTests(unittest.TestCase):
             self.assertEqual(graph.count('loki.source.journal '), 1)
             self.assertEqual(graph.count('otelcol.exporter.otlphttp '), 1)
             unit = (output/'etc/systemd/system/alloy.service.d/60-lanrith.conf').read_text()
-            self.assertIn('RuntimeDirectory=lanrith-logs lanrith-log-observations\n', unit)
+            self.assertIn('RuntimeDirectory=lanrith-logs\n', unit)
+            self.assertNotIn('RuntimeDirectory=lanrith-logs lanrith-log-observations', unit)
+            self.assertIn(' -/run/lanrith-log-observations\n', unit)
             self.assertIn('SupplementaryGroups=systemd-journal\n', unit)
             self.assertNotIn('example-agent', unit)
             self.assertNotIn('Group=1801', unit)
@@ -119,6 +121,34 @@ class LogObservationCustodyTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o2700)
         self.assertEqual(file.stat().st_gid, os.getgid())
         self.assertEqual(file.read_text(), 'synthetic metadata')
+
+    def test_root_preparation_creates_the_separate_directory_without_adopting_other_data(self):
+        account = SimpleNamespace(pw_uid=2001, pw_gid=2001)
+        selected = self.path/'new'
+        with patch.object(logs_runtime.pwd, 'getpwnam', return_value=self.reader):
+            logs_runtime.prepare_local(OBSERVER, account, selected)
+        self.assertEqual((selected.stat().st_uid, selected.stat().st_gid,
+                          stat.S_IMODE(selected.stat().st_mode)), (2001, 1801, 0o2750))
+        retained = self.path/'root-owned'
+        retained.mkdir(mode=0o700)
+        (retained/'retain').write_text('root-owned unrelated data')
+        with self.assertRaises(ValueError):
+            logs_runtime.prepare_local(OBSERVER, account, retained)
+        self.assertEqual((retained/'retain').read_text(), 'root-owned unrelated data')
+
+    def test_only_safe_unpublished_health_files_are_collected_after_interruption(self):
+        pending = self.path/'.health.abcdefgh'
+        pending.write_text('interrupted metadata publication')
+        pending.chmod(0o600)
+        self.prepare()
+        self.assertFalse(pending.exists())
+        retained = self.path/'events.jsonl'
+        retained.write_text('keep published data')
+        retained.chmod(0o640)
+        pending.symlink_to(retained)
+        with self.assertRaises(OSError):self.prepare()
+        self.assertTrue(pending.is_symlink())
+        self.assertEqual(retained.read_text(), 'keep published data')
 
     def test_unsafe_files_and_aliases_are_rejected_without_repair(self):
         file = self.path/'events.jsonl'

@@ -237,10 +237,9 @@ def render(value, *, observer=None):
         'Restart=on-failure\nRestartSec=10s\n')
     if observer is not None:
         unit = unit.replace('RuntimeDirectory=lanrith-logs\n',
-            'RuntimeDirectory=lanrith-logs lanrith-log-observations\n'
-            'LogRateLimitIntervalSec=30s\nLogRateLimitBurst=50\n').replace(
+            'RuntimeDirectory=lanrith-logs\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=50\n').replace(
             'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs\n',
-            'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs /run/lanrith-log-observations\n')
+            'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs -/run/lanrith-log-observations\n')
     return {
         'usr/share/lanrith/logs.json': canonical(policy).decode(),
         'etc/alloy/config.alloy': configuration(value, observer=observer),

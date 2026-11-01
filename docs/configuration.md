@@ -498,8 +498,10 @@ remote branch retains its redacted message and separate persistent queue. This
 adds no console-specific name, raw journal reader, listener or network grant.
 
 The exporter writes JSONL to `/run/lanrith-log-observations/events.jsonl`, with
-1 MiB rotation and two backups. The fixed directory belongs to the exporter and
-the admitted reader's primary group, mode `2750`. New files inherit that group.
+1 MiB rotation and two backups. The root staging helper prepares the fixed directory for the exporter and
+the admitted reader's primary group, mode `2750`. It is separate from systemd's
+`RuntimeDirectory` ownership so the reader group survives the transition to the
+main command. New files inherit that group.
 The selected exporter creates mode `0644` files; the protected parent directory
 prevents other users from reaching them. The reader cannot modify files or the
 directory and receives no membership in the exporter's credential or journal
@@ -507,12 +509,14 @@ groups. Missing or reassigned reader accounts close read access while the
 exporter continues privately. Unsafe retained paths are rejected before startup.
 
 `health.json` in that directory carries a same-boot monotonic observation and
-separate `local_sent_records` and `local_failed_records` counters. Local write
+separate `local_sent_records` and `local_failed_records` counters, plus a
+`producer_epoch` that changes when the exporter supervisor restarts. Local write
 failure does not stop remote export or its watchdog. The generated unit limits
 its own journal emission to 50 messages per 30 seconds. This is a bounded
 observation stream, not durable journal storage or proof of service health.
 Rotation, filesystem faults and restart can lose records; consumers must expose
-loss, reject stale health and handle counter/boot resets. Restart removes the
-runtime directory. Omitting the declaration emits no local branch or directory;
+loss, reject stale health and handle epoch, counter and boot changes. The local
+directory remains until reboot; only validated unpublished health files are
+collected during restart. Published observations are not removed by preparation. Omitting the declaration emits no local branch or directory;
 owner YAML and the extension manifest are not read at runtime. Application event
 schemas and unit-to-event mappings remain extension responsibilities.

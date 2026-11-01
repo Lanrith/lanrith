@@ -113,6 +113,15 @@ collected. Its consumer and completion observer are synthetic; actual SSH,
 encryption, backend authentication and full owner-image update/recovery still
 need their own evidence.
 
+The credential fixture also runs the actual generated logging pre-start command
+with systemd's service-owned credential copy. The unprivileged consumer checks
+the staged bytes and private-file metadata without reading the protected source
+store. An admitted synthetic observer retains its directory read group after the
+main command starts, can read metadata and cannot read the password. This check
+is mandatory in the 18-case credential gate and binds the log runtime, renderer,
+observation admission and protected-reader implementation. The final daemon
+command is a fixture here; the separate journal test executes the real exporter.
+
 Base qualification requires `credential-qualification.json` with all checks,
 matching test/runtime/runner digests, confirmed cleanup and an assessment no older
 than six hours. The qualification record and consumer admission bind its digest
@@ -120,10 +129,10 @@ to the authenticated release asset. Local or pull-request results cannot set the
 production qualification flag.
 
 The same journal qualification now exercises an admitted local reader through
-the actual selected exporter. Four additional checks cover body withholding and
+the actual selected exporter. Five additional checks cover body withholding and
 original OTLP timestamps, reader/credential/journal permissions, 1 MiB rotation
-with two backups, and remote progress while the local filesystem refuses writes.
-Local sent/failed counters and recovered output retain the original producer
+with two backups, remote progress while the local filesystem refuses writes, and a new producer
+epoch after forced process loss. Local sent/failed counters and recovered output retain the original producer
 time. Base qualification requires these checks, their bounded output/failure
 measurements and the current observation-admission source hash. These component
 tests do not establish a complete extension's event schema or durable image
