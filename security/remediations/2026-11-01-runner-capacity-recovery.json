@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "kind": "bounded-runner-capacity-recovery",
+  "recorded_at": "2026-11-01T17:05:32.374108+00:00",
+  "reason": "The same approved source passed on a worker with over110GiB free after SDK cleanup but failed on a worker with71.61GiB total and only37.52GiB free afterward. SDK cleanup alone does not guarantee the fixed native build budget across the hosted pool.",
+  "actual_failure": {
+    "source": "1c59269a816cc19d5214189e6fc3291f8266eca0",
+    "run": 41323619306,
+    "attempt": 1,
+    "job": 124899543188,
+    "artifact": 13090253053,
+    "capacity": {
+      "after": {
+        "free_bytes": 40283488256,
+        "total_bytes": 76887154688,
+        "used_bytes": 36586889216
+      },
+      "before": {
+        "free_bytes": 13217882112,
+        "total_bytes": 76887154688,
+        "used_bytes": 63652495360
+      }
+    },
+    "report_sha256": "2f2cd55516943b8f622cc511aba9e79ce22d217c0ce412bd60052d1e0ac54695",
+    "phase": "Prepare hosted runner disk, before compilation or native work"
+  },
+  "current_recovery": {
+    "run": 41323619306,
+    "attempt": 2,
+    "mode": "One manually initiated normal failed-job retry on unchanged independently approved source.",
+    "observed": "Production attempt2 completed successfully. Immutable v0.1.16 from unchanged source1c59269a816cc19d5214189e6fc3291f8266eca0 independently verified, including provenance, native/storage/security/SLSA evidence and fresh signed assessment.",
+    "verified_release": "https://github.com/Lanrith/lanrith/releases/tag/v0.1.16"
+  },
+  "automation": {
+    "root_repository_only": "Lanrith/lanrith",
+    "workflows": [
+      "Release",
+      "Package qualification"
+    ],
+    "maximum_total_attempts": 3,
+    "maximum_automatic_retries": 2,
+    "eligibility": [
+      "A genuine completed failure event matches the latest run id, attempt, exact source and supported workflow.",
+      "Release still builds protected Main, or same-repository PR head and tested/current Main base remain unchanged.",
+      "The disk-preparation source is byte-identical to reviewed Main.",
+      "Exactly one known compiler/native job failed only Prepare hosted runner disk; actual build/test execution has not started.",
+      "A single bounded report from that exact run and attempt proves a GitHub-hosted Linux worker below the unchanged60GiB minimum.",
+      "Native retries require an available successful immutable package-stage handoff."
+    ],
+    "excluded": "Code, test, security/scanner, SDK cleanup errors, forks, stale source/base/attempt, missing/truncated evidence and exhausted budgets are not retried.",
+    "safety": "Controllers execute only their exact reviewed Main checkout. PR reports are parsed as bounded JSON/ZIP data; only numeric measurements and hashes enter public intent, never arbitrary report strings or environment data.",
+    "permissions": "Planning is read-only. A separate executor has Actions write, Contents read and Pull requests read. It cannot write source or approve PRs. Signing/publication permissions remain on separate archive jobs.",
+    "traceability": "Exact eligible intent is attested and archived immutably before any retry. Execution verifies the offline bundle and exact intent hash, rechecks current source/evidence/budget, requests one job plus dependants, and archives the actual result. Ambiguous POST transport errors are never repeated.",
+    "review_notifications": "For PR retries, the normal trusted admission workflow is refreshed after the actual new attempt is observed. Full CI and independent review remain required; review requests wait for successful qualification.",
+    "retention": "Tiny temporary plan/result handoffs expire after one day and enter the two-hour cleanup for completed known workflows. Only actual capacity decisions create durable archives."
+  },
+  "validation": {
+    "local_suite": {
+      "tests": 912,
+      "passed": 897,
+      "existing_environment_skips": 15,
+      "result": "pass"
+    },
+    "actual_historical_replay": "The real failed attempt qualifies. The already-retried live event is rejected. This read-only verification made no GitHub mutation.",
+    "cases": [
+      "Budget exhaustion",
+      "Code/test/scanner failures",
+      "Concurrent retry and changed source/base",
+      "Fork and stale PR refusal",
+      "Missing package handoff",
+      "Wrong/oversized/expired report",
+      "Invalid measurements",
+      "No arbitrary strings republished",
+      "Exact immutable intent and hosted signer required",
+      "Ambiguous POST issued once",
+      "Normal PR admission refresh only",
+      "Active/durable artifact cleanup boundaries",
+      "Actual repository assessment reaches the final native qualifier.",
+      "Shared preflight/qualification catalog rejects omitted, extra or changed recovery workflows.",
+      "Incomplete platform requirements fail before native evidence is read."
+    ],
+    "hosted_final_head_qualification": "required-before-human-review-request",
+    "automatic_deployment": "not-performed"
+  },
+  "approval": "This is new workflow/controller authority. It needs its own actual independent human review on the final qualified head; PR48 approval does not approve it.",
+  "references": [
+    "https://docs.github.com/en/rest/actions/workflow-runs#re-run-a-job-from-a-workflow-run",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run",
+    "https://docs.github.com/en/actions/concepts/runners/github-hosted-runners"
+  ],
+  "paid_ai": false,
+  "disk_requirement_lowered": false,
+  "security_validation_bypassed": false,
+  "production_publication_verified": true,
+  "qualification_assessment_correction": {
+    "recorded_at": "2026-11-01T20:50:40.689848+00:00",
+    "failed_head": "5dd014d96165e930a1fcfea1cef9750437e7282b",
+    "run": 41330128797,
+    "attempt": 2,
+    "job": 124942097517,
+    "failure": "All three actual UEFI profiles and storage qualification passed. The final qualifier then rejected the nine reviewed workflows against its stale duplicated eight-workflow set.",
+    "cause": "The recovery workflow was added to the preflight and assessment but omitted from the separately hardcoded final qualifier. Synthetic qualification fixtures repeated the stale catalog.",
+    "correction": "One fixed reviewed workflow catalog and one complete platform validator are shared by preflight and qualification. All fourteen SLSA requirement checks and exact workflow hashes are enforced during cheap preflight as well as before native evidence is read.",
+    "regression": "The actual repository assessment reproduces the old hosted error and passes after the correction. Real-workflow mutations and missing/unsatisfied requirements remain rejected by both paths.",
+    "no_capacity_retry_for_this_failure": true,
+    "fresh_final_head_hosted_qualification_required": true,
+    "previous_head_review": "Actual owner review5729351035 applies only to the old head. A fresh independent human review of the new head is required; request it only after all current-head builds pass.",
+    "security_native_signature_and_disk_gates_unchanged": true
+  }
+}
