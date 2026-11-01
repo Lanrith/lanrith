@@ -29,6 +29,26 @@ for path in (root/'.github/workflows').glob('*.yml'):
     if path.name == 'build-base.yml':
         jobs = value['jobs']
         assert jobs['packages']['permissions'] == {'contents': 'read'}, path.name
+        version = jobs['version']
+        assert version['needs'] == 'check' and version['permissions'] == {'contents': 'write'}, path.name
+        assert version['runs-on'] == 'ubuntu-24.04' and version['timeout-minutes'] == 5, path.name
+        assert version['if'] == ("github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && "
+            "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"), 'Version selection must be trusted Main only'
+        assert len(version['steps']) == 2, 'The version writer must not execute build or downloaded code'
+        checkout, selector = version['steps']
+        assert checkout['uses'].startswith('actions/checkout@') and checkout['with'] == {
+            'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
+            'persist-credentials': False}, 'Version selection must use its exact reviewed workflow source'
+        assert selector['id'] == 'version' and selector['run'] == 'python3 scripts/next-version.py' and \
+            selector['env'] == {'GH_TOKEN': '${{ github.token }}'}, path.name
+        assert version['outputs'] == {'value': '${{ steps.version.outputs.value }}'}, path.name
+        assert set(jobs['packages']['needs']) == {'check', 'cache', 'version'} and \
+            "needs.version.result == 'success'" in jobs['packages']['if'], path.name
+        assert jobs['packages']['outputs']['version'] == '${{ needs.version.outputs.value }}', path.name
+        assert 'next-version.py' not in str(jobs['packages']), 'Read-only compilation cannot enumerate reserved drafts'
+        receiver = next(s for s in jobs['packages']['steps'] if s.get('env',{}).get('RELEASE_VERSION'))
+        assert receiver['env'] == {'RELEASE_VERSION': '${{ needs.version.outputs.value }}'} and \
+            're.fullmatch' in receiver['run'] and '${{' not in receiver['run'], 'Validate version data without shell interpolation'
         assert '--phase packages' in str(jobs['packages']) and '--privileged' not in str(jobs['packages']), path.name
         assert '--phase image' in str(jobs['build']) and 'cache-artifact-id' not in jobs['build']['outputs'], path.name
         assert set(jobs['attest']['needs']) == {'build', 'packages'}, path.name
@@ -132,6 +152,20 @@ for path in (root/'.github/workflows').glob('*.yml'):
         checkout = next(s['with'] for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@'))
         assert checkout == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
                             'path': 'tools', 'persist-credentials': False}, 'Notification must run only its trusted workflow source'
+    if path.name == 'publish-release.yml':
+        assert value['jobs']['publish']['if'] == ("github.ref == 'refs/heads/main' && "
+            "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"), 'Publication must be trusted Main only'
+        steps = value['jobs']['publish']['steps']
+        assert len(steps) == 4, 'The publisher must only check out trusted tools, download data, publish and upload verification'
+        checkout, download, publisher, upload = steps
+        assert checkout['uses'].startswith('actions/checkout@') and checkout['with'] == {
+            'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
+            'path': 'tools', 'persist-credentials': False}, 'The publisher must use its exact reviewed workflow source'
+        assert download['uses'].startswith('actions/download-artifact@') and download['with']['path'] == 'release', path.name
+        assert download['with']['artifact-ids'] == '${{ inputs.artifact-id }}', path.name
+        assert publisher['run'] == 'python3 tools/scripts/publish-release.py', 'Never execute publisher code from the downloaded artifact'
+        assert upload['uses'].startswith('actions/upload-artifact@'), path.name
+        text = (root/'scripts/publish-release.py').read_text()
     if path.name in ('archive-evidence.yml', 'publish-release.yml'):
         assert '--draft' in text and '--draft=false' in text and '--clobber' not in text.replace('# No overwrite or --clobber path is available, including on retries.', ''), path.name
 print('Workflow trust boundaries verified.')

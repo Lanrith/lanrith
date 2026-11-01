@@ -11,16 +11,36 @@ jobs:
   cache:
     cache-mode: read
     uses: ./.github/workflows/restore-cache.yml
+  version:
+    needs: check
+    if: github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - id: version
+        name: Select a version including reserved drafts with push visibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/next-version.py
   packages:
-    needs: [check, cache]
-    if: ${{ !cancelled() && needs.check.result == 'success' }}
+    needs: [check, cache, version]
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.version.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:
       contents: read
     outputs:
       artifact-id: ${{ steps.stage-upload.outputs.artifact-id }}
-      version: ${{ steps.version.outputs.value }}
+      version: ${{ needs.version.outputs.value }}
       cache-artifact-id: ${{ steps.cache-upload.outputs.artifact-id }}
       cache-key: ${{ steps.build.outputs.cache-key }}
     steps:
@@ -40,12 +60,16 @@ jobs:
           import os,shutil
           assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
           PY
-      - id: version
+      - name: Receive the version selected by the isolated trusted job
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.value }}
         run: |
-          python3 scripts/next-version.py
-          cat "$RUNNER_TEMP/lanrith-version" > VERSION
+          python3 - <<'PYTHON'
+          import os,pathlib,re
+          version=os.environ['RELEASE_VERSION']
+          assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',version)
+          pathlib.Path('VERSION').write_text(version+'\n')
+          PYTHON
       - name: Receive opaque cache data on the fresh build VM
         if: needs.cache.outputs.artifact-id != ''
         continue-on-error: true

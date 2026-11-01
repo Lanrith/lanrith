@@ -1,4 +1,5 @@
 """Assessment drift must block the cheap preflight before expensive package work."""
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -19,6 +20,7 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
             (root/'scripts').mkdir()
             shutil.copyfile(ROOT/'security/slsa-assessment.json', root/'security/slsa-assessment.json')
             shutil.copyfile(ROOT/'scripts/check-workflows.py', root/'scripts/check-workflows.py')
+            shutil.copyfile(ROOT/'scripts/publish-release.py', root/'scripts/publish-release.py')
             if mutation:
                 mutation(root)
             return subprocess.run([sys.executable, str(root/'scripts/check-workflows.py')],
@@ -47,3 +49,46 @@ class WorkflowAssessmentPreflightTests(unittest.TestCase):
         result = self.check(change)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('reviewed workflow set is incomplete', result.stderr)
+
+    def changed_workflow(self, name, transform):
+        def change(root):
+            path = root/name
+            path.write_text(transform(path.read_text()))
+            assessment = root/'security/slsa-assessment.json'
+            value = json.loads(assessment.read_text())
+            value['reviewed_workflows'][name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            assessment.write_text(json.dumps(value))
+        return self.check(change)
+
+    def test_read_only_version_allocator_is_rejected_even_with_matching_assessment_hash(self):
+        result = self.changed_workflow('.github/workflows/build-base.yml',
+            lambda s:s.replace('      contents: write','      contents: read',1))
+        self.assertNotEqual(result.returncode,0)
+
+    def test_build_token_cannot_be_elevated_to_release_write(self):
+        result = self.changed_workflow('.github/workflows/build-base.yml',
+            lambda s:s.replace('timeout-minutes: 360\n    permissions:\n      contents: read',
+                               'timeout-minutes: 360\n    permissions:\n      contents: write',1))
+        self.assertNotEqual(result.returncode,0)
+
+    def test_version_writer_rejects_moving_checkout_untrusted_events_or_extra_code(self):
+        changes = (
+            lambda s:s.replace('ref: ${{ job.workflow_sha }}','ref: main',1),
+            lambda s:s.replace("github.ref == 'refs/heads/main' && ",'',1),
+            lambda s:s.replace('run: python3 scripts/next-version.py',
+                               'run: python3 scripts/build-base.py',1),
+            lambda s:s.replace('  packages:\n','      - run: python3 release/untrusted.py\n  packages:\n',1),
+        )
+        for transform in changes:
+            with self.subTest(transform=transform):
+                self.assertNotEqual(self.changed_workflow('.github/workflows/build-base.yml',transform).returncode,0)
+
+    def test_publisher_rejects_moving_checkout_or_artifact_supplied_executable(self):
+        changes = (
+            lambda s:s.replace('ref: ${{ job.workflow_sha }}','ref: main',1),
+            lambda s:s.replace('python3 tools/scripts/publish-release.py','python3 release/publish-release.py',1),
+            lambda s:s.replace("github.ref == 'refs/heads/main' && ",'',1),
+        )
+        for transform in changes:
+            with self.subTest(transform=transform):
+                self.assertNotEqual(self.changed_workflow('.github/workflows/publish-release.yml',transform).returncode,0)
