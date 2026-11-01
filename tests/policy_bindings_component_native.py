@@ -76,7 +76,7 @@ while True:
 
 
 def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None,
-            prepare_interfaces=None, prepare_ruleset=None):
+            prepare_interfaces=None, prepare_ruleset=None, after_profile=None):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
@@ -144,6 +144,11 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         (parent/'profile.json').write_bytes(profile); (parent/'profile.json').chmod(0o400)
         shutil.copyfile(destination/'router-guards.nft', parent/'guards.nft'); (parent/'guards.nft').chmod(0o400)
         base.run('nft', '-f', str(parent/'guards.nft'))
+    # A trusted companion may now install/start generated service dependencies
+    # using the actual completed profile. No runtime CLI or source intent can
+    # select this hook, and the baseline, floor and guard artifacts stay pinned.
+    if after_profile is not None:
+        after_profile(copy.deepcopy(value), dict(files), copy.deepcopy(contract), dict(metadata))
     policy_runtime.publish_runtime(contract, metadata, 'c'*64)
     policy_runtime.empty_bindings()
     base.run('/usr/bin/router-policy-helper', '-config-directory', str(policy_runtime.CONFIG), '-initialize-state')
