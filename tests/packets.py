@@ -93,6 +93,22 @@ def ns(name, *arguments):
     return run('nsenter', '--net=/run/netns/'+name, '--', *arguments)
 
 
+def ipv6_ready(attachments, seconds=5):
+    """Wait for kernel DAD before starting a fixture's packet deadlines."""
+    deadline = time.monotonic()+seconds
+    while True:
+        states = []
+        for namespace, interface in attachments:
+            command = ('ip', '-6', '-j', 'address', 'show', 'dev', interface)
+            rows = json.loads((run(*command) if namespace is None else ns(namespace, *command)).stdout)
+            states.extend(item for row in rows for item in row.get('addr_info', []))
+        assert not any(item.get('dadfailed') for item in states), 'Fixture IPv6 address DAD failed.'
+        if not any(item.get('tentative') for item in states):
+            return
+        assert time.monotonic() < deadline, 'Fixture IPv6 address readiness expired.'
+        time.sleep(.05)
+
+
 def probe(namespace, address, port, allowed, protocol='tcp', peer=None, user=None, source=None):
     client = CLIENT
     if user is not None:
