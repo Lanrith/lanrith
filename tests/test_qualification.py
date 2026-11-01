@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from lanrith import release
+from ids_fixture import report as ids_report, sources as ids_sources
 
 spec = importlib.util.spec_from_file_location('qualify_base', Path(__file__).parents[1]/'scripts/qualify-base.py')
 qualification = importlib.util.module_from_spec(spec)
@@ -80,6 +81,9 @@ class QualificationTests(unittest.TestCase):
             'source_sha256': implementation.pop('tests/credentials_native.py'), 'implementation_sha256': implementation,
             'external_network': False, 'checks': sorted(qualification.CREDENTIAL_CHECKS), 'private_image_qualified': False,
             'container_cleanup': 'removed', 'builder_image_sha256': 'f'*64, 'container_runtime': 'docker'}))
+        ids_sources(project)
+        (directory/'ids-qualification.json').write_bytes(release.canonical(ids_report(
+            release.file_record(directory/'lanrith-base.tar.gz')['sha256'], now, project)))
         workflows = {}
         for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
                      '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
@@ -125,6 +129,7 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(record['logs_sha256'], release.file_record(directory/'logs-qualification.json')['sha256'])
             self.assertEqual(record['directory_sha256'], release.file_record(directory/'directory-qualification.json')['sha256'])
             self.assertEqual(record['credentials_sha256'], release.file_record(directory/'credential-qualification.json')['sha256'])
+            self.assertEqual(record['ids_sha256'], release.file_record(directory/'ids-qualification.json')['sha256'])
             self.assertEqual(security['qualification']['record_sha256'], release.file_record(directory/'qualification.json')['sha256'])
             artifact = next(item for item in release.document((directory/'release.json').read_bytes())['artifacts']
                             if item['role'] == 'security')
@@ -316,3 +321,38 @@ class QualificationTests(unittest.TestCase):
                     path.write_bytes(release.canonical(report))
                 with self.assertRaises((release.ReleaseError, OSError)):
                     qualification.qualify(directory, project, {}, now=now)
+
+    def test_ids_gate_is_required_before_any_production_promotion(self):
+        for alteration in ('missing', 'test-source', 'runtime-source', 'runner-source', 'missing-check',
+                           'wrong-base', 'wrong-binary', 'no-match', 'stale', 'not-cleaned', 'invalid-schema'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                path = directory/'ids-qualification.json'
+                report = json.loads(path.read_bytes())
+                if alteration == 'missing':
+                    path.unlink()
+                else:
+                    if alteration == 'test-source':
+                        report['source_sha256'] = 'd'*64
+                    elif alteration in ('runtime-source', 'runner-source'):
+                        selected = 'lanrith/ids.py' if alteration == 'runtime-source' else 'scripts/qualify-ids.py'
+                        (project/selected).write_text('changed after native qualification')
+                    elif alteration == 'missing-check':
+                        report['checks'].remove('generated-command-root-working-directory')
+                    elif alteration == 'wrong-base':
+                        report['filesystem_sha256'] = 'd'*64
+                    elif alteration == 'wrong-binary':
+                        report['base_binary_sha256'] = 'd'*64
+                    elif alteration == 'no-match':
+                        report['base_binary_match'] = False
+                    elif alteration == 'stale':
+                        report['assessed_at'] = (now-datetime.timedelta(hours=7)).isoformat()
+                    elif alteration == 'not-cleaned':
+                        report['container_cleanup'] = 'pending'
+                    elif alteration == 'invalid-schema':
+                        report['schema'] = True
+                    path.write_bytes(release.canonical(report))
+                with self.assertRaises((release.ReleaseError, OSError)):
+                    qualification.qualify(directory, project, self.hosted_environment(), now=now)
+                self.assertFalse(json.loads((directory/'security.json').read_bytes())['production_qualified'])
+                self.assertFalse((directory/'qualification.json').exists())

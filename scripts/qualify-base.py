@@ -12,6 +12,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, document, file_record, read, require, unique
+from lanrith import ids_qualification
 
 REQUIREMENTS = {'appropriate-platform', 'consistent-process', 'distributed-provenance',
                 'provenance-exists', 'provenance-authentic', 'provenance-unforgeable',
@@ -160,6 +161,8 @@ def qualify(directory, project, environment, *, now=None):
     require(isinstance(implementation, dict) and set(implementation) == CREDENTIAL_IMPLEMENTATION and
             all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
             'Credential implementation changed after native qualification.')
+    ids_qualification.validate(value(directory/'ids-qualification.json'),
+        file_record(directory/'lanrith-base.tar.gz')['sha256'], project=project, now=now)
     assessment = value(project/'security/slsa-assessment.json')
     require(assessment.get('schema') == 1 and assessment.get('specification') == 'SLSA v1.2' and
             assessment.get('target') == 'Build L3' and assessment.get('result') == 'design-assessed' and
@@ -204,6 +207,7 @@ def qualify(directory, project, environment, *, now=None):
         'logs_sha256': file_record(directory/'logs-qualification.json')['sha256'],
         'directory_sha256': file_record(directory/'directory-qualification.json')['sha256'],
         'credentials_sha256': file_record(directory/'credential-qualification.json')['sha256'],
+        'ids_sha256': file_record(directory/'ids-qualification.json')['sha256'],
         'filesystem_sha256': file_record(directory/'lanrith-base.tar.gz')['sha256'],
         'initrd_sha256': file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
         'requires_consumer_verified_file_and_oci_provenance': True}

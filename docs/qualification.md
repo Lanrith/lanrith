@@ -119,6 +119,44 @@ than six hours. The qualification record and consumer admission bind its digest
 to the authenticated release asset. Local or pull-request results cannot set the
 production qualification flag.
 
+`scripts/qualify-ids.py` runs the IDS gate with the exact base archive and a
+matching local builder. It resolves the builder to an immutable image ID, mounts
+source and the archive read-only, and mounts a new empty staging directory for
+output. The offline container has bounded memory/PIDs and explicit namespace and
+network capabilities. It publishes the report only after removing the owned
+container and staging directory. For example, on the build host:
+
+```sh
+python3 scripts/qualify-ids.py --builder REVIEWED_LOCAL_BUILDER \
+  --base /absolute/path/lanrith-base.tar.gz \
+  --result /absolute/output/ids-qualification.json
+```
+
+Docker is the default runtime; `--runtime podman` selects Podman. The output
+directory must exist and the result must be new. `tests/ids_native.py` hashes the
+canonical root-owned detector executable inside the archive without extracting
+the filesystem, then requires the matching builder executable to have identical
+bytes. It parses the generated configuration and admitted alert rules, runs the
+generated command from `/` under the dedicated UID with `NoNewPrivileges` and
+only `CAP_NET_RAW` in its effective and bounding capability sets,
+captures synthetic WAN traffic, excludes LAN-only packets and checks forwarding
+before, during and after detector operation. The explicit log-directory argument
+is exercised by the generated command rather than supplied independently by the
+test.
+
+Base qualification requires `ids-qualification.json` with all five checks,
+exact filesystem/executable bindings, current implementation hashes, removed
+fixture state and a native assessment no more than six hours old. Its digest
+enters the authenticated qualification record and consumer selection. Consumer
+admission checks that the native assessment was fresh at the original base
+qualification time. An unchanged historical base can still use a current
+security reassessment; a missing or altered IDS receipt cannot be substituted.
+
+This establishes component behavior in the matching builder. It does not qualify
+the complete image, its deployed libraries, actual WAN hardware or the owner's
+topology. A standalone component run without `--base` emits diagnostic output
+only; publishing native evidence requires both `--base` and `--result`.
+
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
 a test signing authority in tmpfs. Restricted guest networking permits only

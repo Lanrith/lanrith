@@ -266,6 +266,8 @@ def main():
         builder, 'python3', '/source/tests/directory_native.py', '--result', '/output/directory-qualification.json')
     run(sys.executable, str(PROJECT/'scripts/qualify-credentials.py'), '--builder', builder,
         '--result', str(args.output/'credential-qualification.json'))
+    run(sys.executable, str(PROJECT/'scripts/qualify-ids.py'), '--builder', builder,
+        '--base', str(args.output/'lanrith-base.tar.gz'), '--result', str(args.output/'ids-qualification.json'))
     # Qualification has its own disposable authority and regular-file disks.
     # No production key or owner configuration enters the public build.
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',

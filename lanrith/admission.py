@@ -4,6 +4,7 @@ import datetime
 import json
 
 from .release import file_record, read, require, unique
+from . import ids_qualification
 
 
 def assess(directory, selection, now=None):
@@ -40,6 +41,7 @@ def assess(directory, selection, now=None):
                         ('logs_sha256', 'logs-qualification.json'),
                         ('directory_sha256', 'directory-qualification.json'),
                         ('credentials_sha256', 'credential-qualification.json'),
+                        ('ids_sha256', 'ids-qualification.json'),
                         ('filesystem_sha256', 'lanrith-base.tar.gz'),
                         ('initrd_sha256', 'lanrith-initrd-base.tar.gz')):
         require(record.get(field) == selection['files'].get(name) == file_record(directory/name)['sha256'],
@@ -47,4 +49,14 @@ def assess(directory, selection, now=None):
     native = json.loads(read(directory/'native-qualification.json', 4*1024*1024), object_pairs_hook=unique)
     require(native.get('result') == 'pass' and native.get('filesystem_sha256') == record['filesystem_sha256'] and
             native.get('initrd_sha256') == record['initrd_sha256'], 'Native evidence does not describe this base.')
+    try:
+        qualified_at = datetime.datetime.fromisoformat(record['assessed_at'])
+    except (KeyError, TypeError, ValueError):
+        require(False, 'Platform qualification timestamp is invalid.')
+    require(qualified_at.tzinfo is not None and qualified_at <= now, 'Platform qualification is future-dated.')
+    # Native evidence must have been fresh when the authenticated base was
+    # qualified. A current security reassessment can retain that exact base;
+    # historical native tests are not required to be rerun every six hours.
+    ids_qualification.validate(json.loads(read(directory/'ids-qualification.json', 262144), object_pairs_hook=unique),
+                               record['filesystem_sha256'], now=qualified_at)
     return value
