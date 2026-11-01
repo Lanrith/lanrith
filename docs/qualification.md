@@ -323,3 +323,30 @@ configuration callback, an observer account at the fixture UID/GID, and an
 `applied`, `incomplete`, `bindings-recovered` and `directory-reconfirmed`. This
 allows an extension's own read-only client to observe the same real lifecycle.
 These are test-code hooks; neither directory input nor the CLI selects code.
+
+The experimental `tests/firewall_metadata_native.py` fixture tests an NFLOG
+codec and generated default-deny instrumentation. It is not connected to image
+assembly, extension admission or a deployed collector. Run it only in an
+offline disposable container with separate mount/network namespaces, read-only
+source and one writable result directory. The fixture checks both namespace
+identities against controller-supplied `LANRITH_FIXTURE_OUTER_NET` and
+`LANRITH_FIXTURE_OUTER_MNT` values before changing its firewall or sysctls.
+
+The fixed logging group supplies bounded packet headers to the core decoder;
+only source/destination tuples, interfaces, original kernel time and bound rule
+identity leave it. Kernel peer identity comes from `recvmsg`, not the message's
+PID field. The nonroot receiver discards effective, permitted, inheritable and
+ambient capabilities after its initial NET_ADMIN group bind. Its remaining
+NET_ADMIN bounding bit cannot restore those capabilities under NoNewPrivileges;
+the fixture checks that firewall writes and group reconfiguration fail.
+The protocol follows the [Linux NFLOG interface](https://github.com/torvalds/linux/blob/master/include/uapi/linux/netfilter/nfnetlink_log.h).
+
+IPv4/IPv6 TCP, UDP and ICMP tests reach the actual generated input/forward
+default-drop paths. A bounded, nonterminal log statement is followed by an
+unconditional counter/drop statement. Stalling or removing the receiver and
+exhausting the sampler must leave denied packets blocked and explicitly allowed
+UDP replies available. Sampling and startup gaps prevent a complete packet-count
+claim. Earlier guards, explicit-owner rules, policy-agent and translator paths,
+output and service namespaces are outside this fixture's observation coverage.
+Account allocation, a bounded service/spool, admission, consumer integration and
+complete-image qualification remain required before exposing this endpoint.
