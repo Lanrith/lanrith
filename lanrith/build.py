@@ -151,7 +151,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'dns_observations_runtime.py', 'dns_metadata.py',
                    'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'ntp_health_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
-                   'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'credential_values.py', 'credential_store.py',
+                   'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'systemd_credential.py', 'credential_values.py', 'credential_store.py',
                    'credential_operation.py', 'extension_credential_values.py', 'extension_credential_operation.py',
                    'boot_health.py',
                    'fancontrol_runtime.py', 'image_contract.py', 'early_failure.py', 'repair.py',

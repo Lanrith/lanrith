@@ -20,6 +20,7 @@ import tempfile
 import time
 
 from lanrith import build, config, extension_observations, logs, release
+from test_systemd_credential import CredentialACLTests
 from test_intent import minimal
 import extension_credentials_native as extension_fixture
 
@@ -214,6 +215,8 @@ def main():
         assert active('alloy.service')
         extension_checks = extension_fixture.exercise(installed, tree, units, run, wait, active)
         generated_log_staging(tree, units, raw, value)
+        acl_case = CredentialACLTests('test_kernel_named_user_read_does_not_grant_even_the_owning_group')
+        acl_case.test_kernel_named_user_read_does_not_grant_even_the_owning_group()
         result = {'schema': 1, 'result': 'pass', 'test': 'offline-systemd-credential-provisioning',
             'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -226,7 +229,7 @@ def main():
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/snmp_service.py',
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/credential_runtime.py',
                              'mkosi/base/mkosi.extra/usr/lib/lanrith/systemd_service.py',
-                             'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/policy_runtime.py', 'lanrith/extension_observations.py',
+                             'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/systemd_credential.py', 'tests/test_systemd_credential.py', 'lanrith/policy_runtime.py', 'lanrith/extension_observations.py',
                              *extension_fixture.IMPLEMENTATION)},
             'systemd_version': run('systemctl', '--version').decode().splitlines()[0],
             'external_network': False, 'private_image_qualified': False,
@@ -235,7 +238,8 @@ def main():
                        'failed-requests-collected',
                        'consumer-waits-for-complete-staged-set', 'native-loadcredential-bytes',
                        'capability-empty-no-new-privileges', 'inet-and-outside-write-denial',
-                       'active-completion-observer-not-stopped', 'generated-log-credential-staging', *extension_checks],
+                       'active-completion-observer-not-stopped', 'generated-log-credential-staging',
+                       'pid1-named-user-acl-and-owning-group-denial', *extension_checks],
             'limits': ['synthetic-consumers', 'synthetic-core-boot-acceptance-products',
                        'no-ssh-or-encryption-acceptance', 'no-full-image-or-backend-qualification']}
         args.result.parent.mkdir(parents=True, exist_ok=True)

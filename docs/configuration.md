@@ -542,6 +542,12 @@ boot/transport metadata and the bounded host/job/unit/priority attributes. The
 remote branch retains its redacted message and separate persistent queue. This
 adds no console-specific name, raw journal reader, listener or network grant.
 
+The logging pre-start command reads only its systemd credential copy. It accepts
+a private owner file or a root-owned file with an exact named-user read ACL for
+the exporter UID. It rejects group/world grants and additional named users.
+This follows [systemd's credential writer](https://github.com/systemd/systemd/blob/v257/src/core/exec-credential.c#L294-L339)
+without changing access to the protected credential store.
+
 The exporter writes JSONL to `/run/lanrith-log-observations/events.jsonl`, with
 1 MiB rotation and two backups. The root staging helper prepares the fixed directory for the exporter and
 the admitted reader's primary group, mode `2750`. It is separate from systemd's

@@ -114,11 +114,13 @@ encryption, backend authentication and full owner-image update/recovery still
 need their own evidence.
 
 The credential fixture also runs the actual generated logging pre-start command
-with systemd's service-owned credential copy. The unprivileged consumer checks
+with systemd's credential copy. The unprivileged consumer checks
 the staged bytes and private-file metadata without reading the protected source
-store. An admitted synthetic observer retains its directory read group after the
+store. The reader accepts a private owner file or systemd's root-owned file with
+an exact read ACL for the consumer UID. A real-kernel check rejects grants to
+other users, the owning group and everyone else. An admitted synthetic observer retains its directory read group after the
 main command starts, can read metadata and cannot read the password. This check
-is mandatory in the 18-case credential gate and binds the log runtime, renderer,
+is mandatory in the 19-case credential gate and binds the log runtime, renderer,
 observation admission and protected-reader implementation. The final daemon
 command is a fixture here; the separate journal test executes the real exporter.
 

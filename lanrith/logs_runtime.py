@@ -20,6 +20,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from .policy_runtime import decode, exact, read
+from .systemd_credential import read as read_credential
 
 
 MANIFEST = Path('/usr/share/lanrith/logs.json')
@@ -80,7 +81,7 @@ def credential(name):
     root = os.environ.get('CREDENTIALS_DIRECTORY')
     if not root or '/' in name or name in ('', '.', '..'):
         raise LogsRuntimeError('Log credential transport differs.')
-    raw = read(Path(root)/name, 4097, owner=pwd.getpwnam('alloy').pw_uid, private=True)
+    raw = read_credential(Path(root)/name, 4097, pwd.getpwnam('alloy').pw_uid)
     if raw.endswith(b'\n'):
         raw = raw[:-1]
     if not 1 <= len(raw) <= 4096 or b'\x00' in raw or b'\n' in raw or b'\r' in raw:
