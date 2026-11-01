@@ -335,15 +335,17 @@ Typed network declarations cannot be combined with a complete firewall
 replacement. The build emits native rules only; no runtime extension parser or
 owner YAML is needed. Removing a declaration removes its new-connection grant.
 
-An optional `observations` manifest list selects a read-only policy endpoint:
+An optional `observations` manifest list selects fixed read-only endpoints:
 
 ```json
-[{"service": "policy", "user": "example-agent"}]
+[{"service": "policy", "user": "example-agent"},
+ {"service": "logs", "user": "example-agent"}]
 ```
 
 The reader and its primary group must belong to that extension's identities.
-Policy must be enabled, and only one reader across the active extensions is
-supported. Lanrith generates the fixed socket
+Each endpoint supports one reader across active extensions and requires its
+corresponding component to be enabled. Either endpoint may be selected alone.
+For policy, Lanrith generates the fixed socket
 `/run/lanrith-policy-observations/observations.sock` and pins the reader UID.
 The component checks kernel peer credentials and accepts only bounded observation
 requests. This grants no proposal, status/operator or mutation endpoint access.
@@ -486,3 +488,31 @@ Keep all allocations, functions, time sources, daemon configuration and
 credentials in the private integration. Serial hardening helpers likewise use
 an explicit enable flag and selected TTY; core boot acceptance uses the typed
 owner configuration.
+
+
+The `logs` endpoint uses the selected journal exporter's existing redaction
+pipeline. Its local branch replaces every message body with `journal message
+withheld`; it exports the journal's producer timestamp as OTLP `timeUnixNano`,
+boot/transport metadata and the bounded host/job/unit/priority attributes. The
+remote branch retains its redacted message and separate persistent queue. This
+adds no console-specific name, raw journal reader, listener or network grant.
+
+The exporter writes JSONL to `/run/lanrith-log-observations/events.jsonl`, with
+1 MiB rotation and two backups. The fixed directory belongs to the exporter and
+the admitted reader's primary group, mode `2750`. New files inherit that group.
+The selected exporter creates mode `0644` files; the protected parent directory
+prevents other users from reaching them. The reader cannot modify files or the
+directory and receives no membership in the exporter's credential or journal
+groups. Missing or reassigned reader accounts close read access while the
+exporter continues privately. Unsafe retained paths are rejected before startup.
+
+`health.json` in that directory carries a same-boot monotonic observation and
+separate `local_sent_records` and `local_failed_records` counters. Local write
+failure does not stop remote export or its watchdog. The generated unit limits
+its own journal emission to 50 messages per 30 seconds. This is a bounded
+observation stream, not durable journal storage or proof of service health.
+Rotation, filesystem faults and restart can lose records; consumers must expose
+loss, reject stale health and handle counter/boot resets. Restart removes the
+runtime directory. Omitting the declaration emits no local branch or directory;
+owner YAML and the extension manifest are not read at runtime. Application event
+schemas and unit-to-event mappings remain extension responsibilities.

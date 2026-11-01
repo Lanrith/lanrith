@@ -12,12 +12,13 @@ def active(value):
     return value.get('observability', {}).get('logs', {}).get('enabled', False)
 
 
-def manifest(value):
+def manifest(value, *, observer=None):
     settings = value['observability']['logs']
     target = ip.ip_address(urlsplit(settings['endpoint']).hostname)
     source = next(address for address in intent.service_addresses(value, 'logs')
                   if ip.ip_address(address).version == target.version)
     return {
+        **({'observer': observer} if observer is not None else {}),
         'schema_version': 1,
         'endpoint': settings['endpoint'],
         'target': str(target),
@@ -28,10 +29,10 @@ def manifest(value):
     }
 
 
-def configuration(value):
+def configuration(value, *, observer=None):
     policy = manifest(value)
     quote = json.dumps
-    return '''// Generated from admitted intent. No source configuration or secret is read at runtime.
+    content = '''// Generated from admitted intent. No source configuration or secret is read at runtime.
 // Journal bodies never become labels, and redaction runs before the persistent queue.
 loki.relabel "router_journal" {
   forward_to = []
@@ -168,12 +169,47 @@ otelcol.exporter.otlphttp "router" {
         'USERNAME', quote(policy['username'])).replace(
         'ENDPOINT', quote(policy['endpoint'])).replace(
         'SERVER_NAME', quote(policy['tls_server_name']))
+    if observer is not None:
+        content = content.replace('forward_to = [otelcol.receiver.loki.router.receiver]',
+            'forward_to = [otelcol.receiver.loki.router.receiver, loki.process.router_observations.receiver]')
+        # Local readers get service metadata, never a journal body. The remote
+        # branch retains its redacted message and independent persistent queue.
+        content += '\n'+local_configuration()
+    return content
 
 
-def render(value):
+def local_configuration():
+    return '''// Optional local observations. No credential, raw body or dynamic filename.
+loki.process "router_observations" {
+  forward_to = [otelcol.receiver.loki.router_observations.receiver]
+  stage.template {
+    source   = "withheld_body"
+    template = "journal message withheld"
+  }
+  stage.output { source = "withheld_body" }
+}
+
+otelcol.receiver.loki "router_observations" {
+  output { logs = [otelcol.exporter.file.router_observations.input] }
+}
+
+otelcol.exporter.file "router_observations" {
+  path           = "/run/lanrith-log-observations/events.jsonl"
+  format         = "json"
+  flush_interval = "1s"
+  rotation {
+    max_megabytes = 1
+    max_backups   = 2
+    max_days      = 1
+  }
+}
+'''
+
+
+def render(value, *, observer=None):
     if not active(value):
         return {}
-    policy = manifest(value)
+    policy = manifest(value, observer=observer)
     # Resolving the target to exactly one declared attachment is both a
     # validation gate and the source of the firewall's outgoing interface.
     service_plane.destination_network(value, ip.ip_address(policy['target']))
@@ -199,9 +235,15 @@ def render(value):
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
         'Environment=GOMEMLIMIT=128MiB\nMemoryMax=512M\nMemorySwapMax=0\nTasksMax=64\nLimitNOFILE=1024\n'
         'Restart=on-failure\nRestartSec=10s\n')
+    if observer is not None:
+        unit = unit.replace('RuntimeDirectory=lanrith-logs\n',
+            'RuntimeDirectory=lanrith-logs lanrith-log-observations\n'
+            'LogRateLimitIntervalSec=30s\nLogRateLimitBurst=50\n').replace(
+            'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs\n',
+            'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs /run/lanrith-log-observations\n')
     return {
         'usr/share/lanrith/logs.json': canonical(policy).decode(),
-        'etc/alloy/config.alloy': configuration(value),
+        'etc/alloy/config.alloy': configuration(value, observer=observer),
         'etc/systemd/system/alloy.service.d/60-lanrith.conf': unit,
         'usr/lib/systemd/system/lanrith-telemetry-heartbeat.service': (
             '[Unit]\nDescription=Emit the remote telemetry liveness identity\n'

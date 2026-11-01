@@ -23,6 +23,7 @@ from .policy_runtime import decode, exact, read
 
 MANIFEST = Path('/usr/share/lanrith/logs.json')
 RUNTIME = Path('/run/lanrith-logs')
+LOCAL = Path('/run/lanrith-log-observations')
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 ALLOY = ('/usr/bin/alloy', 'run', '--stability.level=public-preview', '--disable-reporting',
          '--server.http.listen-addr=127.0.0.1:12345', '--storage.path=/var/lib/lanrith-alloy/state',
@@ -38,6 +39,8 @@ COUNTERS = {
     'enqueue_failed_records': 'otelcol_exporter_enqueue_failed_log_records_total',
     'send_failed_records': 'otelcol_exporter_send_failed_log_records_total',
 }
+LOCAL_COUNTERS = {'local_sent_records': 'otelcol_exporter_sent_log_records_total',
+                  'local_failed_records': 'otelcol_exporter_send_failed_log_records_total'}
 
 
 class LogsRuntimeError(ValueError):
@@ -45,16 +48,24 @@ class LogsRuntimeError(ValueError):
 
 
 def load(path=MANIFEST, *, owner=0):
-    value = exact(decode(read(path, 64*1024, owner=owner), 64*1024), {
+    value = decode(read(path, 64*1024, owner=owner), 64*1024)
+    value = exact(value, {
         'schema_version', 'endpoint', 'target', 'source', 'tls_server_name',
-        'username', 'credential_name'}, 'logs runtime')
+        'username', 'credential_name'} | ({'observer'} if isinstance(value, dict) and 'observer' in value else set()),
+        'logs runtime')
+    if 'observer' in value:
+        observer = exact(value['observer'], {'user', 'uid', 'gid'}, 'Log observer')
+        if (not isinstance(observer['user'], str) or
+                not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', observer['user']) or
+                any(type(observer[key]) is not int or not 100 <= observer[key] <= 59999 for key in ('uid', 'gid'))):
+            raise LogsRuntimeError('Log observer identity differs.')
     try:
         target = ip.ip_address(value['target'])
         source = ip.ip_address(value['source'])
         parsed = urlsplit(value['endpoint'])
     except (TypeError, ValueError) as error:
         raise LogsRuntimeError('Log delivery address differs.') from error
-    if (value['schema_version'] != 1 or parsed.scheme != 'https' or parsed.hostname != str(target) or
+    if (type(value['schema_version']) is not int or value['schema_version'] != 1 or parsed.scheme != 'https' or parsed.hostname != str(target) or
             parsed.port not in (None, 443) or parsed.username or parsed.password or parsed.query or parsed.fragment or
             target.version != source.version or not isinstance(value['tls_server_name'], str) or
             not 1 <= len(value['tls_server_name']) <= 253 or not isinstance(value['username'], str) or
@@ -102,7 +113,55 @@ def stage(path=MANIFEST):
         raise LogsRuntimeError('Log runtime directory differs.')
     os.chown(RUNTIME, account.pw_uid, group.gr_gid)
     os.chmod(RUNTIME, 0o750)
+    if 'observer' in policy:
+        prepare_local(policy['observer'], account)
     write(RUNTIME/'password', credential(policy['credential_name']), account.pw_uid, group.gr_gid)
+
+
+def prepare_local(observer, account, path=LOCAL):
+    """Keep the optional reader out of the credential group and all write paths.
+
+    systemd creates the fixed RuntimeDirectory. A missing/reassigned reader
+    closes only read access; the exporter can continue writing private metadata.
+    Existing aliases or unexpected files are never repaired or followed.
+    """
+    for parent in path.parents:
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise LogsRuntimeError('Log observation ancestor differs.')
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if info.st_uid != account.pw_uid or info.st_gid not in (account.pw_gid, observer['gid']) or info.st_mode & 0o027:
+            raise LogsRuntimeError('Log observation directory differs.')
+        try:
+            reader = pwd.getpwnam(observer['user'])
+            admitted = (reader.pw_uid, reader.pw_gid) == (observer['uid'], observer['gid'])
+        except KeyError:
+            admitted = False
+        gid = observer['gid'] if admitted else account.pw_gid
+        entries = os.listdir(descriptor)
+        if len(entries) > 8:
+            raise LogsRuntimeError('Log observation inventory exceeds its bound.')
+        for name in entries:
+            if name != 'health.json' and not re.fullmatch(
+                    r'events(?:-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3})?\.jsonl', name):
+                raise LogsRuntimeError('Log observation filename differs.')
+            file = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+            try:
+                current = os.fstat(file)
+                if (not stat.S_ISREG(current.st_mode) or current.st_uid != account.pw_uid or
+                        current.st_nlink != 1 or current.st_mode & 0o022 or
+                        current.st_size > (4096 if name == 'health.json' else 1024*1024)):
+                    raise LogsRuntimeError('Log observation file differs.')
+                os.fchown(file, account.pw_uid, gid)
+                os.fchmod(file, 0o640)
+            finally:
+                os.close(file)
+        os.fchown(descriptor, account.pw_uid, gid)
+        os.fchmod(descriptor, 0o2750 if admitted else 0o2700)
+    finally:
+        os.close(descriptor)
 
 
 def pipeline_healthy(text):
@@ -130,7 +189,7 @@ def pipeline_healthy(text):
         return False
 
 
-def health():
+def health(*, local=False):
     connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=2)
     try:
         connection.request('GET', '/metrics', headers={'Connection': 'close'})
@@ -138,14 +197,14 @@ def health():
         data = response.read(1024*1024+1)
         if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(data.decode('ascii')):
             raise LogsRuntimeError('Log component graph is not healthy.')
-        return observation(data.decode('ascii'))
+        return observation(data.decode('ascii'), local=local)
     except (OSError, http.client.HTTPException, UnicodeError) as error:
         raise LogsRuntimeError('Log component graph is unavailable.') from error
     finally:
         connection.close()
 
 
-def observation(text):
+def observation(text, *, local=False):
     values = {}
     for field, metric in COUNTERS.items():
         numbers = []
@@ -165,6 +224,22 @@ def observation(text):
         values[field] = numbers[0] if numbers else 0
     if values['queue_capacity_bytes'] != 67108864 or values['queue_size_bytes'] > values['queue_capacity_bytes']:
         raise LogsRuntimeError('Log queue bounds differ.')
+    if local:
+        for field, metric in LOCAL_COUNTERS.items():
+            numbers = []
+            for line in text.splitlines():
+                if line.startswith(metric+'{') and 'component_id="otelcol.exporter.file.router_observations"' in line:
+                    try:
+                        number = float(line.rsplit(' ', 1)[1])
+                    except (ValueError, IndexError) as error:
+                        raise LogsRuntimeError('Local log metric differs.') from error
+                    if not math.isfinite(number) or not number.is_integer() or not 0 <= number < 2**63:
+                        raise LogsRuntimeError('Local log metric differs.')
+                    numbers.append(int(number))
+            if len(numbers) > 1:
+                raise LogsRuntimeError('Local log metric series differs.')
+            # Exporter counters are created on the first successful/failed send.
+            values[field] = numbers[0] if numbers else 0
     return {'schema': 1, 'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
             'observed_monotonic_ns': time.monotonic_ns(), **values}
 
@@ -188,8 +263,9 @@ def publish_observation(value, path=OBSERVATION):
 def read_observation(path=OBSERVATION, *, owner=None, now=None, boot_id=None):
     owner = pwd.getpwnam('alloy').pw_uid if owner is None else owner
     boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip() if boot_id is None else boot_id
-    value = exact(decode(read(path, 4096, owner=owner), 4096),
-                  {'schema', 'boot_id', 'observed_monotonic_ns', *COUNTERS}, 'Log observation')
+    value = decode(read(path, 4096, owner=owner), 4096)
+    fields = set(LOCAL_COUNTERS) if isinstance(value, dict) and set(value) & LOCAL_COUNTERS.keys() else set()
+    value = exact(value, {'schema', 'boot_id', 'observed_monotonic_ns', *COUNTERS, *fields}, 'Log observation')
     # A concurrent atomic publication can be newer than a clock sampled before
     # opening the file. Compare against the time after this snapshot was read.
     now = time.monotonic_ns() if now is None else now
@@ -197,7 +273,7 @@ def read_observation(path=OBSERVATION, *, owner=None, now=None, boot_id=None):
             type(value['observed_monotonic_ns']) is not int or
             value['observed_monotonic_ns'] < 0 or
             not 0 <= now-value['observed_monotonic_ns'] <= 15*10**9 or
-            not all(type(value[key]) is int and 0 <= value[key] < 2**63 for key in COUNTERS) or
+            not all(type(value[key]) is int and 0 <= value[key] < 2**63 for key in {*COUNTERS, *fields}) or
             value['queue_capacity_bytes'] != 67108864 or value['queue_size_bytes'] > value['queue_capacity_bytes']):
         raise LogsRuntimeError('Log observation is stale or differs from the compiled queue.')
     return value
@@ -212,7 +288,7 @@ def notify(message):
             stream.sendto(message.encode('ascii'), address)
 
 
-def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION):
+def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION, local=False):
     stopping = False
 
     def stop(signum, frame):
@@ -231,7 +307,15 @@ def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path
             if child.poll() is not None:
                 raise LogsRuntimeError('Log exporter exited.')
             try:
-                publish_observation(health(), observation_path)
+                value = health(local=True) if local else health()
+                publish_observation(value, observation_path)
+                if local:
+                    try:
+                        publish_observation(value, LOCAL/'health.json')
+                    except (OSError, LogsRuntimeError):
+                        # An optional local filesystem fault must not stop
+                        # remote journal delivery or its liveness watchdog.
+                        pass
             except LogsRuntimeError:
                 if ready or time.monotonic() >= deadline:
                     raise
@@ -263,8 +347,8 @@ def main(arguments=None):
         if args.operation == 'stage':
             stage()
         else:
-            load()
-            supervise()
+            policy = load()
+            supervise(local='observer' in policy)
     except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print('logs-runtime: '+type(error).__name__+'; delivery remains closed', file=os.sys.stderr)
         return 1

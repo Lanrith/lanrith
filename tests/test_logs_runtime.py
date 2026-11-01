@@ -133,6 +133,49 @@ class LogSupervisorTests(unittest.TestCase):
                 mock.patch.object(runtime.time, 'monotonic_ns', side_effect=lambda: clock[0]):
             self.assertEqual(runtime.read_observation(owner=os.getuid()), value)
 
+    def test_local_loss_counters_are_separate_strict_and_optional(self):
+        remote = exporter_metrics()
+        local = '\n'.join(name+'{component_id="otelcol.exporter.file.router_observations"} '+str(number)
+            for name, number in ((runtime.LOCAL_COUNTERS['local_sent_records'], 100),
+                                  (runtime.LOCAL_COUNTERS['local_failed_records'], 7)))
+        self.assertNotIn('local_sent_records', runtime.observation(remote+local))
+        value = runtime.observation(remote+'\n'+local, local=True)
+        self.assertEqual((value['local_sent_records'], value['local_failed_records']), (100, 7))
+        for text in (local+'\n'+local, local.replace(' 7', ' NaN'), local.replace(' 7', ' -1'),
+                     local.replace(' 7', ' 0.5')):
+            with self.subTest(text=text), self.assertRaises(runtime.LogsRuntimeError):
+                runtime.observation(remote+'\n'+text, local=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'health.json'
+            runtime.publish_observation(value, path)
+            self.assertEqual(runtime.read_observation(path, owner=os.getuid()), value)
+            for change in ({'local_failed_records': True}, {'local_sent_records': -1}):
+                path.write_text(json.dumps({**value, **change}))
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    runtime.read_observation(path, owner=os.getuid())
+            del value['local_sent_records']
+            path.write_text(json.dumps(value))
+            with self.assertRaises(ValueError):
+                runtime.read_observation(path, owner=os.getuid())
+
+    def test_optional_local_health_write_failure_keeps_remote_watchdog(self):
+        child = mock.Mock()
+        child.poll.side_effect = [None, 0, 0]
+        state = runtime.observation(exporter_metrics(), local=True)
+        def publish(value, path):
+            if path == runtime.LOCAL/'health.json':
+                raise PermissionError('synthetic local volume failure')
+        with mock.patch.object(runtime.subprocess, 'Popen', return_value=child), \
+                mock.patch.object(runtime, 'health', return_value=state) as health, \
+                mock.patch.object(runtime, 'publish_observation', side_effect=publish) as output, \
+                mock.patch.object(runtime.time, 'sleep'), mock.patch.object(runtime, 'notify') as notify:
+            with self.assertRaisesRegex(runtime.LogsRuntimeError, 'exporter exited'):
+                runtime.supervise(local=True)
+            health.assert_called_once_with(local=True)
+            self.assertEqual(output.call_args_list, [mock.call(state, runtime.OBSERVATION),
+                                                    mock.call(state, runtime.LOCAL/'health.json')])
+            self.assertEqual(notify.call_args_list, [mock.call('READY=1'), mock.call('WATCHDOG=1')])
+
 
 if __name__ == '__main__':
     unittest.main()

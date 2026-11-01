@@ -38,7 +38,9 @@ CHECKS = {
 LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
     'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
     'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
-    'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations'}
+    'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
+    'local-metadata-body-withheld', 'local-reader-and-credential-boundary',
+    'local-bounded-rotation', 'local-filesystem-failure-independent-delivery'}
 DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
     'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
     'reader-and-observer-exact-egress', 'other-identities-destination-port-source-interface-denied',
@@ -117,13 +119,16 @@ def qualify(directory, project, environment, *, now=None):
             logs.get('alloy_sha256') == custom.get('components', {}).get('alloy', {}).get('binary_sha256') and
             logs.get('queue_capacity_bytes') == 67108864 and 0 < logs.get('overflow_records', 0) and
             0 < logs.get('queue_physical_bytes', 0) <= 160*1024*1024 and
-            logs.get('delivered_batches', 0) > 0,
+            logs.get('delivered_batches', 0) > 0 and
+            all(type(logs.get(field)) is int for field in ('local_output_bytes', 'local_output_files', 'local_failed_records')) and
+            0 < logs.get('local_output_bytes', 0) <= 3*1024*1024 and
+            2 <= logs.get('local_output_files', 0) <= 3 and logs.get('local_failed_records', 0) > 0,
             'Native journal delivery qualification is incomplete or describes another exporter.')
     stamp = datetime.datetime.fromisoformat(logs['assessed_at'])
     require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
             'Native journal delivery qualification is stale or future-dated.')
     implementation = logs.get('implementation_sha256', {})
-    require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py'} and
+    require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py'} and
             all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
             'Log delivery implementation changed after native qualification.')
     directory_tls = value(directory/'directory-qualification.json')

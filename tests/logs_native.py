@@ -31,12 +31,14 @@ from test_intent import minimal
 CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
           'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
           'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
-          'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations'}
+          'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
+          'local-metadata-body-withheld', 'local-reader-and-credential-boundary',
+          'local-bounded-rotation', 'local-filesystem-failure-independent-delivery'}
 MARKER = b'LANRITH_SYNTHETIC_QUEUED_RECORD'
 SELF = b'LANRITH_SYNTHETIC_EXPORTER_SELF_RECORD'
 SECRET = b'lanrith-disposable-secret-value'
 RUN = ('import json,sys; from pathlib import Path; from lanrith.logs_runtime import supervise; '
-       'supervise(json.loads(sys.argv[1]), startup_seconds=float(sys.argv[2]), interval=.2, observation_path=Path(sys.argv[3]))')
+       'supervise(json.loads(sys.argv[1]), startup_seconds=float(sys.argv[2]), interval=.2, observation_path=Path(sys.argv[3]), local=True)')
 
 
 def run(*arguments, **kwargs):
@@ -101,6 +103,36 @@ def journal(root):
                    '--output-fields=MESSAGE', text=True).stdout.count('BURST_')) == 7200
 
 
+def append_journal(root, count, marker):
+    export = root/'append.export'
+    stamp = int(time.time()*1000000)
+    with export.open('wb') as stream:
+        for number in range(count):
+            stream.write(('__REALTIME_TIMESTAMP='+str(stamp+number)+'\n__MONOTONIC_TIMESTAMP='+str(stamp+number)+
+                '\n_BOOT_ID='+'1'*32+'\n_MACHINE_ID='+'2'*32+
+                '\n_HOSTNAME=synthetic-router\n_TRANSPORT=stdout\nPRIORITY=4\n_SYSTEMD_UNIT=fixture.service'+
+                '\nMESSAGE='+marker+' password='+SECRET.decode()+'\n\n').encode())
+    run('/usr/lib/systemd/systemd-journal-remote', '--split-mode=none',
+        '--output='+str(root/'journal/system.journal'), str(export))
+    export.unlink()
+    return stamp
+
+
+def local_records():
+    records = []
+    for path in logs_runtime.LOCAL.glob('events*.jsonl'):
+        for line in path.read_bytes().splitlines():
+            # The observer may sample while the exporter finishes a line.
+            try:
+                document = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            for resource in document.get('resourceLogs', []):
+                for scope in resource.get('scopeLogs', []):
+                    records.extend(scope.get('logRecords', []))
+    return records
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--alloy', type=Path, default=Path('/usr/bin/alloy'))
@@ -119,7 +151,9 @@ def main():
         root = Path(directory)
         root.chmod(0o755)
         accounts = root/'accounts.conf'
-        accounts.write_text('u alloy - "Synthetic exporter" /\n')
+        assert not any(entry.pw_uid == 58010 for entry in pwd.getpwall())
+        accounts.write_text('u alloy - "Synthetic exporter" /\ng observation-reader 58010\n'
+                            'u observation-reader 58010:58010 "Synthetic observation reader" /\n')
         run('systemd-sysusers', str(accounts))
         account = pwd.getpwnam('alloy')
         # Reproduce the StateDirectory/BindPaths contract in a child mount
@@ -145,6 +179,15 @@ else:raise AssertionError('Exporter can traverse the private control directory')
         assert (backing/'proof').read_text() == 'synthetic state'
         assert private.stat().st_mode & 0o777 == 0o700
         journal(root)
+        os.chown(root/'journal', 0, account.pw_gid)
+        (root/'journal').chmod(0o750)
+        for path in (root/'journal').iterdir():
+            os.chown(path, 0, account.pw_gid)
+            path.chmod(0o640)
+        logs_runtime.LOCAL.mkdir(mode=0o750)
+        os.chown(logs_runtime.LOCAL, account.pw_uid, account.pw_gid)
+        observer = {'user': 'observation-reader', 'uid': 58010, 'gid': 58010}
+        logs_runtime.prepare_local(observer, account)
         run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
             '-subj', '/CN=logs.example.test', '-addext', 'subjectAltName=DNS:logs.example.test',
             '-keyout', str(root/'collector.key'), '-out', str(root/'collector.crt'))
@@ -163,7 +206,8 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             'tls_server_name': 'logs.example.test', 'username': 'synthetic-router', 'credential': 'ingest'}}
         value = config.normalize(value)
         files = config.render(value)
-        original = files['etc/alloy/config.alloy']
+        assert 'lanrith-log-observations' not in files['etc/alloy/config.alloy']
+        original = logs.render(value, observer=observer)['etc/alloy/config.alloy']
         content = original.replace('/var/log/journal', str(root/'journal')).replace(
             '/var/lib/lanrith-alloy/queue', str(root/'queue')).replace(
             '/run/lanrith-logs/password', str(root/'password'))
@@ -206,7 +250,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                 process = subprocess.Popen([sys.executable, '-c', RUN, json.dumps(command), '3' if bad else '25',
                     str(root/('bad-state' if bad else 'state')/'health.json')],
                     env=environment, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
-                    user=account.pw_uid, group=account.pw_gid, extra_groups=(), start_new_session=True)
+                    user=account.pw_uid, group=account.pw_gid, extra_groups=(), umask=0o027, start_new_session=True)
             processes.append(process)
             return process
 
@@ -218,7 +262,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                 return False
 
         received = {'marker': False, 'redacted': False, 'self': False, 'secret': False, 'records': 0,
-                    'authenticated': True, 'sni': True, 'path': True}
+                    'authenticated': True, 'sni': True, 'path': True, 'local_failure_marker': False}
         expected_auth = 'Basic '+base64.b64encode(b'synthetic-router:disposable-ingest-password').decode()
 
         class Collector(BaseHTTPRequestHandler):
@@ -230,6 +274,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                     data = gzip.decompress(data)
                 assert len(data) <= 2*1024*1024
                 received['marker'] |= MARKER in data
+                received['local_failure_marker'] |= b'LANRITH_LOCAL_FAILURE_REMOTE_MARKER' in data
                 received['redacted'] |= b'[REDACTED]' in data
                 received['self'] |= SELF in data
                 received['secret'] |= SECRET in data
@@ -305,14 +350,69 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             assert received['redacted'] and not received['secret'] and not received['self']
             assert received['authenticated'] and received['sni'] and received['path']
             assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
+            # Reader absence never blocks the producer. The local branch has
+            # already rotated while the remote collector was unavailable.
+            until(lambda: local_records(), 10)
+            local_files = sorted(logs_runtime.LOCAL.glob('events*.jsonl'))
+            assert 2 <= len(local_files) <= 3, 'Local output did not exercise bounded rotation.'
+            local_bytes = sum(path.stat().st_size for path in local_files)
+            assert local_bytes <= 3*1024*1024
+            rows = local_records()
+            assert rows and all(row['body'] == {'stringValue': 'journal message withheld'} for row in rows)
+            raw = b''.join(path.read_bytes() for path in local_files)
+            assert not any(value in raw for value in (MARKER, SELF, SECRET, b'BURST_'))
+            assert all((path.stat().st_uid, path.stat().st_gid) == (account.pw_uid, 58010) and
+                       not path.stat().st_mode & 0o022 for path in local_files)
+            # The exporter creates 0644 files. Their nontraversable, setgid
+            # parent supplies the actual read boundary, including after rotation.
+            code = ('from pathlib import Path; import sys; p=Path(sys.argv[1]); p.read_bytes(); '
+                    '\nfor path,write in [(p,True),(p.parent,True),(Path(sys.argv[2]),False),(Path(sys.argv[3]),False)]: '
+                    '\n try: '
+                    '\n  if write and path.is_dir(): (path/"forbidden").write_text("x")'
+                    '\n  elif write: path.open("ab").close()'
+                    '\n  else: path.read_bytes()'
+                    '\n except PermissionError: pass'
+                    '\n else: raise AssertionError("observation role has extra authority")')
+            run('setpriv', '--reuid=58010', '--regid=58010', '--clear-groups', '--bounding-set=-all',
+                '--inh-caps=-all', '--ambient-caps=-all', sys.executable, '-c', code, str(local_files[-1]),
+                str(root/'password'), str(root/'journal/system.journal'))
+            denied = subprocess.run(['setpriv', '--reuid=nobody', '--regid=nogroup', '--clear-groups',
+                sys.executable, '-c', 'from pathlib import Path; import sys; Path(sys.argv[1]).read_bytes()',
+                str(local_files[-1])], capture_output=True, timeout=10)
+            assert denied.returncode != 0, 'Another identity can traverse the observation directory.'
+            try:
+                os.chown(logs_runtime.LOCAL, 0, 0)
+                logs_runtime.LOCAL.chmod(0o500)
+                append_journal(root, 5000, 'LANRITH_LOCAL_FAILURE_REMOTE_MARKER')
+                until(lambda: logs_runtime.observation(metrics(), local=True)['local_failed_records'] > 0, 30)
+                until(lambda: received['local_failure_marker'], 30)
+                assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
+            finally:
+                os.chown(logs_runtime.LOCAL, account.pw_uid, 58010)
+                logs_runtime.LOCAL.chmod(0o2750)
+            stamp = append_journal(root, 1, 'LANRITH_LOCAL_RECOVERY_MARKER')
+            def recovered():
+                for row in local_records():
+                    attributes = {item['key']: item['value'].get('stringValue') for item in row.get('attributes', [])}
+                    if row.get('timeUnixNano') == str(stamp*1000):
+                        assert attributes.get('journal_boot') == '1'*32 and attributes.get('journal_transport') == 'stdout'
+                        assert row['body'] == {'stringValue': 'journal message withheld'}
+                        return True
+                return False
+            until(recovered, 15)
+            local_health = until(lambda: (item if (item := logs_runtime.read_observation(
+                logs_runtime.LOCAL/'health.json', owner=account.pw_uid))['local_failed_records'] > 0 else None), 10)
+            assert local_health['local_sent_records'] > 0
             result = {'schema': 1, 'test': 'offline-journal-https-outage', 'result': 'pass',
                 'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 'implementation_sha256': {name: hashlib.sha256((Path(__file__).parents[1]/name).read_bytes()).hexdigest()
-                    for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py')},
+                    for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py')},
                 'alloy_sha256': digest, 'configuration_sha256': hashlib.sha256(original.encode()).hexdigest(),
                 'checks': sorted(CHECKS), 'queue_capacity_bytes': 67108864, 'queue_physical_bytes': physical,
                 'overflow_records': overflow, 'delivered_batches': received['records'],
+                'local_output_bytes': local_bytes, 'local_output_files': len(local_files),
+                'local_failed_records': local_health['local_failed_records'],
                 'physical_router_qualified': False}
             args.result.parent.mkdir(parents=True, exist_ok=True)
             args.result.write_text(json.dumps(result, sort_keys=True, allow_nan=False)+'\n')

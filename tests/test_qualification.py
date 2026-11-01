@@ -45,7 +45,7 @@ class QualificationTests(unittest.TestCase):
         (directory/'storage-qualification.json').write_bytes(release.canonical({'schema': 1, 'result': 'pass',
             'test': 'factory-slot-expansion', 'initial_partitions': 4, 'expanded_partitions': 8}))
         implementation = {}
-        for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'tests/logs_native.py'):
+        for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py', 'tests/logs_native.py'):
             path = project/name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('synthetic logging source: '+name)
@@ -57,7 +57,8 @@ class QualificationTests(unittest.TestCase):
             'source_sha256': implementation.pop('tests/logs_native.py'), 'implementation_sha256': implementation,
             'alloy_sha256': 'e'*64, 'checks': sorted(qualification.LOG_CHECKS),
             'queue_capacity_bytes': 67108864, 'queue_physical_bytes': 80*1024*1024,
-            'overflow_records': 1000, 'delivered_batches': 8}))
+            'overflow_records': 1000, 'delivered_batches': 8, 'local_output_bytes': 2000000,
+            'local_output_files': 3, 'local_failed_records': 20}))
         implementation = {}
         for name in qualification.DIRECTORY_IMPLEMENTATION | {'tests/directory_native.py'}:
             path = project/name
@@ -219,7 +220,8 @@ class QualificationTests(unittest.TestCase):
 
     def test_missing_stale_altered_and_wrong_subject_log_results_are_rejected(self):
         for alteration in ('missing', 'binary', 'test-source', 'runtime-source', 'missing-check', 'stale',
-                           'no-overflow', 'no-delivery', 'storage-limit', 'changed-capacity'):
+                           'no-overflow', 'no-delivery', 'storage-limit', 'changed-capacity',
+                           'no-local-rotation', 'local-storage-limit', 'no-local-failure', 'local-source', 'local-count-type'):
             with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
                 directory, project, now, _ = self.fixture(Path(temporary))
                 path = directory/'logs-qualification.json'
@@ -245,6 +247,16 @@ class QualificationTests(unittest.TestCase):
                         logs['queue_physical_bytes'] = 161*1024*1024
                     elif alteration == 'changed-capacity':
                         logs['queue_capacity_bytes'] = 65536
+                    elif alteration == 'no-local-rotation':
+                        logs['local_output_files'] = 1
+                    elif alteration == 'local-storage-limit':
+                        logs['local_output_bytes'] = 3*1024*1024+1
+                    elif alteration == 'no-local-failure':
+                        logs['local_failed_records'] = 0
+                    elif alteration == 'local-count-type':
+                        logs['local_failed_records'] = True
+                    elif alteration == 'local-source':
+                        (project/'lanrith/extension_observations.py').write_text('changed observation admission')
                     path.write_bytes(release.canonical(logs))
                 with self.assertRaises((release.ReleaseError, OSError)):
                     qualification.qualify(directory, project, {}, now=now)

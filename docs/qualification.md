@@ -119,6 +119,16 @@ than six hours. The qualification record and consumer admission bind its digest
 to the authenticated release asset. Local or pull-request results cannot set the
 production qualification flag.
 
+The same journal qualification now exercises an admitted local reader through
+the actual selected exporter. Four additional checks cover body withholding and
+original OTLP timestamps, reader/credential/journal permissions, 1 MiB rotation
+with two backups, and remote progress while the local filesystem refuses writes.
+Local sent/failed counters and recovered output retain the original producer
+time. Base qualification requires these checks, their bounded output/failure
+measurements and the current observation-admission source hash. These component
+tests do not establish a complete extension's event schema or durable image
+lifecycle; generated-unit resource/log-rate settings still need image testing.
+
 `scripts/qualify-ids.py` runs the IDS gate with the exact base archive and a
 matching local builder. It resolves the builder to an immutable image ID, mounts
 source and the archive read-only, and mounts a new empty staging directory for
