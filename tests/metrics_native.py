@@ -12,42 +12,44 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import config, metrics, service_runtime
+from lanrith import config, metrics, router_metrics_runtime, service_runtime
 from phase_b_native import run, ns
 from test_intent import minimal
 
 
 HTTP = '''
 import json,socket,sys,os,pwd
-address,source,request,user=sys.argv[1:]
+address,source,request,user,port=sys.argv[1:]
 if user:
  account=pwd.getpwnam(user);os.setgroups([]);os.setgid(account.pw_gid);os.setuid(account.pw_uid)
 s=socket.socket(socket.AF_INET6 if ':' in address else socket.AF_INET,socket.SOCK_STREAM)
 s.settimeout(3)
 try:
  if source:s.bind((source,0))
- s.connect((address,9100));s.sendall(request.encode());s.shutdown(socket.SHUT_WR)
+ s.connect((address,int(port)));s.sendall(request.encode());s.shutdown(socket.SHUT_WR)
  data=b''
  while part:=s.recv(32768):
   data+=part
   assert len(data)<2*1024*1024
  print(json.dumps({'ok':data.startswith(b'HTTP/1.0 200') or data.startswith(b'HTTP/1.1 200'),
   'host_network':b'node_network_receive_bytes_total{device="hostproof0"}' in data,
+  'router_health':b'lanrith_router_nftables_loaded 1' in data and b'lanrith_router_interface_present{interface="lan"} 1' in data,
   'bad_request':data.startswith(b'HTTP/1.0 400')}))
-except OSError:sys.exit(10)
+except OSError as error:
+ print(type(error).__name__);sys.exit(10)
 finally:s.close()
 '''
 
 
-def probe(namespace, target, allowed, source='', request='GET /metrics HTTP/1.0\r\n\r\n', bad=False, user=''):
+def probe(namespace, target, allowed, source='', request='GET /metrics HTTP/1.0\r\n\r\n', bad=False, user='', port=9100):
     result = subprocess.run(['nsenter', '--net=/run/netns/'+namespace, '--', 'python3', '-c', HTTP,
-                             target, source, request, user], text=True, capture_output=True, timeout=8)
+                             target, source, request, user, str(port)], text=True, capture_output=True, timeout=8)
     if not allowed:
         assert result.returncode == 10, 'An undeclared collector reached the metrics listener.'
         return
-    assert result.returncode == 0, 'Admitted metrics request failed: '+result.stderr[-1024:]
+    assert result.returncode == 0, 'Admitted metrics request failed: '+target+' '+source+' '+result.stdout[-1024:]+result.stderr[-1024:]
     data = json.loads(result.stdout)
-    assert data['bad_request'] if bad else data['ok'] and data['host_network'], \
+    assert data['bad_request'] if bad else data['ok'] and data['host_network'] and data['router_health'], \
         'Proxy accepted a different request or exporter reported namespace network statistics.'
 
 
@@ -56,6 +58,7 @@ def main():
     parser.add_argument('--exporter', type=Path, default=Path('/usr/bin/prometheus-node-exporter'))
     parser.add_argument('--exporter-sha256')
     parser.add_argument('--with-core-services', action='store_true')
+    parser.add_argument('--result', type=Path)
     args = parser.parse_args()
     assert os.geteuid() == 0 and {a['ifname'] for a in json.loads(run('ip', '-j', 'link').stdout)} == {'lo'}, \
         'Refusing an existing network topology.'
@@ -92,6 +95,7 @@ def main():
         accounts = root/'accounts.conf'
         accounts.write_text('u prometheus - "Fixture exporter" /\nu lanrith-metrics - "Metrics proxy" /\n')
         run('systemd-sysusers', str(accounts))
+        run('/usr/lib/systemd/systemd-sysctl', str(root/'etc/sysctl.d/90-lanrith-routing.conf'))
         if args.exporter == Path('/usr/bin/prometheus-node-exporter'):
             run('systemd-analyze', 'verify', '--man=no', str(root/'usr/lib/systemd/system/lanrith-metrics.service'),
                 'prometheus-node-exporter.service', env={**os.environ, 'SYSTEMD_UNIT_PATH':
@@ -127,6 +131,15 @@ def main():
         try:
             service_runtime.start(plane)
             started = True
+            # The root collector observes the host while the public proxy joins
+            # the service namespace. Its textfile directory is not exporter-writable.
+            output = router_metrics_runtime.OUTPUT
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.parent.chmod(0o755)
+            os.chown(output.parent, 0, 0)
+            router_metrics_runtime.publish(router_metrics_runtime.collect(metrics.router_manifest(value)))
+            assert not subprocess.run(['setpriv', '--reuid=prometheus', '--regid=prometheus', '--clear-groups',
+                'test', '-w', str(output.parent)], check=False).returncode == 0, 'Exporter can replace root health data.'
             exporter = subprocess.Popen([str(args.exporter), *metrics.exporter_arguments(value)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                 user='prometheus', group='prometheus', extra_groups=(), env={**os.environ, 'GOMAXPROCS': '2'})
@@ -159,9 +172,8 @@ def main():
             for request in ('GET /debug/pprof/ HTTP/1.0\r\n\r\n', 'POST /metrics HTTP/1.0\r\n\r\n',
                             'GET /metrics HTTP/1.0\r\nContent-Length: 5\r\n\r\nhello'):
                 probe('lan-test', settings['listeners'][0], True, '192.168.10.2', request, bad=True)
-            from phase_b_native import probe as tcp_probe
-            tcp_probe('lan-test', settings['backend'], 9101, False)
-            tcp_probe(plane['namespace'], settings['backend'], 9101, False, user='nobody', source=settings['source'])
+            probe('lan-test', settings['backend'], False, port=9101)
+            probe(plane['namespace'], settings['backend'], False, user='nobody', source=settings['source'], port=9101)
             for target in settings['listeners']:
                 probe(plane['namespace'], target, True)
                 for user, feature in (('nobody', None), ('unbound', 'dns'), ('_chrony', 'ntp')):
@@ -218,15 +230,22 @@ table inet metrics_fixture {
                     print(error.decode()[-1024:], file=sys.stderr)
             if started:
                 service_runtime.stop(plane)
-    print(json.dumps({'result': 'pass', 'private_image_qualified': False, 'external_network': False,
+    result = {'result': 'pass', 'private_image_qualified': False, 'external_network': False,
+        'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'collector_sha256': hashlib.sha256(Path(router_metrics_runtime.__file__).read_bytes()).hexdigest(),
         'exporter_sha256': binary_sha, 'checks': [
+            'bounded root health collector reports host interfaces and active firewall through the real exporter',
+            'exporter identity cannot write the root-owned health output directory',
             'real unprivileged exporter reports host interfaces rather than the proxy namespace',
             'IPv4 IPv6 and statically attached collectors require their exact network and source scopes',
             'guest WAN neighboring sources wrong ingress and arbitrary backend users are denied despite a wildcard owner rule',
             'unprivileged namespace accounts cannot bypass collector admission through loopback',
             'only bodyless GET /metrics reaches the fixed backend; debug methods and request bodies are refused',
             'partial-header clients are bounded to 32 connections and completed scrapes recover after they close',
-            'metrics operates with DNS NTP '+('enabled' if args.with_core_services else 'disabled')+' and identity disabled; stopping its proxy removes the listener']}))
+            'metrics operates with DNS NTP '+('enabled' if args.with_core_services else 'disabled')+' and identity disabled; stopping its proxy removes the listener']}
+    if args.result:
+        args.result.write_text(json.dumps(result, sort_keys=True)+'\n')
+    print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == '__main__':

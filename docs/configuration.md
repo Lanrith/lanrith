@@ -23,6 +23,31 @@ selectors and undeclared management networks fail validation. See the
 | `extensions` | IDs of separately reviewed integration manifests |
 | `release` | Owner image identity and monotonic `sequence_floor` |
 
+Use `networks.<name>.dhcp4.id` to retain a DHCPv4 subnet identity, for example
+`dhcp4: {id: 1024, pools: [192.168.10.100-192.168.10.200]}`. IDs must be unique
+integers from 1 to 4294967294. They are independent of VLAN numbers. Kea uses
+these IDs to associate leases with subnets, so retain the existing IDs when
+importing a lease file. See the [Kea subnet identifier contract](https://kea.readthedocs.io/en/kea-3.0.0/arm/dhcp4-srv.html#ipv4-subnet-identifier).
+
+Omitting `id` assigns the first unused positive number in network order, reserving
+explicit IDs first. The normalized build input records every assigned ID so
+canonical snapshots and native policy admission agree with Kea. Pin IDs in the
+owner file before reordering existing networks or changing a persisted layout.
+Disabled scopes reserve no ID. IDs are compiled into native configuration and
+bounded runtime contracts; owner YAML remains build-only.
+
+Selecting RADIUS admission also configures Kea's private Unix control socket
+and the packaged lease-command hook used by its bounded admission collector.
+Before startup completes, an unprivileged post-start check verifies the main
+daemon's UID/PID and service group, then removes execute/other access with mode
+`0660`. The `_kea` group is reserved for the daemon and explicitly admitted
+service collectors. Admission collectors retain empty capability sets; they
+need no DAC override. Missing readiness is bounded; an unsafe path or different
+peer fails startup. Disabling RADIUS
+omits the socket, hook and post-start check. The socket remains administrative IPC owned by
+Kea's service account; ordinary users and observation-only consumers must not
+receive access to it. Lease observations alone grant no forwarding permission.
+
 ## Access rules
 
 Use the same rules for every routed destination. Network names come from your
@@ -55,6 +80,7 @@ case. Names are preserved in the image's resolved configuration for inspection
 and future console display. They are metadata: renaming a rule does not change
 its match, position or permissions, and the compiler does not insert names into
 firewall code. Unnamed rules remain valid.
+
 
 The first matching rule decides. A selector with both `network` and `addresses`
 requires both to match; a host exception therefore stays restricted to its
@@ -144,6 +170,39 @@ through native and translated paths. Enabling a package or component grants no
 trust to a cluster, directory or backend. Temporary broad permissions remain
 explicit owner rules.
 
+Directory policy generates host egress for the policy reader's UID, exact
+server addresses, TCP port, interface and assigned router sources. Targets need
+an unambiguous declared ordinary attachment or a route through one. Router,
+management, managed-service and translator identities are excluded. This
+connectivity exception supplies no client forwarding permission.
+
+An IP-literal directory URL uses that address directly. A named URL requires
+`addresses` with one to eight unique IP pins. Lanrith emits the corresponding
+host entries at build time and retains the URL hostname for TLS verification.
+This avoids a dependency on DNS while enforcing exact destinations. Changing a
+pin requires a new image. For example, with matching declared networks:
+
+```yaml
+identity:
+  directories:
+    devices:
+      enabled: true
+      url: ldap+starttls://directory.example.test:389
+      addresses: [192.0.2.30, 'fd42:1234:5678:10::30']
+      base_dn: dc=example,dc=test
+      bind_dn: cn=router,dc=example,dc=test
+      credential: directory_bind  # Protected runtime credential reference.
+      ca_file: trust/directory.pem  # Reviewed public CA in runtime.trust.
+  policy:
+    enabled: true
+    directory: devices
+    networks: [devices]
+```
+
+With metrics enabled, a separate credential-free identity observes verified
+directory TLS. Its results describe transport health; authenticated collection
+and fresh grants have separate requirements. See [router health metrics](metrics.md).
+
 When authenticated log delivery is enabled, Lanrith also emits a one-minute
 heartbeat containing the accepted boot ID, selected entry, release sequence and
 effective configuration digest. The timer is part of boot health and the event
@@ -153,6 +212,9 @@ event outside the router. This is a liveness signal, not remote attestation: an
 attacker with unrestricted root can forge local events.
 
 ## Hardware and optional integrations
+
+See [router health metrics](metrics.md) for collector units, metric names,
+query and inventory bounds, and source-admission behavior.
 
 Defaults allocate a 1 GiB ESP, two 4 GiB root slots and 64 GiB encrypted state.
 Surplus storage stays unallocated. Factory installation requires an eligible
@@ -200,6 +262,194 @@ size and numeric mode. The private repository pins the manifest digest in
 `extensions.lock`. Ordinary files only are allowed; no links, devices,
 maintainer scripts or build hooks run during signing. Health units become boot
 acceptance requirements.
+
+Use `start_units` for extension-owned services, sockets, timers or targets that
+should start after core boot acceptance. Each unit must be inventoried under
+`usr/lib/systemd/system/`. Lanrith starts them after the accepted boot observation;
+their failure does not become a core boot requirement. Units also listed in
+`health_units` remain mandatory. Extension units must keep their own dependency
+and resource limits; `start_units` does not add a restart policy.
+
+An optional `credentials` list declares protected secret slots for an extension:
+
+```json
+[
+  {"name": "bootstrap", "format": "json", "consumers": ["example-app.service"]}
+]
+```
+
+Each consumer must be a literal `.service` file in that extension's inventory.
+Template units and core service replacements are rejected. Lanrith derives the
+root-only path `/var/lib/lanrith/extension-credentials/EXTENSION/NAME`, generates
+`LoadCredential=NAME:PATH` for the declared readers, and binds the reader set into
+the catalog digest. Values enter through the operator channel after installation;
+they are absent from the manifest, image and build provenance.
+
+The supported value format is a UTF-8 JSON object, at most 64 KiB, with unique
+keys, finite numbers, at most 4,096 nodes and nesting depth 16. An extension can
+declare 16 slots and 64 service readers. Its consumer must validate the
+application-specific schema and authentication material before using them.
+The shared runtime never executes supplied JSON or accepts caller-selected file
+paths, unit names or commands.
+
+Optional extensions provision after the current core boot is accepted. Their
+missing credentials leave core readiness independent. An extension implementing
+a selected core feature, or declaring mandatory `health_units`, needs committed
+credentials before boot acceptance. Disabled feature providers emit no credential
+catalogs, sockets or reader bindings. Each active extension has separate protected
+transaction history and a separate operator socket. See
+[credential provisioning](operations.md#extension-credential-provisioning) for
+the stage, verification and commit sequence.
+
+An optional `network` object declares host listeners and managed-service clients.
+Both refer to users in the extension's `identities.users` list. For example:
+
+```json
+{
+  "listeners": [{
+    "user": "example-agent", "network": "home", "address": "192.168.10.1",
+    "sources": ["192.168.10.0/24"], "protocol": "tcp", "port": 8443
+  }],
+  "services": [{"user": "example-agent", "service": "metrics", "family": 4}]
+}
+```
+
+Listeners require an exact gateway address on the named network, explicit
+same-family source prefixes within that attachment, TCP or UDP, and a port from
+1024 to 65535. The configured SSH port is reserved. Management-network listeners
+remain reachable only through their own attachment. These declarations add no
+forwarding permission and cannot bypass source validation, OOB isolation or
+translation guards.
+
+Managed-service access currently supports the selected metrics API over TCP 9100,
+using family `4` or `6`. It requires metrics to be enabled. Lanrith derives the
+host-link source and service destination, admits the matching namespace input,
+and checks the extension UID before accepting tracked output. Other unprivileged
+UIDs cannot reuse those tuples. Declared UIDs receive no other external output
+permission; existing host loopback policy and privileged-root authority remain.
+This contract supplies network admission, not application authentication or a
+sandbox for untrusted extension code. The owner must review the extension's units,
+helpers and credentials.
+
+Typed network declarations cannot be combined with a complete firewall
+replacement. The build emits native rules only; no runtime extension parser or
+owner YAML is needed. Removing a declaration removes its new-connection grant.
+
+An optional `observations` manifest list selects fixed read-only endpoints:
+
+```json
+[{"service": "policy", "user": "example-agent"},
+ {"service": "logs", "user": "example-agent"},
+ {"service": "dns", "user": "example-agent"},
+ {"service": "firewall", "user": "example-agent"}]
+```
+
+The reader and its primary group must belong to that extension's identities.
+Each endpoint supports one reader across active extensions and requires its
+corresponding component to be enabled. Each endpoint may be selected alone.
+For policy, Lanrith generates the fixed socket
+`/run/lanrith-policy-observations/observations.sock` and pins the reader UID.
+The component checks kernel peer credentials and accepts only bounded observation
+requests. This grants no proposal, status/operator or mutation endpoint access.
+
+The core helper launcher prepares the root-owned, group-scoped socket and then
+becomes the existing helper process. It uses the helper's existing capability
+set and one supplementary reader group. Endpoint setup failures leave the two
+mandatory helper sockets available; they create no failed optional socket unit
+and do not change the native boot failure gate. Removing the declaration removes
+the optional endpoint on the next image boot. Application schemas, adapters and
+private account bindings remain extension responsibilities. Qualify the actual
+selected component and complete image as well as the launcher before deployment.
+
+For DNS, the declaration enables Unbound's client query and response dnstap
+messages. Resolver and forwarder copies, server identity and version are excluded.
+The fixed ingress `/run/lanrith-dns-tap.sock` admits only Unbound's Unix UID.
+A separate locked collector account is allocated during image assembly from
+unused system IDs, after base and extension IDs have been reserved. It needs
+no capabilities, Internet sockets, DNS credentials or persistent state. Its
+confined process receives the boot ID through one read-only bind; no runtime
+owner configuration or account provisioning is needed.
+
+The admitted reader receives read access to
+`/run/lanrith-dns-observations/events.jsonl` and `health.json`. It cannot write
+the directory or impersonate the resolver. Metadata includes client address,
+transport, question, producer time, transaction hash and bounded answer summaries.
+Each record carries its boot ID, producer epoch and successful-write ordinal.
+When Unbound supplies a bounded query-start timestamp, it is retained exactly
+as nanoseconds alongside the response time; consumers need not reconstruct it
+from floating-point latency. Old spool files retain their original producer
+identity across collector restart, allowing replay detection independently of
+current health counters.
+The compiled collector manifest advertises `record_schema: 1`; an admitted
+adapter can require that contract while building its image.
+TXT and other arbitrary record payloads, raw DNS packets and server identity
+are omitted. A and AAAA addresses and NS, CNAME, PTR and MX targets are retained
+for up to 16 answers. Unsupported, oversized, stale or malformed messages are
+rejected. Query metadata without a corresponding response does not prove a DNS
+timeout or a firewall decision.
+
+The volatile spool holds at most three 1 MiB files, with complete JSON lines
+bounded to 16 KiB. Rotation discards older observations. Health reports a new
+producer epoch on each collector start, same-boot monotonic freshness, emitted
+and rejected records, failed writes, overwritten records and disconnects.
+These are collection counters; loss inside Unbound or before the collector is
+not fully measurable. Consumers must report gaps and avoid claiming complete
+DNS history. A quiet file is not a resolver health signal.
+
+The candidate `firewall` endpoint records sampled host input/forward default
+drops. Assembly preserves all existing rules, then adds a bounded logging
+statement immediately before an unconditional counter/drop in each default-deny
+path. Typed extension listeners are resolved first, and the manifest binds the
+final generated ruleset. A whole-firewall replacement cannot select this
+endpoint. Earlier guards, explicit-owner rules, policy-agent, translator,
+output and service-namespace decisions remain outside its observation coverage.
+
+Its locked account is allocated at build time, independently of the DNS
+collector. The service briefly needs NET_ADMIN to bind one fixed NFLOG group;
+before decoding packets it clears effective, permitted, inheritable and ambient
+capabilities. The bounding set remains NET_ADMIN only, and NoNewPrivileges
+prevents regaining it through exec. The admitted reader receives only group
+read access to `/run/lanrith-firewall-observations`, with no kernel socket or
+firewall-control authority. Stopping the receiver or exhausting the log sampler
+does not affect the unconditional drop.
+
+The shared volatile spool has the same three-file and line bounds as DNS. Each
+record binds original kernel time, boot, producer epoch, ordinal, ruleset hash,
+hook and rule identity to a bounded IPv4/IPv6 TCP/UDP/ICMP tuple. Packet payloads,
+MAC headers, marks and socket-owner details are omitted. Health separates
+rejections, failed writes, overwritten records, kernel sequence gaps, netlink
+overrun signals and startup gaps. These cannot establish complete packet counts
+or original client identity through translation. The mandatory base/admission
+gate binds the executable, shared libraries, implementation and generated service
+tested in a disposable container. Complete-image and consumer integration
+qualification remain required before release.
+
+DNS starts with a bounded, optional socket dependency and has no collector
+readiness dependency. The collector retries at five-second intervals without
+entering the boot check's terminal failed-unit set for a rejected runtime
+contract. Its resource limits and log rate limit remain in force. An absent or
+stalled reader does not grant access or stop resolution. Removing the observation
+declaration removes its native configuration, account, socket and collector from
+the next image; DNS remains enabled independently. The private DNS64 upstream
+resolver is not tapped, so translated recursive copies are not counted twice.
+
+The generated helper unit uses `Type=notify` and a 100-second startup limit.
+Its selected component must implement the bounded post-start binding handoff:
+ownership and application permits stay closed until the independent producer
+supplies qualified evidence, and only then can the helper report readiness.
+An `unobserved` observation reply does not establish readiness. A development
+candidate passing the native harness does not qualify the pinned component
+release or the owner's complete image.
+
+The selected policy helper currently requires fixed post-NAT source addresses.
+Combining directory policy with client masquerade or managed-service source
+translation over a DHCP IPv4 or RA IPv6 uplink is rejected by `validate` and
+`render`, before native profile assembly. Select static addresses for the
+translated uplink families for that combination.
+An ordinary router without directory policy retains DHCP WAN support. A policy
+profile with no source translation can also use a dynamic uplink; a qualified
+live source-address producer is required before translated dynamic policy paths
+can be supported.
 
 An optional `replaces` list explicitly admits replacement of compiler-generated
 firewall, networkd, Kea, Unbound, Chrony or routing-sysctl files. This is for
@@ -266,10 +516,17 @@ Review any ownership conversion of existing state separately.
 
 Private migration inputs may supply an optional `runtime` object. Its
 `credentials` map binds declared credential names to canonical files beneath
-`/var/lib` or `/var/cache`. BIND and FRR use those paths with `LoadCredential`;
-assembly does not read or copy their contents. Other components remain subject
-to their runtime support gates. Without a binding, a credential uses
-`/var/lib/lanrith/credentials/<name>`.
+`/var/lib` or `/var/cache`. DNS, routing, directory policy, RADIUS and logging
+stage selected inputs through `LoadCredential`. SNMP uses its managed activation
+helper. Assembly does not read or copy credential values. The default path is
+`/var/lib/lanrith/credentials/<name>`, except the SNMP input at
+`/var/lib/lanrith/snmp/snmpd.conf`.
+
+For active consumers, `/usr/share/lanrith/credentials.json` records the selected
+references, paths, native formats and service units. Disabled integrations add
+no requirement. It contains metadata only. The protected first-install writer,
+operator protocol and boot gate are still under implementation; this catalog
+does not seed an empty state filesystem.
 
 `runtime.service_identities` maps account names to required numeric `uid` and
 `gid`, with optional `home` and `shell`. Assembly checks the admitted base and
@@ -305,3 +562,41 @@ Keep all allocations, functions, time sources, daemon configuration and
 credentials in the private integration. Serial hardening helpers likewise use
 an explicit enable flag and selected TTY; core boot acceptance uses the typed
 owner configuration.
+
+
+The `logs` endpoint uses the selected journal exporter's existing redaction
+pipeline. Its local branch replaces every message body with `journal message
+withheld`; it exports the journal's producer timestamp as OTLP `timeUnixNano`,
+boot/transport metadata and the bounded host/job/unit/priority attributes. The
+remote branch retains its redacted message and separate persistent queue. This
+adds no console-specific name, raw journal reader, listener or network grant.
+
+The logging pre-start command reads only its systemd credential copy. It accepts
+a private owner file or a root-owned file with an exact named-user read ACL for
+the exporter UID. It rejects group/world grants and additional named users.
+This follows [systemd's credential writer](https://github.com/systemd/systemd/blob/v257/src/core/exec-credential.c#L294-L339)
+without changing access to the protected credential store.
+
+The exporter writes JSONL to `/run/lanrith-log-observations/events.jsonl`, with
+1 MiB rotation and two backups. The root staging helper prepares the fixed directory for the exporter and
+the admitted reader's primary group, mode `2750`. It is separate from systemd's
+`RuntimeDirectory` ownership so the reader group survives the transition to the
+main command. New files inherit that group.
+The selected exporter creates mode `0644` files; the protected parent directory
+prevents other users from reaching them. The reader cannot modify files or the
+directory and receives no membership in the exporter's credential or journal
+groups. Missing or reassigned reader accounts close read access while the
+exporter continues privately. Unsafe retained paths are rejected before startup.
+
+`health.json` in that directory carries a same-boot monotonic observation and
+separate `local_sent_records` and `local_failed_records` counters, plus a
+`producer_epoch` that changes when the exporter supervisor restarts. Local write
+failure does not stop remote export or its watchdog. The generated unit limits
+its own journal emission to 50 messages per 30 seconds. This is a bounded
+observation stream, not durable journal storage or proof of service health.
+Rotation, filesystem faults and restart can lose records; consumers must expose
+loss, reject stale health and handle epoch, counter and boot changes. The local
+directory remains until reboot; only validated unpublished health files are
+collected during restart. Published observations are not removed by preparation. Omitting the declaration emits no local branch or directory;
+owner YAML and the extension manifest are not read at runtime. Application event
+schemas and unit-to-event mappings remain extension responsibilities.

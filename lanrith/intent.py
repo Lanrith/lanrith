@@ -197,7 +197,7 @@ def prepare(value):
             item[feature] = enabled
         if 'dhcp4' in item:
             dhcp = item['dhcp4']
-            fields(dhcp, {'enabled', 'pool', 'pools', 'reservations'})
+            fields(dhcp, {'enabled', 'pool', 'pools', 'reservations', 'id'})
             enabled = boolean(dhcp.get('enabled', True)) and services['dhcp4']['enabled']
             if not enabled:
                 del item['dhcp4']
@@ -218,6 +218,10 @@ def prepare(value):
                 hardware['interfaces'][item['interface']].get('owner', 'linux') == 'linux' and
                 hardware['interfaces'][item['interface']].get('state', 'up') == 'up',
                 'LAN networks require an active Linux-owned interface.')
+    # Keep the generated lease identity in the normalized model as well as
+    # native Kea/policy output. Canonical owner snapshots can reorder mappings.
+    for name, identifier in dhcp4_ids(value).items():
+        value['networks'][name]['dhcp4']['id'] = identifier
     require(uplink.get('interface') in hardware.get('interfaces', {}) and
             hardware['interfaces'][uplink['interface']].get('owner', 'linux') == 'linux' and
             hardware['interfaces'][uplink['interface']].get('state', 'up') == 'up',
@@ -239,6 +243,9 @@ def prepare(value):
 
 
 def validate_dhcp(dhcp, gateways):
+    if 'id' in dhcp:
+        require(type(dhcp['id']) is int and 1 <= dhcp['id'] <= 4294967294,
+                'DHCPv4 subnet ID must be an integer from 1 to 4294967294.')
     sequence(dhcp.get('pools', []), 64, 1)
     gateways = [ip.ip_interface(a) for a in gateways if ip.ip_interface(a).version == 4]
     require(len(gateways) == 1, 'DHCPv4 requires one IPv4 subnet.')
@@ -267,6 +274,28 @@ def validate_dhcp(dhcp, gateways):
                 re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}', reservation['hostname']), 'Invalid reservation hostname.')
         identities.add(mac)
         reserved.add(target)
+
+
+def dhcp4_ids(value):
+    """Reserve explicit lease identities, then assign unused positive defaults."""
+    selected = {key: network['dhcp4'] for key, network in value['networks'].items() if 'dhcp4' in network}
+    reserved = set()
+    for dhcp in selected.values():
+        if 'id' in dhcp:
+            identifier = dhcp['id']
+            require(type(identifier) is int and 1 <= identifier <= 4294967294 and identifier not in reserved,
+                    'Invalid or duplicate DHCPv4 subnet ID.')
+            reserved.add(identifier)
+    result, candidate = {}, 1
+    for key, dhcp in selected.items():
+        if 'id' in dhcp:
+            result[key] = dhcp['id']
+        else:
+            while candidate in reserved:
+                candidate += 1
+            result[key] = candidate
+            reserved.add(candidate)
+    return result
 
 
 def service_networks(value):

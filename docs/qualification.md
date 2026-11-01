@@ -31,15 +31,171 @@ Do not transplant qualification claims from an earlier repository or release.
 `tests/packets.py` exercises the generated firewall using real IPv4 and IPv6
 connections in disposable namespaces. It checks management access, unsolicited
 uplink traffic, inter-network isolation, directional port grants, disabled
-service ports, spoof rejection, NAT44 and IPv6 source preservation. These
+service ports, spoof rejection, NAT44 and IPv6 source preservation.
+It also checks arbitrary extension listeners, managed metrics access by UID,
+wrong ingress, OOB boundaries, a forged managed-host source, stale-tuple reuse
+by another UID, undeclared egress and removal of new-connection permission. These
 results cover the generic compiler policy. Advanced integrations and physical
 hardware still need their own candidate-specific tests.
+
+The required native parser check also runs `tests/dhcp_native.py`. In private
+mount/network namespaces it loads an older-schema synthetic Kea lease file with
+an explicit subnet ID, checks native assigned-address counts before renewal,
+receives DHCPACK, restarts Kea and repeats. It verifies that the lease retains
+its ID, that canonical owner snapshots preserve it and that Kea accepts the
+supported upper bound. Actual owner lease import and populated-image upgrade/
+rollback still require the corresponding owner artifacts and state.
+
+`tests/extensions_native.py --result /output/extension-systemd.json` requires an
+uninitialized, offline container with systemd as PID 1. It verifies the generated
+optional starter, the observer's actual oneshot lifecycle and systemd's unchanged
+global failed-unit check. A synthetic optional service fails after core acceptance;
+a separate core failure still prevents acceptance. The fixture resets only four
+allow-listed container-only kernel mount failures and records any such resets.
+It does not qualify an extension application, full-image startup or physical boot.
 
 `tests/storage.py` creates a signed synthetic EROFS image and expands it with
 the matching builder's `systemd-repart`. It verifies that the second slot and
 state appear without moving or changing signed data, hashes or signatures.
 It uses regular files and a disposable test authority. TPM and encrypted-state
 boot behavior remain separate qualification requirements.
+
+`tests/logs_native.py` qualifies the selected Alloy binary in an offline
+namespace. It imports a synthetic systemd journal, checks redaction and
+self-log exclusion, exceeds the production 64 MiB logical queue, kills and
+restarts the exporter, then verifies delivery to an authenticated HTTPS
+collector with a disposable CA. Overflow rejects records; this test does not
+promise lossless delivery. Physical queue storage has a separate tested bound
+of 160 MiB. The result records the binary and implementation digests and is a
+required, provenance-bound input to base qualification and consumer admission.
+
+The generated `alloy.service` uses notify readiness and a watchdog. Its
+supervisor requires every root graph component to be healthy before reporting
+readiness and exits if a component fails later. Alloy's HTTP readiness and
+health endpoints alone are insufficient: they can return success after the
+exporter component has exited. An unavailable remote collector uses the retry
+queue and does not by itself make the component graph unhealthy.
+
+Alloy retains its state under `/var/lib/lanrith/alloy`. Its unit exposes that
+directory at `/var/lib/lanrith-alloy` inside the service's mount namespace, so
+the unprivileged exporter can use it while `/var/lib/lanrith` remains root-only.
+The native test exercises that mount and permission boundary separately from
+the journal delivery pipeline. It also verifies that the supervisor's queue and
+failure observations reach a capability-free reader through the exporter group,
+while that reader cannot read the exporter credential and unrelated service
+identities cannot read the observation. The health collector rejects stale or
+previous-boot observations; it does not replace unavailable counters with zero.
+
+`tests/directory_native.py` qualifies the directory reader's generated host
+egress and the separate TLS observer in an offline namespace. Synthetic peers
+exercise both address families, LDAPS, StartTLS, incorrect names and authorities,
+expired certificates, plaintext refusal and slow peers. Working alternate
+listeners and interfaces provide positive controls before enforcement denies
+other users, sources, destinations, ports and egress interfaces. The probe sends
+no LDAP Bind request. StartTLS framing follows
+[RFC 4511 section 4.14](https://www.rfc-editor.org/rfc/rfc4511#section-4.14).
+The result binds the test, fixture, compiler and runtime digests, and is required
+by base qualification and consumer admission. Actual directory authentication,
+grants and the owner's complete image remain separate qualification work.
+
+`scripts/qualify-credentials.py` runs the generated credential socket and units
+under systemd in an offline disposable container. It resolves the reviewed local
+builder to an immutable image ID, mounts public source read-only, and supplies
+no owner input, key, physical disk, daemon socket or host cgroup bind. Readiness
+polls the same container through transient observation failures; the runner
+does not restart it. A timeout or failed cleanup cannot publish a passing result.
+
+`tests/credentials_native.py` checks operator staging/confirmation, rejected
+root and unrelated users, unchanged consumers after malformed input, native
+LoadCredential bytes, an empty capability set, no-new-privileges, INET/write
+denial and an uninterrupted completion observer. Completed failed requests are
+collected. Its consumer and completion observer are synthetic; actual SSH,
+encryption, backend authentication and full owner-image update/recovery still
+need their own evidence.
+
+The credential fixture also runs the actual generated logging pre-start command
+with systemd's credential copy. The unprivileged consumer checks
+the staged bytes and private-file metadata without reading the protected source
+store. The reader accepts a private owner file or systemd's root-owned file with
+an exact read ACL for the consumer UID. A real-kernel check rejects grants to
+other users, the owning group and everyone else. An admitted synthetic observer retains its directory read group after the
+main command starts, can read metadata and cannot read the password. This check
+is mandatory in the 19-case credential gate and binds the log runtime, renderer,
+observation admission and protected-reader implementation. The final daemon
+command is a fixture here; the separate journal test executes the real exporter.
+
+Base qualification requires `credential-qualification.json` with all checks,
+matching test/runtime/runner digests, confirmed cleanup and an assessment no older
+than six hours. The qualification record and consumer admission bind its digest
+to the authenticated release asset. Local or pull-request results cannot set the
+production qualification flag.
+
+The same journal qualification now exercises an admitted local reader through
+the actual selected exporter. Five additional checks cover body withholding and
+original OTLP timestamps, reader/credential/journal permissions, 1 MiB rotation
+with two backups, remote progress while the local filesystem refuses writes, and a new producer
+epoch after forced process loss. Local sent/failed counters and recovered output retain the original producer
+time. Base qualification requires these checks, their bounded output/failure
+measurements and the current observation-admission source hash. These component
+tests do not establish a complete extension's event schema or durable image
+lifecycle; generated-unit resource/log-rate settings still need image testing.
+
+`scripts/qualify-ids.py` runs the IDS gate with the exact base archive and a
+matching local builder. It resolves the builder to an immutable image ID, mounts
+source and the archive read-only, and mounts a new empty staging directory for
+output. The offline container has bounded memory/PIDs and explicit namespace and
+network capabilities. It publishes the report only after removing the owned
+container and staging directory. For example, on the build host:
+
+```sh
+python3 scripts/qualify-ids.py --builder REVIEWED_LOCAL_BUILDER \
+  --base /absolute/path/lanrith-base.tar.gz \
+  --result /absolute/output/ids-qualification.json
+```
+
+Docker is the default runtime; `--runtime podman` selects Podman. The output
+directory must exist and the result must be new. `tests/ids_native.py` hashes the
+canonical root-owned detector executable inside the archive without extracting
+the filesystem, then requires the matching builder executable to have identical
+bytes. It parses the generated configuration and admitted alert rules, runs the
+generated command from `/` under the dedicated UID with `NoNewPrivileges` and
+only `CAP_NET_RAW` in its effective and bounding capability sets,
+captures synthetic WAN traffic, excludes LAN-only packets and checks forwarding
+before, during and after detector operation. The explicit log-directory argument
+is exercised by the generated command rather than supplied independently by the
+test.
+
+Base qualification requires `ids-qualification.json` with all five checks,
+exact filesystem/executable bindings, current implementation hashes, removed
+fixture state and a native assessment no more than six hours old. Its digest
+enters the authenticated qualification record and consumer selection. Consumer
+admission checks that the native assessment was fresh at the original base
+qualification time. An unchanged historical base can still use a current
+security reassessment; a missing or altered IDS receipt cannot be substituted.
+
+This establishes component behavior in the matching builder. It does not qualify
+the complete image, its deployed libraries, actual WAN hardware or the owner's
+topology. A standalone component run without `--base` emits diagnostic output
+only; publishing native evidence requires both `--base` and `--result`.
+
+The DNS observation gate also runs before base promotion. `scripts/qualify-dns.py`
+starts a fresh offline systemd container, with source and base archive mounted
+read-only and only a private result directory writable. It extracts only the two
+canonical root-owned Unbound and checkconf executables into that disposable
+fixture. It checks their actual bytes, builds the synthetic owner overlay, and
+uses its locked accounts, curated runtime modules and generated units. The
+receipt binds all implementation inputs and the assembled runtime/account files.
+Archive aliases, links, duplicates, changed inputs, failed cleanup or incomplete
+evidence prevent a passing result from being published.
+
+The native checks cover IPv4 and IPv6 client observations over UDP and TCP,
+reader/producer custody, crash and reconnect, absent and stalled readers,
+disabled selection and the global boot check during a collector failure.
+`qualify-base.py` requires fresh evidence for the same filesystem. Consumer
+admission authenticates its hash and rechecks the claim at the original base
+qualification time; a later security reassessment can retain the exact unchanged
+base. These component checks do not qualify full-image DNSSEC, recursion,
+authoritative updates, translated clients, packet load or image recovery.
 
 `tests/vm.py` is the native UEFI qualification runner used by the full base
 build. It creates regular-file disks, a disposable TPM, its own SSH agent and
@@ -137,3 +293,92 @@ Fresh-install recovery has additional VM runners and evidence described in
 [recovery qualification](recovery-qualification.md). Run the affected recovery
 cases against the release candidate. Historical tests that deliberately override
 experimental gates do not qualify the supported compiled-policy path.
+
+The optional `tests/policy_bindings_component_native.py` fixture exercises a
+nonempty cohort with the generated binding service, real helper IPC, nftables,
+Kea and local journal provenance. Run it only in a new offline systemd container
+with its own mount/network namespaces, no external interfaces and no installed
+Lanrith state. Supply the source at `/source`, the reviewed development binaries
+and `candidate.json` at `/candidate`, and a new private result directory at
+`/output`:
+
+```sh
+PYTHONPATH=/source python3 -B /source/tests/policy_bindings_component_native.py \
+  --candidate /candidate --collector-sha256 REVIEWED_COLLECTOR_SHA256 \
+  --result /output/native.json
+```
+
+The separate collector digest binds its executable in addition to the existing
+candidate inventory. Bound the container's memory and PIDs, retain source and
+executable hashes, and remove the owned container before recording cleanup.
+The fixture uses synthetic directory proposals, a synthetic accounting service
+running as `freerad`, and a lease seeded before the real Kea daemon starts.
+These checks cannot establish RADIUS authentication, directory authority, DHCP
+packet behavior, translated traffic or complete-image startup and recovery.
+Development binaries cannot satisfy selected-release or package admission.
+
+Trusted companion fixtures can compose the Python `qualify` function with a
+configuration callback, an observer account at the fixture UID/GID, and an
+`observe_stage(stage, configuration, native_files)` callback. The stages are
+`applied`, `incomplete`, `bindings-recovered` and `directory-reconfirmed`. This
+allows an extension's own read-only client to observe the same real lifecycle.
+These are test-code hooks; neither directory input nor the CLI selects code.
+`prepare_interfaces(configuration)` may create a companion's disposable topology
+and return its root interface names for cleanup. `prepare_ruleset(configuration,
+native_files)` may return the final native firewall after extension wiring.
+The fixture still compiles the unchanged normalized policy baseline against that
+actual loaded ruleset, matching image finalization order. Both hooks are local
+test composition only; they grant no image or selected-package admission.
+
+The experimental `tests/firewall_metadata_native.py` fixture tests an NFLOG
+codec and generated default-deny instrumentation. Its `--service` variant adds
+actual build-allocated accounts, generated systemd wiring and the bounded spool.
+The candidate has no current release or full-image admission. Run it only in an
+offline disposable container with separate mount/network namespaces, read-only
+source and one writable result directory. The fixture checks both namespace
+identities against controller-supplied `LANRITH_FIXTURE_OUTER_NET` and
+`LANRITH_FIXTURE_OUTER_MNT` values before changing its firewall or sysctls.
+
+The fixed logging group supplies bounded packet headers to the core decoder;
+only source/destination tuples, interfaces, original kernel time and bound rule
+identity leave it. Kernel peer identity comes from `recvmsg`, not the message's
+PID field. The nonroot receiver discards effective, permitted, inheritable and
+ambient capabilities after its initial NET_ADMIN group bind. Its remaining
+NET_ADMIN bounding bit cannot restore those capabilities under NoNewPrivileges;
+the fixture checks that firewall writes and group reconfiguration fail.
+The protocol follows the [Linux NFLOG interface](https://github.com/torvalds/linux/blob/master/include/uapi/linux/netfilter/nfnetlink_log.h).
+
+IPv4/IPv6 TCP, UDP and ICMP tests reach the actual generated input/forward
+default-drop paths. A bounded, nonterminal log statement is followed by an
+unconditional counter/drop statement. Stalling or removing the receiver and
+exhausting the sampler must leave denied packets blocked and explicitly allowed
+UDP replies available. Sampling and startup gaps prevent a complete packet-count
+claim. Earlier guards, explicit-owner rules, policy-agent and translator paths,
+output and service namespaces are outside this fixture's observation coverage.
+The service variant also checks reader write/credential denial, forced restart,
+an invalid contract actually exiting and the real global boot checker, and
+disabled endpoint removal. Its rootless fixture masks only four known kernel
+pseudo-filesystem mount units before testing; any other initial failure is
+rejected. It never clears an observer or core failure to pass the boot check.
+The generated unit keeps its 64 MiB, eight-task, 24-descriptor and 5%-of-one-CPU
+bounds. The remaining NET_ADMIN bounding bit cannot restore cleared capabilities
+under NoNewPrivileges. Consumer mapping and complete-image qualification remain
+required before release.
+
+`scripts/qualify-firewall.py` is a required base-build gate. It stages the exact
+archived nft executable at its fixed native path and checks its complete loaded
+shared-library closure against ordinary root-owned files in the same archive.
+Missing, duplicate, linked or unsafe targets fail qualification. A broken
+executable or mismatched library cannot fall back to a builder executable.
+The container has no external network, and its source and subject mounts are
+read-only. The runner checks both inputs again after execution and publishes
+`firewall-qualification.json` only after removing its own container.
+
+Base qualification requires this receipt within six hours, with current source
+bindings, matching archive bytes and every generated-service check. Admission
+authenticates its artifact digest and validates the receipt at the base's
+original qualification time; a later security reassessment does not turn an
+old native test into a fresh test. The receipt records the actual host kernel
+and userspace versions. Tests using a component-only archive establish that
+component boundary; they do not qualify a complete base, its image kernel,
+translated paths or a signed owner image.

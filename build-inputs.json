@@ -39,7 +39,7 @@
     "builders/alloy/source.json": "34422a4d0d0e627970d011e09cf258a255b69e5151865f456bc8f43cd69a70a6",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/build-inputs.lock": "7397f1592be15bd44343c2c5a3f0b6fe2e81e3041c63384ec5584ced960177f8",
-    "builders/mkosi/Containerfile": "55e4e902a27db01837d7f88a69d4ad8e53887c4f93c08b0de0982e2795a40736",
+    "builders/mkosi/Containerfile": "711c6c170eb0d6a0b2a5fd494003b54afeed35f51c14f0b11ec2cf2239558f0b",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18",
     "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",

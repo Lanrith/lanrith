@@ -9,6 +9,8 @@ from test_intent import minimal
 
 def declaration():
     value = minimal()
+    value['uplink']['ipv4'] = {'address': '10.243.0.2/24', 'gateway': '10.243.0.1'}
+    value['uplink']['ipv6'] = 'disabled'
     value['networks']['home']['ipv6'] = {'subnet_id': 16, 'gua': False}
     value['networks']['devices'] = {'interface': 'lan', 'vlan': 22, 'ipv4': '192.168.22.0/24',
                                    'ipv6': {'subnet_id': 22, 'gua': False}}
@@ -28,6 +30,26 @@ def declaration():
 
 
 class PolicyAgentContractTests(unittest.TestCase):
+    def test_unqualified_dynamic_source_translation_is_rejected_before_native_assembly(self):
+        value = declaration()
+        value['networks']['home']['vlan'] = 1
+        value['uplink']['ipv4'] = 'dhcp'
+        with self.assertRaisesRegex(ReleaseError, 'dynamic uplink source translation'):
+            config.render(value)
+        # Disabling client masquerade alone cannot hide the service-source gap.
+        value['uplink']['masquerade'] = False
+        with self.assertRaisesRegex(ReleaseError, 'dynamic uplink source translation'):
+            config.render(value)
+        value['services'] = {'dns': {'enabled': False}, 'ntp': {'enabled': False}}
+        self.assertIn('etc/router-policy-agent/runtime/runtime.json', config.render(value))
+        # An ordinary DHCP WAN router has no policy-helper dependency.
+        self.assertIn('etc/nftables.conf', config.render(minimal()))
+        value = declaration()
+        value['networks']['home']['vlan'] = 1
+        value['uplink']['ipv6'] = 'ra'
+        with self.assertRaisesRegex(ReleaseError, 'dynamic uplink source translation'):
+            config.render(value)
+
     def test_base_firewall_bridges_only_agent_admission_marks(self):
         from lanrith import firewall
         value = config.normalize(declaration())
@@ -45,6 +67,28 @@ class PolicyAgentContractTests(unittest.TestCase):
         static = firewall.render(unmanaged)
         self.assertIn('chain source_guard { type filter hook prerouting priority -300; policy accept;', static)
         self.assertNotIn('meta mark & 0xff000000 { 0xb1000000', static)
+
+    def test_nat64_target_kinds_are_selected_behind_mandatory_guards(self):
+        from lanrith import firewall
+        raw = declaration()
+        for enabled in (False, True):
+            with self.subTest(nat64=enabled):
+                raw['translation'] = {'nat64': {'enabled': enabled}}
+                value = config.normalize(raw)
+                text = firewall.render(value)
+                forward = text[text.index('chain forward'):text.index('chain output')]
+                bridge = next(line for line in forward.splitlines()
+                              if 'meta mark & 0xff000000 {' in line)
+                for mark in firewall.NAT64_TARGET_MARKS:
+                    self.assertEqual(mark in bridge, enabled)
+                self.assertLess(forward.index('ct state invalid,untracked drop'),
+                                forward.index(bridge))
+                self.assertNotIn('ct state established,related accept', forward)
+        # Optional translation alone supplies no helper or forwarding permit.
+        ordinary = minimal()
+        ordinary['translation'] = {'nat64': {'enabled': True}}
+        text = firewall.render(config.normalize(ordinary))
+        self.assertNotIn('meta mark & 0xff000000 { 0xb1000000', text)
 
     def test_service_source_allocations_are_not_inferred_from_delegation_ceilings(self):
         raw = declaration()
@@ -159,6 +203,9 @@ class PolicyAgentContractTests(unittest.TestCase):
 
     def test_ntp_numeric_dns_dependency_is_exact_and_disappears_with_ntp(self):
         raw = declaration()
+        # Baseline-only coverage includes dynamic IPv6 geometry; runtime
+        # admission separately rejects its unqualified post-NAT source.
+        raw['uplink']['ipv6'] = 'ra'
         raw['services'] = {'dns': {'enabled': False, 'upstreams': ['9.9.9.9', '2620:fe::fe']}}
         paths = policy_agent.baseline(config.normalize(raw))['network_model']['core_egress']
         self.assertEqual({path['kind'] for path in paths}, {'ntp', 'ntp_dns'})

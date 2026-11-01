@@ -10,25 +10,30 @@ import sys
 COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config', 'bindings',
             'integrations', 'access', 'firewall', 'service_plane', 'authoritative', 'routing',
             'translation', 'nat46', 'nat64', 'ids', 'metrics', 'policy_agent', 'discovery',
-            'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs',
-            'recovery_build', 'recovery_failure_build', 'state_formats'}
+            'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs', 'owner_inputs',
+            'recovery_build', 'recovery_failure_build', 'state_formats', 'directory_config', 'credential_config'}
 
 
 def check(root):
     library = root/'usr/lib/lanrith/lanrith'
     modules = {path.stem for path in library.glob('*.py')}
-    if not {'runtime', 'boot_health', 'hardware', 'factory', 'release', 'update'} <= modules or modules & COMPILER:
+    helpers = {path.stem for path in library.parent.glob('*.py')}
+    if (not {'runtime', 'boot_health', 'hardware', 'factory', 'release', 'update'} <= modules or
+            (modules | helpers) & (COMPILER | {'yaml', 'ruamel'})):
         raise ValueError('The image has an incomplete runtime or contains configuration compiler code.')
     build_inputs = root/'usr/lib/lanrith-build'
     if build_inputs.exists() or build_inputs.is_symlink():
         raise ValueError('The image contains an unconsumed build-only policy input.')
-    for directory in (library, root/'etc/lanrith', root/'usr/share/lanrith'):
-        if any(path.suffix in ('.yaml', '.yml') or path.name in ('resolved.json', 'configuration.json')
+    for directory in (library.parent, root/'etc/lanrith', root/'usr/share/lanrith'):
+        if any(path.suffix in ('.yaml', '.yml') or path.name in (
+                'resolved.json', 'configuration.json', 'hardware-facts.json', 'translation-allocations.json')
                for path in directory.rglob('*')):
             raise ValueError('The image contains source configuration input.')
     # Check dormant imports too. No site-package or compiler module may become
     # necessary only after a health probe or translator restart.
-    for path in library.glob('*.py'):
+    for path in [*library.glob('*.py'), *library.parent.glob('*.py')]:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('The image runtime module is not a regular in-image file.')
         for node in ast.walk(ast.parse(path.read_bytes())):
             if isinstance(node, ast.Import):
                 names = [item.name for item in node.names]
@@ -46,7 +51,7 @@ def check(root):
                 if parts[0] == 'lanrith':
                     valid = len(parts) == 1 or parts[1] in modules
                 else:
-                    valid = parts[0] in sys.stdlib_module_names
+                    valid = parts[0] in sys.stdlib_module_names or len(parts) == 1 and parts[0] in helpers
                 if not valid:
                     raise ValueError('The image runtime depends on a compiler or external Python package.')
 
