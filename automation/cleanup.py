@@ -22,6 +22,7 @@ def plan(repo, *, get=api, clock=None):
     endpoint = 'repos/'+repo+'/actions/artifacts?per_page=100'
     pages = get(endpoint, paginate=True)
     runs = {}
+    candidates = []
     for page in pages:
         require(isinstance(page.get('artifacts'), list), 'Incomplete artifact enumeration.')
         for artifact in page['artifacts']:
@@ -33,15 +34,38 @@ def plan(repo, *, get=api, clock=None):
             if run_id not in runs:
                 runs[run_id] = get('repos/'+repo+'/actions/runs/'+str(run_id))
             run = runs[run_id]
-            # Completed runs have no active downstream consumers. Keep a retry window.
-            if run['status'] != 'completed' or run['name'] not in WORKFLOWS or \
-                    clock-timestamp(run['updated_at']) < datetime.timedelta(hours=2):
-                continue
-            result.append({'id': artifact['id'], 'name': artifact['name'], 'size_in_bytes': artifact['size_in_bytes'],
-                           'run_id': run_id, 'completed_at': run['updated_at']})
+            candidates.append((artifact,run_id,run))
+    # Keep one final signed bundle, for at most one day, from the latest failed
+    # release. Intermediate stages and older failed releases remain disposable.
+    retry_candidates = [(a,rid,r) for a,rid,r in candidates
+                        if r['name']=='Release' and r['status']=='completed'
+                        and r.get('conclusion')=='failure'
+                        and re.fullmatch(r'attested-(?:base|release)(?:-[0-9]+)?',a['name'])
+                        and clock-timestamp(a.get('created_at',r['updated_at'])) < datetime.timedelta(days=1)]
+    retained = []
+    if retry_candidates:
+        latest = get('repos/'+repo+'/actions/workflows/release.yml/runs?status=completed&per_page=1')['workflow_runs']
+        require(isinstance(latest,list) and len(latest)<=1, 'Incomplete latest release observation.')
+        if latest and latest[0]['conclusion']=='failure':
+            eligible = [a for a,rid,_ in retry_candidates if rid==latest[0]['id']]
+            if eligible:
+                retained = [max(eligible,key=lambda a:a['id'])]
+    retained_ids = {a['id'] for a in retained}
+    for artifact,run_id,run in candidates:
+        # Active consumers and the short retry window are always protected.
+        if artifact['id'] in retained_ids:
+            continue
+        if run['status'] != 'completed' or run['name'] not in WORKFLOWS or \
+                clock-timestamp(run['updated_at']) < datetime.timedelta(hours=2):
+            continue
+        result.append({'id': artifact['id'], 'name': artifact['name'], 'size_in_bytes': artifact['size_in_bytes'],
+                       'run_id': run_id, 'completed_at': run['updated_at']})
     return {'schema': 1, 'kind': 'temporary-artifact-cleanup', 'repository': repo, 'created_at': clock.isoformat(),
             'reason': 'Completed workflow handoffs and duplicate build outputs; durable release assets are excluded.',
-            'bytes': sum(a['size_in_bytes'] for a in result), 'artifacts': result}
+            'bytes': sum(a['size_in_bytes'] for a in result), 'artifacts': result,
+            'retained_retry_artifacts': [{'id':a['id'],'name':a['name'],'run_id':a['workflow_run']['id'],
+                'size_in_bytes':a['size_in_bytes'],'reason':'Latest failed release final attested bundle; maximum one day.'}
+                for a in retained]}
 
 
 def execute(record, *, progress=None):

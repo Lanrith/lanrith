@@ -36,3 +36,4 @@ selected='.'.join(map(str, desired))
 Path(os.environ['RUNNER_TEMP']+'/lanrith-version').write_text(selected+'\n')
 with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
     stream.write('value='+'.'.join(map(str, desired))+'\n')
+print(f'Selected {selected}; checked {len(published)} published versions and {len(reserved)} reservations in this release series.')
