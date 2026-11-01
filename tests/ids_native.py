@@ -2,10 +2,12 @@
 """Exercise unprivileged, detect-only WAN capture in an offline container."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import pwd
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -45,7 +47,8 @@ def main():
                        'ipv6': 'disabled'}
     value['observability'] = {'ids': {'enabled': True}}
     value = config.normalize(value)
-    for name, text in ids.render(value).items():
+    files = ids.render(value)
+    for name, text in files.items():
         path = Path('/')/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
@@ -60,6 +63,9 @@ def main():
         stream.write('lanrith-ids:x:61010:\n')
     Path('/var/log/suricata').mkdir(parents=True, exist_ok=True)
     os.chown('/var/log/suricata', 61010, 61010)
+    Path('/var/log/suricata').chmod(0o750)
+    daemon_command = shlex.split(next(line.removeprefix('ExecStart=') for line in
+        files['usr/lib/systemd/system/lanrith-ids.service'].splitlines() if line.startswith('ExecStart=')))
     processes = []
     with tempfile.TemporaryDirectory(prefix='lanrith-ids.') as temporary:
         work = Path(temporary)
@@ -84,8 +90,8 @@ def main():
                 daemon = subprocess.Popen([
                     'setpriv', '--reuid=61010', '--regid=61010', '--clear-groups',
                     '--inh-caps=+net_raw', '--ambient-caps=+net_raw', '--bounding-set=-all,+net_raw',
-                    'suricata', '--af-packet=wan', '-c', '/etc/suricata/lanrith.yaml', '--init-errors-fatal'
-                ], stdout=log, stderr=subprocess.STDOUT)
+                    *daemon_command
+                ], stdout=log, stderr=subprocess.STDOUT, cwd='/')
                 processes.append(daemon)
                 deadline = time.monotonic()+15
                 while time.monotonic() < deadline:
@@ -139,6 +145,12 @@ def main():
         'WAN alert capture runs as the dedicated account with only CAP_NET_RAW',
         'LAN-only traffic is excluded and no firewall object changes',
         'ordinary forwarding survives detector operation and shutdown'],
+        'daemon_working_directory': '/',
+        'daemon_command': daemon_command,
+        'binary_sha256': hashlib.sha256(Path('/usr/bin/suricata').read_bytes()).hexdigest(),
+        'source_sha256': {name: hashlib.sha256((Path(__file__).resolve().parents[1]/name).read_bytes()).hexdigest()
+                          for name in ('lanrith/ids.py', 'lanrith/config.py', 'lanrith/firewall.py',
+                                       'tests/ids_native.py', 'tests/packets.py', 'tests/test_intent.py')},
         'image_boot_qualified': False}))
 
 
