@@ -83,6 +83,11 @@ def publish(manifest, component, current, pending, directory, runtime):
     return updated, changed
 
 
+def kernel_uptime():
+    """Use the helper's kernel boot clock, including time spent suspended."""
+    return float(Path('/proc/uptime').read_text(encoding='ascii').split()[0])
+
+
 def status(manifest, component=None):
     component = runtime_contract(manifest) if component is None else component
     translation_runtime.status(manifest)
@@ -101,7 +106,7 @@ def status(manifest, component=None):
             type(observation['pid']) is int and observation['pid'] > 1 and
             type(observation['monotonic']) in (int, float) and
             observation['configuration_sha256'] == hashlib.sha256(configuration).hexdigest() and
-            0 <= time.monotonic()-observation['monotonic'] < 4, 'NAT64 runtime observation is stale.')
+            0 <= kernel_uptime()-observation['monotonic'] < 4, 'NAT64 runtime observation is stale.')
     process = Path('/proc', str(observation['pid']))
     require(process.joinpath('stat').read_text().rsplit(') ', 1)[1].split()[19] == observation['start_ticks'],
             'NAT64 translator process identity changed.')
@@ -165,7 +170,7 @@ def supervise(manifest, *, stop=None):
                 configuration_sha256 = hashlib.sha256(
                     allocations.configuration(manifest, current)).hexdigest()
                 allocations.atomic_write(runtime/'status.json', canonical(
-                    {'pid': child.pid, 'start_ticks': start_ticks, 'monotonic': time.monotonic(),
+                    {'pid': child.pid, 'start_ticks': start_ticks, 'monotonic': kernel_uptime(),
                      'configuration_sha256': configuration_sha256}), mode=0o644)
                 # A burst of new clients causes at most one restart per second.
                 # Static mappings and both conntrack legs survive that restart.
