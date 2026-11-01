@@ -68,6 +68,28 @@ class PolicyAgentContractTests(unittest.TestCase):
         self.assertIn('chain source_guard { type filter hook prerouting priority -300; policy accept;', static)
         self.assertNotIn('meta mark & 0xff000000 { 0xb1000000', static)
 
+    def test_nat64_target_kinds_are_selected_behind_mandatory_guards(self):
+        from lanrith import firewall
+        raw = declaration()
+        for enabled in (False, True):
+            with self.subTest(nat64=enabled):
+                raw['translation'] = {'nat64': {'enabled': enabled}}
+                value = config.normalize(raw)
+                text = firewall.render(value)
+                forward = text[text.index('chain forward'):text.index('chain output')]
+                bridge = next(line for line in forward.splitlines()
+                              if 'meta mark & 0xff000000 {' in line)
+                for mark in firewall.NAT64_TARGET_MARKS:
+                    self.assertEqual(mark in bridge, enabled)
+                self.assertLess(forward.index('ct state invalid,untracked drop'),
+                                forward.index(bridge))
+                self.assertNotIn('ct state established,related accept', forward)
+        # Optional translation alone supplies no helper or forwarding permit.
+        ordinary = minimal()
+        ordinary['translation'] = {'nat64': {'enabled': True}}
+        text = firewall.render(config.normalize(ordinary))
+        self.assertNotIn('meta mark & 0xff000000 { 0xb1000000', text)
+
     def test_service_source_allocations_are_not_inferred_from_delegation_ceilings(self):
         raw = declaration()
         raw['access']['delegation_limits'] = {'networks': ['172.31.0.0/16']}

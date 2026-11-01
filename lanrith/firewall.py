@@ -12,6 +12,7 @@ POLICY_FORWARD_MARKS = (
     '0xd1000000', '0xd2000000', '0xd3000000', '0xd4000000', '0xd5000000', '0xd6000000',
     '0xf1000000', '0xf2000000', '0xf3000000', '0xf4000000', '0xf5000000', '0xf6000000',
 )
+NAT64_TARGET_MARKS = ('0xd7000000', '0xd8000000', '0xd9000000', '0xda000000')
 
 
 def sysctls():
@@ -183,7 +184,10 @@ def render(value, *, extension_rules=None):
         # These marks are produced only after the helper's early checks. Its
         # later confirmation and physical-egress hooks still revalidate the
         # exact tuple, epoch, source ownership, and translated geometry.
-        lines.append('  meta mark & 0xff000000 '+values(POLICY_FORWARD_MARKS)+' accept')
+        marks = POLICY_FORWARD_MARKS
+        if 'nat64' in translators:
+            marks += NAT64_TARGET_MARKS
+        lines.append('  meta mark & 0xff000000 '+values(marks)+' accept')
     else:
         lines += nat46.forward(value) + nat64.forward(value)
         if 'rules' in value['access'] or 'default' in value['access']:
