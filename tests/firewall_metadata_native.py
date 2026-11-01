@@ -90,20 +90,8 @@ def main():
         from lanrith import firewall_qualification as gate
         from lanrith.release import file_record
         subject, sources = file_record(args.base), gate.implementation(SOURCE)
-        with tempfile.TemporaryDirectory(prefix='nft-subject.', dir='/run') as temporary:
-            candidate = Path(temporary)
-            selected = gate.subject(args.base, destination=candidate)
-            assert Path('/usr/sbin/nft').is_file() and not Path('/usr/sbin/nft').is_symlink()
-            shutil.copyfile(candidate/'nft', '/usr/sbin/nft')
-            Path('/usr/sbin/nft').chmod(0o755)
-        # Trace the staged subject, then prove that every loaded shared object
-        # matches the archive. No builder executable or library fallback.
-        for key in tuple(os.environ):
-            if key.startswith('LD_'):
-                del os.environ[key]
-        os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
-        dependencies = gate.library_inventory()
-        userspace = gate.subject(args.base, dependencies)
+        from firewall_userspace import stage
+        selected, dependencies, userspace = stage(args.base)
         assert userspace == {gate.NFT: selected[gate.NFT], **dependencies}, 'Staged nft libraries differ from the exact base.'
         assert file_record(Path('/usr/sbin/nft'))['sha256'] == selected[gate.NFT]
         nft_version = run('/usr/sbin/nft', '--version').stdout.decode('ascii').strip()
@@ -251,6 +239,14 @@ while True:time.sleep(1)
                 kernel_release=os.uname().release, image_boot_qualified=False)
         args.result.write_text(json.dumps(result, sort_keys=True, indent=2)+'\n')
         print(json.dumps({'result': 'pass', 'records': len(actual), 'default_drops': counter['packets']}))
+    except BaseException:
+        if args.service:
+            for command in (['systemctl', 'show', 'lanrith-firewall-observations.service',
+                             '--property=MainPID,NRestarts,CPUUsageNSec,ActiveState,SubState,ExecMainStatus'],
+                            ['journalctl', '-b', '-u', 'lanrith-firewall-observations.service', '--no-pager', '-n', '20']):
+                diagnostic = run(*command, check=False)
+                sys.stderr.buffer.write((diagnostic.stdout+diagnostic.stderr)[-8192:])
+        raise
     finally:
         for child in reversed(children):
             if child.poll() is None:

@@ -94,7 +94,8 @@ class Receiver:
         (hidden/'90-fixture.conf').write_text('[Service]\nInaccessiblePaths=/source /output\n')
         run('systemctl', 'daemon-reload')
         run('systemctl', 'start', 'nftables.service')
-        wait(health)
+        # The 5% service CPU quota also applies to interpreter startup.
+        wait(health, seconds=45)
         self.pid = int(run('systemctl', 'show', '--property=MainPID', '--value', generation.SERVICE).stdout)
         status = dict(line.split(':', 1) for line in Path(f'/proc/{self.pid}/status').read_text().splitlines())
         user = pwd.getpwnam(generation.ACCOUNT)
@@ -148,11 +149,11 @@ class Receiver:
 
     def qualify_lifecycle(self, udp):
         run('systemctl', 'start', generation.SERVICE)
-        wait(lambda: (value if (value := health()) and value['producer_epoch'] != self.initial_epoch else None))
+        wait(lambda: (value if (value := health()) and value['producer_epoch'] != self.initial_epoch else None), seconds=45)
         before = health()['producer_epoch']
         pid = int(run('systemctl', 'show', '--property=MainPID', '--value', generation.SERVICE).stdout)
         os.kill(pid, signal.SIGKILL)
-        wait(lambda: (value if (value := health()) and value['producer_epoch'] != before else None))
+        wait(lambda: (value if (value := health()) and value['producer_epoch'] != before else None), seconds=45)
         udp('192.0.2.1', 54321)
         udp('192.0.2.1', 23456, allowed=True)
         wait(lambda: (DIRECTORY/'events.jsonl').exists())

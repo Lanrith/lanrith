@@ -59,6 +59,35 @@ class FirewallArchiveTests(unittest.TestCase):
             self.assertEqual(file_record(destination/'nft')['sha256'], result[gate.NFT])
             with self.assertRaises(ReleaseError):gate.subject(path, destination=destination)
 
+    def test_explicit_library_extraction_uses_only_validated_fixed_targets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path, destination = root/'base.tar.gz', root/'candidate'
+            archive(path); destination.mkdir(mode=0o700)
+            result = gate.subject(path, [LIBRARY], destination=destination, extract_libraries=True)
+            self.assertEqual({str(item.relative_to(destination)) for item in destination.rglob('*') if item.is_file()}, {'nft', LIBRARY})
+            self.assertEqual(file_record(destination/LIBRARY)['sha256'], result[LIBRARY])
+            self.assertEqual((destination/LIBRARY).stat().st_mode & 0o7777, 0o755)
+            with self.assertRaises(ReleaseError):gate.subject(path, [LIBRARY], extract_libraries=True)
+            with self.assertRaises(ReleaseError):gate.subject(path, [LIBRARY], destination=root, extract_libraries=1)
+
+    def test_staged_libraries_reject_links_aliases_duplicates_and_unsafe_custody(self):
+        for alteration in ('link', 'alias', 'duplicate', 'owner', 'mode', 'missing'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); path = root/'base.tar.gz'; destination = root/'candidate'; destination.mkdir()
+                with tarfile.open(path, 'w:gz') as stream:
+                    for name in (gate.NFT, LIBRARY):
+                        data = b'synthetic userspace'; info = tarfile.TarInfo(name); info.size = len(data); info.mode = 0o755
+                        if name == LIBRARY:
+                            if alteration == 'link':info.type, info.linkname, info.size = tarfile.SYMTYPE, '/etc/shadow', 0
+                            if alteration == 'alias':info.name = '././'+name
+                            if alteration == 'duplicate':stream.addfile(info, io.BytesIO(data))
+                            if alteration == 'owner':info.uid = 1000
+                            if alteration == 'mode':info.mode = 0o777
+                            if alteration == 'missing':continue
+                        stream.addfile(info, io.BytesIO(data) if info.isfile() else None)
+                with self.assertRaises(ReleaseError):gate.subject(path, [LIBRARY], destination=destination, extract_libraries=True)
+
     def test_links_aliases_overlaps_and_unsafe_library_or_executable_metadata_fail(self):
         for alteration in ('duplicate', 'alias', 'absolute', 'traversal', 'owner', 'mode', 'link', 'missing', 'library-mode'):
             with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
@@ -118,6 +147,17 @@ class FirewallEvidenceTests(unittest.TestCase):
                 helper.bind(root, selection, record, security)
                 from lanrith import admission
                 with self.subTest(fields=sorted(changed)), self.assertRaises(ReleaseError):admission.assess(root, selection, NOW)
+
+
+class FirewallStagingBoundaryTests(unittest.TestCase):
+    def test_system_staging_refuses_outer_namespaces_before_reading_or_writing_subjects(self):
+        import os
+        import firewall_userspace
+        env = {'LANRITH_FIXTURE_OUTER_NET': str(os.stat('/proc/self/ns/net').st_ino),
+               'LANRITH_FIXTURE_OUTER_MNT': str(os.stat('/proc/self/ns/mnt').st_ino)}
+        with mock.patch.dict(os.environ, env), mock.patch.object(firewall_userspace.gate, 'subject') as subject:
+            with self.assertRaises(ReleaseError):firewall_userspace.stage(Path('/not-a-subject'))
+            subject.assert_not_called()
 
 
 class FirewallRunnerTests(unittest.TestCase):

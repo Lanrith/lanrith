@@ -34,7 +34,7 @@ IMPLEMENTATION = {
     'lanrith/service_plane.py', 'lanrith/nat46.py', 'lanrith/nat64.py', 'lanrith/translation.py',
     'lanrith/policy_runtime.py', 'lanrith/release.py', 'lanrith/admission.py',
     'scripts/qualify-firewall.py', 'scripts/qualify-base.py', 'scripts/build-base.py',
-    'tests/firewall_metadata_native.py', 'tests/firewall_service_native.py', 'tests/test_firewall_metadata.py',
+    'tests/firewall_metadata_native.py', 'tests/firewall_userspace.py', 'tests/firewall_service_native.py', 'tests/test_firewall_metadata.py',
     'tests/test_firewall_observations.py', 'tests/test_firewall_qualification.py', 'tests/firewall_fixture.py',
     'tests/test_extension_network.py', 'tests/test_intent.py', 'examples/minimal.yaml'}
 ASSEMBLY = {'etc/nftables.conf', 'usr/share/lanrith/firewall-observations.json',
@@ -89,8 +89,8 @@ def library_inventory():
     return values
 
 
-def subject(archive, libraries=(), *, destination=None):
-    """Hash fixed ordinary targets; extract only nft to a fixed private name.
+def subject(archive, libraries=(), *, destination=None, extract_libraries=False):
+    """Hash fixed ordinary targets; optionally stage validated shared objects.
 
     No archive member supplies an extraction path. Library names are first
     restricted to canonical /usr/lib shared objects. Aliases, links, duplicates,
@@ -98,6 +98,8 @@ def subject(archive, libraries=(), *, destination=None):
     """
     require(isinstance(libraries, (dict, tuple, list, set)) and len(libraries) <= 32 and
             all(library_path(name) for name in libraries), 'Invalid nft dependency inventory.')
+    require(type(extract_libraries) is bool and (not extract_libraries or destination is not None),
+            'Library extraction requires an explicit private staging directory.')
     wanted, values, total = {NFT, *libraries}, {}, 0
     if destination is not None:
         require(destination.is_dir() and not destination.is_symlink() and not list(destination.iterdir()),
@@ -118,7 +120,11 @@ def subject(archive, libraries=(), *, destination=None):
                     reader = stream.extractfile(member)
                     require(reader is not None, 'Firewall userspace target is unreadable.')
                     checksum, size = hashlib.sha256(), 0
-                    target = (destination/'nft').open('xb') if destination is not None and name == NFT else None
+                    output = (destination/('nft' if name == NFT else name)
+                              if destination is not None and (name == NFT or extract_libraries) else None)
+                    if output is not None:
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                    target = output.open('xb') if output is not None else None
                     try:
                         with reader:
                             while block := reader.read(1024*1024):
@@ -131,7 +137,7 @@ def subject(archive, libraries=(), *, destination=None):
                         if target is not None:
                             target.close()
                     if target is not None:
-                        (destination/'nft').chmod(0o755)
+                        output.chmod(member.mode & 0o777)
                     values[name] = checksum.hexdigest()
                 stream.members.clear()
     except (OSError, EOFError, tarfile.TarError) as error:
