@@ -1,0 +1,104 @@
+name: Recover insufficient runner capacity
+on:
+  workflow_run:
+    workflows: [Release, Package qualification]
+    types: [completed]
+permissions: {}
+cache-mode: none
+concurrency:
+  group: runner-capacity-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.plan.outputs.eligible }}
+      archive: ${{ steps.plan.outputs.archive }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LANRITH_TOOLS_SHA: ${{ github.workflow_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - id: plan
+        run: python3 tools/scripts/retry-runner-capacity.py plan --output "$RUNNER_TEMP/capacity-record.json"
+      - id: upload
+        if: steps.plan.outputs.archive == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-capacity-plan
+          path: ${{ runner.temp }}/capacity-record.json
+          if-no-files-found: error
+          retention-days: 1
+  archive-plan:
+    needs: plan
+    if: needs.plan.outputs.archive == 'true'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.plan.outputs.artifact-id }}
+      topic: capacity-plan
+  retry:
+    needs: [plan, archive-plan]
+    if: needs.plan.outputs.eligible == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    outputs:
+      result-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LANRITH_TOOLS_SHA: ${{ github.workflow_sha }}
+      AUDIT_TAG: ${{ needs.archive-plan.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact-id }}
+          path: intent
+          merge-multiple: true
+      - name: Verify archived intent and unchanged source before one bounded retry
+        run: |
+          python3 tools/scripts/retry-runner-capacity.py execute --plan intent/capacity-record.json \
+            --audit-tag "$AUDIT_TAG" --output "$RUNNER_TEMP/capacity-record.json"
+      - id: upload
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-capacity-result
+          path: ${{ runner.temp }}/capacity-record.json
+          if-no-files-found: ignore
+          retention-days: 1
+  archive-result:
+    needs: retry
+    if: always() && needs.retry.outputs.result-id != ''
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.retry.outputs.result-id }}
+      topic: capacity-result

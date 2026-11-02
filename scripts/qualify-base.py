@@ -12,12 +12,8 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, document, file_record, read, require, unique
+from lanrith.assessment import REQUIREMENTS, REVIEWED_WORKFLOWS, validate_platform
 
-REQUIREMENTS = {'appropriate-platform', 'consistent-process', 'distributed-provenance',
-                'provenance-exists', 'provenance-authentic', 'provenance-unforgeable',
-                'hosted', 'isolated-signing', 'isolated-concurrent-builds',
-                'isolated-subsequent-builds', 'isolated-caches', 'isolated-remote-influence',
-                'external-parameters', 'security-practices'}
 CHECKS = {
     'tpm2-ab': {'factory-install-readback', 'secure-boot', 'dm-verity', 'tpm2-state-encryption',
         'recovery-enrollment', 'ssh-pam-administration', 'automatic-boot-observation',
@@ -56,6 +52,7 @@ def publish(path, data):
 
 
 def qualify(directory, project, environment, *, now=None):
+    assessment = validate_platform(project)
     now = now or datetime.datetime.now(datetime.timezone.utc)
     native = value(directory/'native-qualification.json')
     require(native.get('schema') == 1 and native.get('result') == 'pass' and
@@ -78,21 +75,6 @@ def qualify(directory, project, environment, *, now=None):
     require(storage.get('result') == 'pass' and storage.get('test') == 'factory-slot-expansion' and
             storage.get('initial_partitions') == 4 and storage.get('expanded_partitions') == 8,
             'Matching-builder signed storage expansion did not pass.')
-    assessment = value(project/'security/slsa-assessment.json')
-    require(assessment.get('schema') == 1 and assessment.get('specification') == 'SLSA v1.2' and
-            assessment.get('target') == 'Build L3' and assessment.get('result') == 'design-assessed' and
-            set(assessment.get('requirements', {})) == REQUIREMENTS and
-            all(item.get('result') == 'satisfied-by-design' and item.get('evidence')
-                for item in assessment['requirements'].values()),
-            'The build platform lacks a complete requirement assessment.')
-    workflows = assessment.get('reviewed_workflows', {})
-    require(set(workflows) == {'.github/workflows/build-base.yml', '.github/workflows/release.yml',
-                              '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
-                              '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
-                              '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'},
-            'The reviewed workflow set is incomplete.')
-    require(all(file_record(project/name)['sha256'] == expected for name, expected in workflows.items()),
-            'A build workflow changed after its platform requirement assessment.')
     security = value(directory/'security.json')
     require(security.get('production_qualified') is False and security.get('custom', {}).get('result') == 'pass' and
             security.get('inventory_sha256') == file_record(directory/'inventory.json')['sha256'],

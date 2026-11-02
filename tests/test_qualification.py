@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import traceback
 import unittest
@@ -18,6 +19,47 @@ spec.loader.exec_module(qualification)
 
 
 class QualificationTests(unittest.TestCase):
+    def copy_repository_assessment(self, project):
+        source = Path(__file__).resolve().parents[1]
+        shutil.copytree(source/'.github/workflows', project/'.github/workflows', dirs_exist_ok=True)
+        shutil.copyfile(source/'security/slsa-assessment.json', project/'security/slsa-assessment.json')
+
+    def test_actual_repository_assessment_reaches_local_native_qualification(self):
+        # Use the repository assessment and real workflow bytes. A synthetic
+        # catalog can repeat a stale qualifier list and conceal this mismatch.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory, project, now, _ = self.fixture(Path(temporary))
+            self.copy_repository_assessment(project)
+            self.assertFalse(qualification.qualify(directory, project, {}, now=now))
+            self.assertFalse(json.loads((directory/'security.json').read_text())['production_qualified'])
+
+    def test_assessment_errors_stop_before_native_evidence_is_read(self):
+        for alteration in ('missing-recovery', 'extra-workflow', 'recovery-drift', 'missing-requirement',
+                           'unsatisfied-requirement', 'missing-evidence', 'wrong-specification'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, _ = self.fixture(Path(temporary))
+                self.copy_repository_assessment(project)
+                path = project/'security/slsa-assessment.json'
+                assessment = json.loads(path.read_text())
+                if alteration == 'missing-recovery':
+                    del assessment['reviewed_workflows']['.github/workflows/retry-runner-capacity.yml']
+                elif alteration == 'extra-workflow':
+                    assessment['reviewed_workflows']['.github/workflows/unreviewed.yml'] = 'a'*64
+                elif alteration == 'recovery-drift':
+                    (project/'.github/workflows/retry-runner-capacity.yml').write_text('unreviewed authority')
+                elif alteration == 'missing-requirement':
+                    del assessment['requirements']['isolated-signing']
+                elif alteration == 'unsatisfied-requirement':
+                    assessment['requirements']['isolated-signing']['result'] = 'not-assessed'
+                elif alteration == 'missing-evidence':
+                    del assessment['requirements']['isolated-signing']['evidence']
+                else:
+                    assessment['specification'] = 'unreviewed-specification'
+                path.write_bytes(release.canonical(assessment))
+                with mock.patch.object(qualification, 'value', side_effect=AssertionError('Native evidence read')):
+                    with self.assertRaises(release.ReleaseError):
+                        qualification.qualify(directory, project, {}, now=now)
+
     def hosted_environment(self):
         return {'GITHUB_ACTIONS': 'true', 'GITHUB_REF': 'refs/heads/main',
             'GITHUB_REPOSITORY': 'Lanrith/lanrith', 'RUNNER_ENVIRONMENT': 'github-hosted',
@@ -44,10 +86,7 @@ class QualificationTests(unittest.TestCase):
         (directory/'storage-qualification.json').write_bytes(release.canonical({'schema': 1, 'result': 'pass',
             'test': 'factory-slot-expansion', 'initial_partitions': 4, 'expanded_partitions': 8}))
         workflows = {}
-        for name in ('.github/workflows/build-base.yml', '.github/workflows/release.yml',
-                     '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
-                     '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
-                     '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'):
+        for name in qualification.REVIEWED_WORKFLOWS:
             path = project/name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('synthetic workflow fixture')
