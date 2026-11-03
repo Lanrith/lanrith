@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "kind": "overnight-security-remediation-and-resolver-repair",
+  "recorded_at": "2026-11-03T08:25:12.423565+00:00",
+  "baseline_source": "dd6ae8081db4d32a835578e08632a6b2186fd1af",
+  "baseline_release": "v0.1.17",
+  "observed_failure": {
+    "root_updater": 41593450718,
+    "root_retained_assessment": 41594789506,
+    "router_updater": 41593545042,
+    "root_reason": "A genuine Linux kernel fix generated631 authenticated advisory reasons, but staging rejected the record against a separate100-reason limit. No PR was created.",
+    "router_reason": "GO-2026-5932 names unmaintained x/crypto/openpgp. Its only recorded module fix is a pseudoversion; the resolver rejected the whole module inventory before the mandatory source scanner could establish applicability."
+  },
+  "kernel_fix": {
+    "before": "6.12.113-1",
+    "required": "6.12.115-2",
+    "advisory_count": 631,
+    "snapshot": "20261103T070000Z",
+    "candidate_id": "28f4ce127332b86428d8edd766ed807e9303f259930dbeb8ac0267303d6a98f1",
+    "input_reconstruction": "Both changed snapshot-input hashes exactly match the original hosted candidate; its archive-evidence signature verified against the trusted Main source.",
+    "published_source_audit": "https://github.com/Lanrith/lanrith/releases/tag/audit-proposal-41593450718-1"
+  },
+  "repairs": {
+    "candidate_budget": {
+      "changed_files": 30,
+      "advisory_reasons": 2048,
+      "serialized_bytes": 2097152,
+      "control": "Producer and every existing consumer validate one shared candidate schema and budgets. Every advisory and its evidence hash remains bound to the candidate identity; no truncation or skipped checks."
+    },
+    "go_advisory_applicability": "A migration-only advisory may leave module inventory unchanged only when every affected package is absent from a complete test-inclusive Go import graph. A successful mandatory govulncheck source scan is still required. Imported or unknown affected packages, malformed/empty import graphs and scanner failures block; prereleases and dependency migrations are never selected automatically.",
+    "github_descriptions": "Use one bounded PR/issue reason summary for large batches; keep every advisory ID and evidence hash in the content-bound candidate and signed archive."
+  },
+  "validation": {
+    "local_suite": {
+      "tests": 921,
+      "passed": 906,
+      "existing_environment_skips": 15,
+      "result": "pass"
+    },
+    "regressions": [
+      "The real631-advisory staging case fails before the repair and passes afterward.",
+      "Old OpenPGP inventory handling fails before source applicability is checked.",
+      "Altered advisory hashes invalidate candidate identity.",
+      "Reason-count/serialized-byte limits remain enforced by producer and consumer.",
+      "Imported/unknown/empty/malformed applicability and source-scan failures remain blocked."
+    ],
+    "local_real_go_import_replay": "Unavailable in this environment: the installed Go shim reports repository root not found. No successful real local Go replay is claimed. Actual hosted router resolution remains required after deploying the independently verified shared source."
+  },
+  "required_release_validation": "Fresh complete current-head package/native/security qualification and actual independent human approval. Then verify the immutable release and fresh signed assessment before closing security issues.",
+  "router_deployment_followup": "After the new root source has a verified immutable production release, update router-policy-agent shared maintenance source pins and its manifest under a separate fully qualified independently reviewed workflow-control PR. Do not update discovery-bridge solely for version parity.",
+  "paid_ai": false,
+  "security_validation_bypassed": false,
+  "human_review_required": true,
+  "production_remediation_completed": false
+}
