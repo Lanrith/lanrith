@@ -4,10 +4,14 @@ from .common import canonical, digest, document, now, require, safe_path, sha, t
 
 
 CANDIDATE = 'security/update-candidate.json'
+MAX_CHANGES = 30
+MAX_REASONS = 2048
+MAX_CANDIDATE_BYTES = 2 * 1024 * 1024
 
 
 def candidate(repo, base, policy, before, after, reasons, producer, *, requires_human=False):
-    require(reasons and isinstance(reasons, list), 'An automated change needs a recorded reason.')
+    require(isinstance(reasons, list) and 0 < len(reasons) <= MAX_REASONS,
+            'Candidate advisory count exceeds the bounded reason budget or is empty.')
     changes = {}
     for path in sorted(set(before) | set(after)):
         safe_path(path)
@@ -18,10 +22,10 @@ def candidate(repo, base, policy, before, after, reasons, producer, *, requires_
     require(changes, 'There are no changed security inputs to propose.')
     subject = {'repository': repo, 'base_sha': sha(base), 'changes': changes, 'reasons': reasons,
                'policy_sha256': digest(policy), 'producer_sha': sha(producer), 'requires_human': requires_human}
-    return {'schema': 1, 'kind': 'security-update-candidate', 'created_at': now(),
+    return validate_candidate({'schema': 1, 'kind': 'security-update-candidate', 'created_at': now(),
             'candidate_id': digest(canonical(subject)),
             'remediation_id': 'security-'+digest(canonical(sorted({r['id'] for r in reasons})))[:20],
-            **subject}
+            **subject})
 
 
 def validate_candidate(record):
@@ -29,12 +33,13 @@ def validate_candidate(record):
         'schema', 'kind', 'created_at', 'candidate_id', 'remediation_id', 'repository',
         'base_sha', 'changes', 'reasons', 'policy_sha256', 'producer_sha', 'requires_human'}, 'Candidate record schema differs.')
     require(record['schema'] == 1 and record['kind'] == 'security-update-candidate', 'Unknown candidate record.')
+    require(len(canonical(record)) <= MAX_CANDIDATE_BYTES, 'Candidate record exceeds its bounded byte budget.')
     sha(record['base_sha'])
     sha(record['producer_sha'])
     timestamp(record['created_at'])
     require(type(record['requires_human']) is bool, 'Candidate review requirement must be explicit.')
-    require(isinstance(record['changes'], dict) and 0 < len(record['changes']) <= 30 and
-            isinstance(record['reasons'], list) and 0 < len(record['reasons']) <= 100,
+    require(isinstance(record['changes'], dict) and 0 < len(record['changes']) <= MAX_CHANGES and
+            isinstance(record['reasons'], list) and 0 < len(record['reasons']) <= MAX_REASONS,
             'Candidate change or reason coverage is invalid.')
     for path, change in record['changes'].items():
         safe_path(path)

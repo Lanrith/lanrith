@@ -107,6 +107,30 @@ def collect(repo, source, output, version):
     return record
 
 
+def reason_lines(record):
+    """Keep GitHub descriptions bounded while retaining the full signed catalog."""
+    lines = ['- '+r['id']+': '+r['package']+' '+r['installed']+' → '+r['fixed']+' ('+r['source']+').' for r in record['reasons']]
+    if len('\n'.join(lines).encode()) <= 24000:
+        return lines
+    groups = {}
+    for r in record['reasons']:
+        key = (r['package'], r['installed'], r['fixed'], r['source'])
+        groups[key] = groups.get(key, 0)+1
+    lines = [str(len(record['reasons']))+' advisory records across '+str(len(groups))+' package/version groups:','']
+    displayed = 0
+    for (package, installed, fixed, source), count in sorted(groups.items()):
+        row = '- '+package[:120]+' '+installed[:120]+' → '+fixed[:120]+': '+str(count)+' advisory records ('+source[:300]+').'
+        if len(('\n'.join(lines)+'\n'+row).encode()) > 20000:
+            break
+        lines.append(row)
+        displayed += 1
+    if displayed < len(groups):
+        lines.append(str(len(groups)-displayed)+' additional groups are listed in the full catalog.')
+    lines += ['', 'Complete advisory IDs, evidence hashes and file changes are retained in `'+evidence.CANDIDATE+
+              '` for candidate `'+record['candidate_id']+'` and in its signed proposal archive.']
+    return lines
+
+
 def proposal_state(repo, candidate_path, body_path):
     record = evidence.validate_candidate(evidence.read(candidate_path))
     policy = document(contents(repo, 'security/update-policy.json', record['base_sha']))
@@ -119,8 +143,7 @@ def proposal_state(repo, candidate_path, body_path):
     lines = ['Security remediation `'+record['remediation_id']+'`.', '',
         'Candidate: `'+record['candidate_id']+'`', 'Base: `'+record['base_sha']+'`',
         'Policy: `'+record['policy_sha256']+'`', '', 'Reasons:', '']
-    for r in record['reasons']:
-        lines.append('- '+r['id']+': '+r['package']+' '+r['installed']+' → '+r['fixed']+' ('+r['source']+').')
+    lines += reason_lines(record)
     lines += ['', 'Approval: **'+('independent human review required' if record['requires_human'] else 'eligible for independent App review after qualification')+'**.']
     lines += ['', 'This proposal needs full qualification and independent approval. The candidate record binds the reasons to every changed file digest.']
     body_path.write_text('\n'.join(lines)+'\n')
@@ -152,7 +175,7 @@ def track(repo, candidate_path, pr=None):
     matches = [i for i in existing if i['title'] == title and 'pull_request' not in i]
     lines = ['Security remediation `'+record['remediation_id']+'`.', '', 'State: **proposed; not yet released**.', '',
              'Candidate: `'+record['candidate_id']+'`', 'Base: `'+record['base_sha']+'`', '', 'Reasons:', '']
-    lines += ['- '+r['id']+': '+r['package']+' '+r['installed']+' → '+r['fixed']+' ('+r['source']+').' for r in record['reasons']]
+    lines += reason_lines(record)
     lines += ['', 'Validation and approval must cover the exact candidate before merge. Completion requires verified publication.',
               'Audit run: https://github.com/'+repo+'/actions/runs/'+os.environ['GITHUB_RUN_ID']]
     if pr:
