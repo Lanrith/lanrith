@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
-from lanrith import advisories, build_cache, embedded
+from lanrith import advisories, build_cache, build_resources, embedded
 
 
 def run(*arguments, **kwargs):
@@ -109,6 +109,7 @@ def main():
     tag = 'localhost/lanrith-alloy-builder:'+identity
     command = [args.engine, 'build', '--pull', '--platform', 'linux/amd64', '--file',
                str(definition/'Containerfile'), '--tag', tag]
+    command += build_resources.arguments(args.engine)
     if args.engine == 'docker':
         command += build_cache.image_arguments('alloy')
     for name, value in sorted(image_inputs.items()):
@@ -122,6 +123,7 @@ def main():
         try:
             probe = run(args.engine, 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
                 '--security-opt', 'no-new-privileges', '--user', str(os.getuid())+':'+str(os.getgid()),
+                *build_resources.arguments(args.engine),
                 '-v', str(ROOT)+':/implementation:ro', tag, 'python3',
                 '/implementation/scripts/compiler-identity.py', capture_output=True, text=True,
                 timeout=180).stdout.strip()
@@ -134,11 +136,14 @@ def main():
             run(scanner, '-version', capture_output=True, text=True).stdout, 'Unexpected Alloy scanner.')
     command = [args.engine, 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                '--user', str(os.getuid())+':'+str(os.getgid())]
+    command += build_resources.arguments(args.engine)
     if args.engine == 'podman':
         command += ['--userns=keep-id']
-    for name, value in {'HOME': '/work/home', 'GOCACHE': '/work/cache', 'GOMODCACHE': '/work/modules',
+    environment = {'HOME': '/work/home', 'GOCACHE': '/work/cache', 'GOMODCACHE': '/work/modules',
                         'GOPATH': '/work/gopath', 'GOTMPDIR': '/work/tmp', 'GOTOOLCHAIN': 'local',
-                        'GOENV': 'off', 'GOMAXPROCS': '2', 'GOMEMLIMIT': '4GiB'}.items():
+                        'GOENV': 'off', 'GOMAXPROCS': '2', 'GOMEMLIMIT': '4GiB'}
+    environment.update(build_resources.compiler_environment())
+    for name, value in environment.items():
         command += ['--env', name+'='+value]
     for name in ('home', 'cache', 'modules', 'gopath', 'tmp'):
         if not args.resume:
