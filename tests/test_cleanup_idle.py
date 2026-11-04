@@ -22,6 +22,7 @@ class IdleCleanupTests(unittest.TestCase):
         artifacts=[{'id':n,'name':name,'size_in_bytes':100,'expired':False,'workflow_run':{'id':n}}
                    for n,name in enumerate(('cleanup-plan','cleanup-result','attested-maintenance-cleanup-1','qualified-release'),1)]
         def get(endpoint,**kwargs):
+            if '/actions/caches?' in endpoint: return [{'total_count': 0, 'actions_caches': []}]
             if kwargs.get('paginate'):return [{'artifacts':artifacts}]
             return {'name':'Release' if endpoint.endswith('/4') else 'Clean completed Actions handoffs',
                     'status':'completed','updated_at':(clock-datetime.timedelta(hours=3)).isoformat()}

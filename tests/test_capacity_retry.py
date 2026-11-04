@@ -279,6 +279,7 @@ class CapacityCleanupTests(unittest.TestCase):
         names=['runner-capacity-plan','runner-capacity-result','attested-maintenance-capacity-plan-1','attested-maintenance-capacity-result-1','runner-capacity-plan','private-authority']
         artifacts=[{'id':i,'name':name,'size_in_bytes':1024,'expired':False,'workflow_run':{'id':i}} for i,name in enumerate(names,1)]
         def get(endpoint,**kwargs):
+            if '/actions/caches?' in endpoint: return [{'total_count': 0, 'actions_caches': []}]
             if kwargs.get('paginate'):return [{'artifacts':artifacts}]
             return {'name':'Recover insufficient runner capacity','status':'in_progress' if endpoint.endswith('/5') else 'completed',
                     'updated_at':(clock-datetime.timedelta(hours=3)).isoformat()}

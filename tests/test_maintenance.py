@@ -197,6 +197,7 @@ class CleanupTests(unittest.TestCase):
         runs[2]['status'] = 'in_progress'
         runs[4]['updated_at'] = clock.isoformat()
         def get(endpoint, **kwargs):
+            if '/actions/caches?' in endpoint: return [{'total_count': 0, 'actions_caches': []}]
             if kwargs.get('paginate'):
                 return [{'artifacts': artifacts}]
             return runs[int(endpoint.rsplit('/', 1)[-1])]
