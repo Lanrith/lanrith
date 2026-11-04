@@ -101,6 +101,25 @@ def render(value):
             for name, content in value.get('runtime', {}).get('trust', {}).items()}
 
 
+def account_registry(content, kind):
+    """Parse bounded admitted passwd/group bytes without resolving host users."""
+    require(kind in ('passwd', 'group') and isinstance(content, bytes) and
+            0 < len(content) <= 1024*1024 and b'\x00' not in content,
+            'Admitted account registry exceeds its boundary.')
+    try:
+        rows = [line.split(':') for line in content.decode('ascii').splitlines()]
+    except UnicodeError:
+        raise ReleaseError('Admitted account registry is not ASCII.') from None
+    columns = 7 if kind == 'passwd' else 4
+    require(rows and all(len(row) == columns and ACCOUNT.fullmatch(row[0]) and
+                        row[2].isascii() and row[2].isdecimal() and len(row[2]) <= 10 and
+                        (kind != 'passwd' or row[3].isascii() and row[3].isdecimal() and
+                         len(row[3]) <= 10) for row in rows),
+            'Malformed admitted account registry.')
+    require(len({row[0] for row in rows}) == len(rows), 'Ambiguous admitted account registry.')
+    return rows
+
+
 def verify_accounts(value, accounts, overlay):
     """Assert the effective admitted registry without remapping IDs or state."""
     assertions = value.get('runtime', {}).get('service_identities', {})
@@ -108,23 +127,11 @@ def verify_accounts(value, accounts, overlay):
         return
     require(set(accounts) == {'passwd', 'group'}, 'Admitted account registry is missing.')
     registries = {}
-    for kind, columns in (('passwd', 7), ('group', 4)):
+    for kind in ('passwd', 'group'):
         target = overlay/'etc'/kind
         require(not target.is_symlink(), 'Account assertion cannot follow an overlay symlink.')
         content = target.read_bytes() if target.is_file() else accounts[kind]
-        require(0 < len(content) <= 1024*1024 and b'\x00' not in content,
-                'Admitted account registry exceeds its boundary.')
-        try:
-            rows = [line.split(':') for line in content.decode('ascii').splitlines()]
-        except UnicodeError:
-            raise ReleaseError('Admitted account registry is not ASCII.') from None
-        require(rows and all(len(row) == columns and ACCOUNT.fullmatch(row[0]) and
-                            row[2].isascii() and row[2].isdecimal() and len(row[2]) <= 10 and
-                            (kind != 'passwd' or row[3].isascii() and row[3].isdecimal() and
-                             len(row[3]) <= 10) for row in rows),
-                'Malformed admitted account registry.')
-        require(len({row[0] for row in rows}) == len(rows), 'Ambiguous admitted account registry.')
-        registries[kind] = rows
+        registries[kind] = account_registry(content, kind)
     for name, assertion in assertions.items():
         matches = [row for row in registries['passwd'] if row[0] == name]
         require(len(matches) == 1, 'An asserted service account is missing from the admitted image.')

@@ -8,7 +8,7 @@ import hashlib
 import ipaddress as ip
 from urllib.parse import urlsplit
 
-from . import access, bindings, integrations, intent, routing, translation, service_plane
+from . import access, bindings, dhcp4, integrations, intent, routing, translation, service_plane
 from .release import canonical, require
 
 
@@ -67,6 +67,28 @@ def baseline(value, retained_allocations=None):
     """Keep ordered owner intent separate from short-lived delegated grants."""
     policy = value.get('identity', {}).get('policy', {})
     require(policy.get('enabled', False), 'Policy helper contract requires an enabled identity policy.')
+    return _baseline(value, retained_allocations)
+
+
+def bounded_baseline(value, accounts, retained_allocations=None):
+    """Construct the candidate paired backend input independently of directory.
+
+    The installed backend selection is unchanged. The build caller supplies the
+    effective admitted image registry after account overlays; nothing reads the
+    owner configuration or account registry at runtime for this contract.
+    """
+    result = _baseline(value, retained_allocations)
+    scopes = dhcp4.host_scopes(value, accounts)
+    if scopes:
+        result['network_model']['host_dhcp4'] = scopes
+        result['generation'] = 'pending'
+        result['generation'] = hashlib.sha256(canonical(result)).hexdigest()
+    return result
+
+
+def _baseline(value, retained_allocations):
+    policy = value.get('identity', {}).get('policy', {})
+    managed = policy.get('networks', []) if policy.get('enabled', False) else []
     zones = []
     router = []
     management = []
@@ -126,7 +148,7 @@ def baseline(value, retained_allocations=None):
                   for name, entry in n46['mappings'].items()] if n46 else [],
         'nat46_pools': [n46['pool']] if n46 else [],
         'lease_seconds': 90, 'refresh_seconds': 30, 'maximum_devices': 4096, 'maximum_tuples': 16384,
-        'network_model': {'schema_version': 1, 'managed_networks': policy['networks'],
+        'network_model': {'schema_version': 1, 'managed_networks': managed,
                           'uplink_interface': value['hardware']['interfaces'][value['uplink']['interface']]['name'],
                           'rules': rules, 'core_services': core_services(value),
                           'core_egress': service_plane.egress(value),
@@ -137,7 +159,7 @@ def baseline(value, retained_allocations=None):
     }
     if n46:
         result['network_model']['nat46_prefix'] = n46['prefix']
-    require(all(zone['networks'] for zone in zones) and all(p in {n['role'] for n in zones} for p in policy['networks']),
+    require(all(zone['networks'] for zone in zones) and all(p in {n['role'] for n in zones} for p in managed),
             'Policy helper needs an addressed ordinary network for each managed boundary.')
     result['generation'] = hashlib.sha256(canonical(result)).hexdigest()
     return result

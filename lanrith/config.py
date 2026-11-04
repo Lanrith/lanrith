@@ -14,6 +14,7 @@ import yaml
 from .release import canonical, require, ReleaseError
 from . import access as access_rules
 from . import fancontrol_config
+from . import dhcp4 as dhcp4_config
 from . import firewall, hardware_config as hardware_policy, intent, integrations, service_plane, routing, authoritative, nat46, nat64, translation, ids, metrics, bindings, runtime_plan, radius, logs, discovery
 
 
@@ -464,20 +465,7 @@ def render(value, *, target_facts=None, retained_allocations=None):
     files['etc/hosts'] += directory_config.hosts(value)
     files['etc/nftables.conf'] = firewall.render(value)
     if value['services'].get('dhcp4', {}).get('enabled'):
-        scopes = []
-        for key, network in networks.items():
-            if 'dhcp4' not in network:
-                continue
-            address = next(ipaddress.ip_interface(a) for a in network['addresses'] if ':' not in a)
-            scopes.append({'id': network['dhcp4']['id'], 'subnet': str(address.network), 'interface': network['name'],
-                           'pools': [{'pool': pool} for pool in network['dhcp4']['pools']],
-                           'reservations': [{('hw-address' if k == 'mac' else 'ip-address' if k == 'address' else k): v
-                                             for k, v in entry.items()} for entry in network['dhcp4'].get('reservations', [])],
-                           'option-data': [{'name': 'routers', 'data': str(address.ip)}] +
-                                          ([{'name': 'domain-name-servers', 'data': intent.service_addresses(value, 'dns')[0]}] if network.get('dns') else []) +
-                                          ([{'name': 'ntp-servers', 'data': intent.service_addresses(value, 'ntp')[0]}] if network.get('ntp') else []) +
-                                          ([{'name': 'domain-name', 'data': value['services']['dns']['domain']}]
-                                           if network.get('dns') and value['services']['dns'].get('domain') else [])})
+        scopes = dhcp4_config.scopes(value)
         dhcp4 = {
             'interfaces-config': {'interfaces': [scope['interface'] for scope in scopes]},
             'lease-database': {'type': 'memfile', 'persist': True, 'name': '/var/lib/kea/kea-leases4.csv'},
