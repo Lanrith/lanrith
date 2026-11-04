@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "kind": "bounded-automatic-build-cache-retention",
+  "created_at": "2026-11-04T08:46:08.548569+00:00",
+  "base_commit": "035f0f69466b4de893312de955a30fab947cbd61",
+  "reason": "The Nov4 inspection found seven image-cache generations using11561143827 bytes while scheduled artifact cleanup could see no cache work. Five obsolete caches were safely pruned manually; add the same bounded retention to the existing hourly signed cleanup plan/result so it does not recur.",
+  "observed_incident": "https://github.com/Lanrith/lanrith/releases/tag/audit-overnight-verified-20261104T075843Z",
+  "manual_cleanup_intent": "https://github.com/Lanrith/lanrith/releases/tag/audit-cache-prune-plan-20261104T075337Z",
+  "implementation": "Only the Root Main lanrith-build-v1-Linux-X64 namespace is managed. Keep the newest cache for each of the latest two successful release sources, protect two-hour access and one 24-hour failed-release cache, and limit deletion to20 entries per run. Other repositories, branches and keys are excluded. Both planning and deletion check for active/queued workflows; deletion rechecks producers, immutable cache metadata and the retained floor. A new consumer racing the final check can get a cold-cache miss; cache authentication and all build/security gates remain enforced.",
+  "traceability": "Cache-only work activates the existing has-artifacts gate. The nested cache plan is signed and immutably archived before the existing restricted Actions-write job executes it. Actual deletions, absences, safe deferrals and any partial failure remain in the signed result. Empty cleanup still uploads and publishes nothing.",
+  "security_note": {
+    "risk_domain": "CI/cache API authorization and storage exhaustion",
+    "assets": "Current successful cache generations, active consumers, retained retry data, source/release evidence and credentials",
+    "trust_boundary": "GitHub cache metadata and downloaded cleanup plans are independently revalidated before each scoped deletion; untrusted cache contents are never restored or executed.",
+    "abuse_cases": [
+      "Forged cache IDs or altered policy must not delete current cache generations.",
+      "Foreign branches, unknown keys, missing producer identity or incomplete pagination must not authorize deletion.",
+      "A new consumer, access or rerun after planning must stop or defer the affected deletion.",
+      "External cache expiry must be recorded as absence, not a claimed deletion."
+    ],
+    "controls": "Allowlisted repository/ref/key and actual completed producer; two retained successful sources; fixed policy/budgets; fresh plan; per-deletion metadata and consumer rechecks; no new token permission.",
+    "validation": "Seventeen negative/positive retention tests, complete938-test suite and actual live read-only planner; full hosted/native checks remain mandatory.",
+    "residual_risk": "A consumer starting after the last recheck can receive a cache miss and rebuild. Unknown or active work is preserved even if that temporarily retains more cache storage."
+  },
+  "local_validation": {
+    "schema": 1,
+    "kind": "bounded-build-cache-retention-local-validation",
+    "validated_at": "2026-11-04T08:46:08.548569+00:00",
+    "result": "pass",
+    "suite": {
+      "tests": 938,
+      "passed": 923,
+      "existing_environment_skips": 15,
+      "result": "pass"
+    },
+    "cache_retention_tests": 17,
+    "assessed_workflows_changed": false,
+    "new_dependency_or_credential": false,
+    "source_boundary": "pass",
+    "workflow_invariants": "pass",
+    "validation_log_sha256": {
+      "cache-retention-full-python-suite.log": "4ba0e6864b3e32e804673b8d05fef62ea81f43afc67340ed29151b019916b1cc",
+      "cache-retention-targeted-tests.log": "dbb66996a81b935e8fc85bd80e23a0f51531f72abf189b389c72773865fe1fd9",
+      "cache-producer-invalid-metadata-before.log": "de3513c4f64d0fba3c7f2fd90b4292e3e485b32b38e894ebb71bb96eca62f7ea",
+      "cache-retention-live-dry-run.json": "d8dcb4be7cc8dea065c8bbb0316be1404e964ea6d4add5a84e1587e11b398aff"
+    },
+    "full_hosted_native_qualification": "required, not yet run",
+    "independent_human_source_approval": "required after all hosted CI passes"
+  },
+  "approval": "Fresh actual independent human review of the final source after all required hosted builds pass. No previous approval or App source approval is reused.",
+  "deployment_status": "Prepared source only; no protected merge, live scheduled cache deletion or new release is claimed.",
+  "paid_ai": false,
+  "protection_bypass": false
+}

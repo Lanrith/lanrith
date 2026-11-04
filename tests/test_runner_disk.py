@@ -148,6 +148,7 @@ class RunnerDiskHandoffTests(unittest.TestCase):
         artifacts=[{'id':i,'name':name,'size_in_bytes':1024,'expired':False,'workflow_run':{'id':i}}
                    for i,name in enumerate(('runner-disk-packages-1','runner-disk-native-1','runner-disk-private-key-1'),1)]
         def get(endpoint,**kwargs):
+            if '/actions/caches?' in endpoint: return [{'total_count': 0, 'actions_caches': []}]
             if kwargs.get('paginate'):return [{'artifacts':artifacts}]
             return {'name':'Release','status':'completed','updated_at':(clock-datetime.timedelta(hours=3)).isoformat()}
         result=cleanup.plan('Lanrith/lanrith',get=get,clock=clock)

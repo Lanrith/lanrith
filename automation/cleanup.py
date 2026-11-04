@@ -4,6 +4,7 @@ import datetime
 import re
 
 from .common import api, canonical, digest, now, repository, require, timestamp
+from . import cache_cleanup
 
 
 TEMPORARY = re.compile(r'^(?:unsigned-package-(?:qualification|stage)|qualified-base|attested-base|package-stage|'
@@ -63,6 +64,7 @@ def plan(repo, *, get=api, clock=None):
     return {'schema': 1, 'kind': 'temporary-artifact-cleanup', 'repository': repo, 'created_at': clock.isoformat(),
             'reason': 'Completed workflow handoffs and duplicate build outputs; durable release assets are excluded.',
             'bytes': sum(a['size_in_bytes'] for a in result), 'artifacts': result,
+            'build_caches': cache_cleanup.plan(repo, get=get, clock=clock),
             'retained_retry_artifacts': [{'id':a['id'],'name':a['name'],'run_id':a['workflow_run']['id'],
                 'size_in_bytes':a['size_in_bytes'],'reason':'Latest failed release final attested bundle; maximum one day.'}
                 for a in retained]}
@@ -96,6 +98,11 @@ def execute(record, *, progress=None):
             api('repos/'+record['repository']+'/actions/artifacts/'+str(artifact['id']), method='DELETE')
             result['deleted'].append(artifact['id'])
             save()
+        if record.get('build_caches'):
+            def cache_progress(value):
+                result['build_caches'] = value
+                save()
+            result['build_caches'] = cache_cleanup.execute(record['build_caches'], request=api, progress=cache_progress)
         result['result'] = 'pass'
     except Exception as error:
         result['result'] = 'blocked'

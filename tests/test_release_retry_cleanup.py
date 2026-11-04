@@ -21,6 +21,7 @@ class ReleaseRetryCleanupTests(unittest.TestCase):
 
     def plan(self):
         def get(endpoint, **kwargs):
+            if '/actions/caches?' in endpoint: return [{'total_count': 0, 'actions_caches': []}]
             if kwargs.get('paginate'): return [{'artifacts':self.artifacts}]
             if '/actions/workflows/release.yml/runs?' in endpoint:
                 return {'workflow_runs':[self.latest]}

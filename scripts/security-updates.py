@@ -103,9 +103,11 @@ def main():
         record = cleanup.plan(repo)
         evidence.write(args.output, record)
         print(str(len(record['artifacts']))+' completed artifacts; '+str(record['bytes'])+' bytes.')
+        caches = record.get('build_caches', {}).get('caches', [])
+        print(str(len(caches))+' obsolete build caches; '+str(sum(c['size_in_bytes'] for c in caches))+' bytes.')
         if os.environ.get('GITHUB_OUTPUT'):
             with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
-                stream.write('has-artifacts='+str(bool(record['artifacts'])).lower()+'\n')
+                stream.write('has-artifacts='+str(bool(record['artifacts'] or caches)).lower()+'\n')
         if args.apply:
             cleanup.execute(record)
     elif args.command == 'stage':
