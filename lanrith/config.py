@@ -468,6 +468,11 @@ def render(value, *, target_facts=None, retained_allocations=None):
         scopes = dhcp4_config.scopes(value)
         dhcp4 = {
             'interfaces-config': {'interfaces': [scope['interface'] for scope in scopes]},
+            # Kea's automatic CPU-sized pool can exceed the fixed service task
+            # ceiling on large hosts. Bound workers and queued packets instead
+            # of depending on the build machine or increasing that ceiling.
+            'multi-threading': {'enable-multi-threading': True, 'thread-pool-size': 2,
+                                'packet-queue-size': 64},
             'lease-database': {'type': 'memfile', 'persist': True, 'name': '/var/lib/kea/kea-leases4.csv'},
             'valid-lifetime': 3600, 'subnet4': scopes}
         if value.get('identity', {}).get('radius', {}).get('enabled', False):

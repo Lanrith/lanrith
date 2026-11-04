@@ -27,6 +27,17 @@ def static_minimal():
 
 
 class HostServiceBuildTests(unittest.TestCase):
+    def test_native_kea_workers_and_queue_fit_the_fixed_service_envelope(self):
+        value = config.normalize(static_minimal())
+        native = json.loads(config.render(value)['etc/kea/kea-dhcp4.conf'])['Dhcp4']
+        threading = native['multi-threading']
+        unit = (ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/30-lanrith-hardening.conf').read_text()
+        task_limit = int(next(line.split('=', 1)[1] for line in unit.splitlines() if line.startswith('TasksMax=')))
+        self.assertIs(threading['enable-multi-threading'], True)
+        self.assertIs(type(threading['thread-pool-size']), int)
+        self.assertTrue(1 <= threading['thread-pool-size'] <= task_limit-16)
+        self.assertTrue(1 <= threading['packet-queue-size'] <= 1024)
+
     def test_minimal_candidate_has_no_directory_dependency(self):
         value = config.normalize(static_minimal())
         result = policy_agent.bounded_baseline(value, ACCOUNTS)
