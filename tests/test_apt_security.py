@@ -84,15 +84,17 @@ class AptSecurityTests(unittest.TestCase):
     def test_stage_identity_covers_patch_binaries_script_and_lock_version(self):
         context=self.root/'context';context.mkdir()
         def download(item,destination):destination.write_bytes(item['sha256'].encode())
-        with patch.object(security,'download',side_effect=download):
+        with patch.object(security,'download',side_effect=download), patch.object(security.frozen_apt,'repository',return_value=(b'signed fixture',b'index fixture',{})):
             identity=security.stage(ROOT,context,'trixie')
             self.assertEqual(len(identity),64)
             names={p.name for p in (context/'lanrith-apt-bootstrap').iterdir()}
             self.assertTrue({'install.sh','version','distribution','SHA256SUMS','apt-utils_3.0.4_amd64.deb'}<=names)
             mirrors=(context/'lanrith-apt-bootstrap/debian.mirrors').read_text()
-            self.assertEqual(len(mirrors.splitlines()),2)
-            self.assertIn('https://snapshot.debian.org/archive/debian/20261103T070000Z/\tpriority:1',mirrors)
-            self.assertIn('https://snapshot-cloudflare.debian.org/archive/debian/20261103T070000Z/\tpriority:2',mirrors)
+            self.assertEqual(len(mirrors.splitlines()),4)
+            self.assertIn('file:/etc/apt/lanrith-repositories/debian/\tpriority:1 type:index',mirrors)
+            self.assertIn('https://deb.debian.org/debian/\tpriority:2 type:deb',mirrors)
+            self.assertIn('https://snapshot.debian.org/archive/debian/20261103T070000Z/\tpriority:3 type:deb',mirrors)
+            self.assertIn('https://snapshot-cloudflare.debian.org/archive/debian/20261103T070000Z/\tpriority:4 type:deb',mirrors)
             self.assertIn('mirror+file:',(context/'lanrith-apt-bootstrap/sources.list').read_text())
             self.assertIn('Pin: release o=Debian',(context/'lanrith-apt-bootstrap/snapshot.pref').read_text())
             with self.assertRaises(ReleaseError):security.stage(ROOT,context,'trixie')
@@ -126,8 +128,28 @@ class HostedAptSecurityTests(unittest.TestCase):
                 context=Path(temporary);security.stage(ROOT,context,distribution)
                 tag='lanrith-apt-security-probe:'+uuid.uuid4().hex
                 try:
-                    (context/'Dockerfile').write_text('FROM '+image+'\nCOPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap\nRUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh\nRUN apt-get update && apt-get install --yes --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*\n')
+                    (context/'Dockerfile').write_text('FROM '+image+'\nCOPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap\nRUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh\nRUN apt-get update && apt-get install --yes --no-install-recommends python3 ca-certificates && rm -rf /var/lib/apt/lists/*\n')
                     subprocess.run(['docker','build','--memory','2g','--tag',tag,str(context)],check=True,timeout=300)
+                    subprocess.run(['docker','run','--rm','--network','none',tag,'sh','-c',
+                        '/bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh '+
+                        inputs['DEBIAN_BOOKWORM_SNAPSHOT' if distribution=='bookworm' else 'DEBIAN_SNAPSHOT']+' '+
+                        inputs['DEBIAN_BOOKWORM_SECURITY_SNAPSHOT' if distribution=='bookworm' else 'DEBIAN_SECURITY_SNAPSHOT']+
+                        ' && apt-get update'],check=True,timeout=120)
+                    # Corrupt only the signature in a fresh isolated container.
+                    # Controller payload hashing must never replace APT's PGP gate.
+                    configure='/bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh '+inputs['DEBIAN_BOOKWORM_SNAPSHOT' if distribution=='bookworm' else 'DEBIAN_SNAPSHOT']+' '+inputs['DEBIAN_BOOKWORM_SECURITY_SNAPSHOT' if distribution=='bookworm' else 'DEBIAN_SECURITY_SNAPSHOT']
+                    corrupt="import hashlib;from pathlib import Path;p=Path('/etc/apt/lanrith-repositories/debian/dists/"+distribution+"/InRelease');p.write_bytes(p.read_bytes().replace(b'-----BEGIN PGP SIGNATURE-----',b'-----BEGIN PGP SIGNATURE-----\\n\\nAAAA',1));Path('/etc/apt/lanrith-repositories/debian/inrelease.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\\n')"
+                    negative=subprocess.run(['docker','run','--rm','--network','none',tag,'sh','-c',
+                        configure+' && python3 -c '+__import__('shlex').quote(corrupt)+' && apt-get update'],capture_output=True,text=True,timeout=120)
+                    self.assertNotEqual(negative.returncode,0,'APT accepted corrupted archive signature metadata.')
+                    self.assertTrue(any(word in (negative.stdout+negative.stderr).lower() for word in
+                        ('gpg','signature','not signed','sqv')),'Rejection did not exercise the archive signature gate.')
+                    substitute="from pathlib import Path;p=next(Path('/var/lib/apt/lists').glob('*debian.mirrors_dists_"+distribution+"_InRelease'));p.write_bytes(Path('/etc/apt/lanrith-repositories/debian-security/dists/"+distribution+"-security/InRelease').read_bytes());print('SIGNED-REPOSITORY-SUBSTITUTED',flush=True)"
+                    changed=subprocess.run(['docker','run','--rm','--network','none',tag,'sh','-c',
+                        configure+' && apt-get update && python3 -c '+__import__('shlex').quote(substitute)+
+                        ' && /bin/sh /etc/apt/verify-lanrith-snapshots'],capture_output=True,text=True,timeout=120)
+                    self.assertIn('SIGNED-REPOSITORY-SUBSTITUTED',changed.stdout,'The replacement fixture did not reach the metadata verification hook.')
+                    self.assertEqual(changed.returncode,1,'A different signed repository replaced the reviewed package universe.')
                     subprocess.run(['docker','run','--rm','--network','none','--memory','512m','--pids-limit','256',
                         '--user','1000:1000','--cap-drop','ALL','--security-opt','no-new-privileges','--env','LANRITH_APT_SECURITY_TEST=true',
                         '--volume',str(ROOT)+':/source:ro','--workdir','/source',tag,

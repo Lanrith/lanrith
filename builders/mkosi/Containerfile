@@ -60,16 +60,21 @@ RUN apt-get update \
 # uses the reviewed interface without an unpinned tool download.
 # Keep the tool artifact on its own immutable snapshot: a runtime security
 # snapshot can stop listing mkosi 27. The package checksum still pins its bytes.
-RUN curl --proto '=https' --tlsv1.2 --fail --location --show-error \
-      --output /tmp/mkosi.deb \
-      https://snapshot.debian.org/archive/debian/20260912T080811Z/pool/main/m/mkosi/mkosi_27-1_all.deb \
- && printf '%s  %s\n' \
-      374b121fe598b89f1c2e3b99a65b305822b31b75e621ebda1f431a1e306766e9 \
-      /tmp/mkosi.deb | sha256sum --check --strict \
- && dpkg-deb --extract /tmp/mkosi.deb / \
- && mkosi --version | grep -Fqx 'mkosi 27' \
- && rm -f /tmp/mkosi.deb \
- && rm -rf /var/lib/apt/lists/*
+RUN set -eu; for host in snapshot.debian.org snapshot-cloudflare.debian.org; do \
+      if curl --disable --proto '=https' --tlsv1.2 --fail --silent --show-error \
+        --connect-timeout 5 --max-time 20 --retry 2 --retry-max-time 45 --max-filesize 367836 \
+        --output /tmp/mkosi.deb \
+        "https://${host}/file/8be9af6ae90e8288b524b7a2ba046901e717ed95/mkosi_27-1_all.deb"; then \
+        printf '%s  %s\n' \
+          374b121fe598b89f1c2e3b99a65b305822b31b75e621ebda1f431a1e306766e9 \
+          /tmp/mkosi.deb | sha256sum --check --strict; \
+        dpkg-deb --extract /tmp/mkosi.deb /; \
+        mkosi --version | grep -Fqx 'mkosi 27'; \
+        rm -f /tmp/mkosi.deb; \
+        rm -rf /var/lib/apt/lists/*; \
+        exit 0; \
+      fi; \
+    done; exit 1
 
 # The exported tool image has no reusable package-generated host/TLS identity.
 RUN python3 - <<'PY'

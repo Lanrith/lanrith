@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from .release import canonical, require, unique
+from . import frozen_apt
 
 HOSTS = ('snapshot.debian.org', 'snapshot-cloudflare.debian.org')
 PACKAGES = {'trixie': {'apt', 'libapt-pkg7.0', 'apt-utils'},
@@ -79,16 +80,40 @@ def stage(project, context, distribution):
             require(separator and key not in locks, 'Invalid snapshot build lock.')
             locks[key] = value
     prefix = 'DEBIAN_BOOKWORM' if distribution == 'bookworm' else 'DEBIAN'
+    tree=directory/'sandbox/etc/apt'
+    (tree/'mirrors').mkdir(parents=True)
+    (tree/'sources.list.d').mkdir()
+    (tree/'apt.conf.d').mkdir()
+    (tree/'apt.conf.d/80-lanrith-transport').write_text('Acquire::Retries "5";\nAPT::Update::Error-Mode "any";\nAcquire::Languages "none";\n')
+    sources=[]
     for archive, suffix in [('debian',''),('debian-security','_SECURITY')]:
         stamp = locks[prefix+suffix+'_SNAPSHOT']
         require(re.fullmatch(r'[0-9]{8}T[0-9]{6}Z',stamp), 'Invalid locked APT snapshot date.')
         (directory/(archive+'.snapshot')).write_text(stamp+'\n')
-        (directory/(archive+'.mirrors')).write_text(''.join(
-            'https://'+host+'/archive/'+archive+'/'+stamp+'/\tpriority:'+str(index+1)+'\n'
-            for index,host in enumerate(HOSTS)))
-    (directory/'sources.list').write_text(''.join('deb [check-valid-until=no] mirror+file:/etc/apt/mirrors/'+
+        suite=distribution+('-security' if suffix else '')
+        expected=locks[prefix+suffix+'_RELEASE_SHA256']
+        signed,index,_=frozen_apt.repository(str(project),archive,stamp,suite,expected)
+        repository=tree/'lanrith-repositories'/archive/'dists'/suite
+        (repository/'main/binary-amd64').mkdir(parents=True)
+        (repository/'InRelease').write_bytes(signed)
+        (tree/'lanrith-repositories'/archive/'suite').write_text(suite+'\n')
+        (tree/'lanrith-repositories'/archive/'inrelease.sha256').write_text(hashlib.sha256(signed).hexdigest()+'\n')
+        (repository/'main/binary-amd64/Packages.xz').write_bytes(index)
+        mirrors=('file:/etc/apt/lanrith-repositories/'+archive+'/\tpriority:1 type:index\n'+
+            frozen_apt.ORIGINS[archive]+'/\tpriority:2 type:deb\n'+''.join(
+            'https://'+host+'/archive/'+archive+'/'+stamp+'/\tpriority:'+str(number+3)+' type:deb\n'
+            for number,host in enumerate(HOSTS)))
+        (directory/(archive+'.mirrors')).write_text(mirrors)
+        (tree/'mirrors'/(archive+'.mirrors')).write_text(mirrors)
+        sources.append('Types: deb\nURIs: mirror+file:/etc/apt/mirrors/'+archive+'.mirrors\nSuites: '+suite+
+            '\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\nBy-Hash: no\n')
+    shutil.copyfile(project/'builders/verify-apt-snapshots.sh',tree/'verify-lanrith-snapshots')
+    with (tree/'apt.conf.d/80-lanrith-transport').open('a') as stream:
+        stream.write('APT::Update::Post-Invoke-Success { "/bin/sh /etc/apt/verify-lanrith-snapshots"; };\n')
+    (tree/'sources.list.d/mkosi.sources').write_text('\n'.join(sources))
+    (directory/'sources.list').write_text(''.join('deb [check-valid-until=no by-hash=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] mirror+file:/etc/apt/mirrors/'+
         archive+'.mirrors '+distribution+suffix+' main\n'
         for archive,suffix in [('debian',''),('debian-security','-security')]))
     (directory/'snapshot.pref').write_text('Package: *\nPin: release o=Debian\nPin-Priority: 1001\n')
-    return hashlib.sha256(canonical({p.name:hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(directory.iterdir())})).hexdigest()
+    return hashlib.sha256(canonical({p.relative_to(directory).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(directory.rglob('*')) if p.is_file()})).hexdigest()
