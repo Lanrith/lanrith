@@ -63,6 +63,49 @@ def asymmetric_replies(value):
     return result
 
 
+def nat64_egress(value):
+    """Describe existing translator source NAT without granting access.
+
+    Addresses are the actual configured output-interface addresses, including
+    additional attachment gateways. An empty WAN list requires a qualified
+    runtime address producer; no address is guessed from its subnet.
+    """
+    components = [entry for entry in intent.translations(value).values()
+                  if entry['component'] == 'nat64']
+    if not components:
+        return []
+    uplink = value['uplink']
+    outputs = []
+    for network in sorted(value['networks'].values(), key=lambda entry: entry['name']):
+        if not network.get('forwarding', True):
+            continue
+        targets = [ip.ip_interface(address).network for address in network['addresses']
+                   if ip.ip_interface(address).version == 4]
+        targets += [ip.ip_network(prefix) for prefix in
+                    network.get('routed_prefixes', []) + network.get('additional_subnets', [])
+                    if ip.ip_network(prefix).version == 4]
+        if not targets:
+            continue
+        addresses = sorted({ip.ip_interface(address).ip for address in intent.gateway_addresses(network)
+                            if ip.ip_interface(address).version == 4})
+        require(addresses, 'NAT64 egress needs a configured IPv4 attachment address.')
+        outputs.append({'destination_interface': network['name'],
+                        'destinations': [str(prefix) for prefix in sorted(set(targets),
+                                         key=lambda prefix: (int(prefix.network_address), prefix.prefixlen))],
+                        'addresses': [str(address) for address in addresses]})
+    if uplink.get('ipv4', 'dhcp') != 'disabled':
+        outputs.append({
+            'destination_interface': value['hardware']['interfaces'][uplink['interface']]['name'],
+            'destinations': ['0.0.0.0/0'],
+            'addresses': [str(address) for address in sorted({
+                ip.ip_interface(address).ip for address in uplink.get('addresses', [])
+                if ip.ip_interface(address).version == 4})],
+        })
+    return [{'interface': component['interface'], **output}
+            for component in sorted(components, key=lambda entry: entry['interface'])
+            for output in outputs]
+
+
 def baseline(value, retained_allocations=None):
     """Keep ordered owner intent separate from short-lived delegated grants."""
     policy = value.get('identity', {}).get('policy', {})
@@ -79,8 +122,12 @@ def bounded_baseline(value, accounts, retained_allocations=None):
     """
     result = _baseline(value, retained_allocations)
     scopes = dhcp4.host_scopes(value, accounts)
+    egress = nat64_egress(value)
     if scopes:
         result['network_model']['host_dhcp4'] = scopes
+    if egress:
+        result['network_model']['nat64_egress'] = egress
+    if scopes or egress:
         result['generation'] = 'pending'
         result['generation'] = hashlib.sha256(canonical(result)).hexdigest()
     return result
