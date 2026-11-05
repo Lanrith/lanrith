@@ -7,21 +7,15 @@ ARG DEBIAN_BOOKWORM_SNAPSHOT
 ARG DEBIAN_BOOKWORM_SECURITY_SNAPSHOT
 ARG PAM_RSSH_RUST_VERSION
 
+COPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap
+RUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh
+
 RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       ca-certificates \
- && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
- && printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_BOOKWORM_SNAPSHOT} bookworm main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_BOOKWORM_SECURITY_SNAPSHOT} bookworm-security main" \
-      > /etc/apt/sources.list \
- && printf '%s\n' \
-      'Package: *' \
-      'Pin: origin snapshot.debian.org' \
-      'Pin-Priority: 1001' \
-      > /etc/apt/preferences.d/99-router-factory-snapshot \
+ && /bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh "${DEBIAN_BOOKWORM_SNAPSHOT}" "${DEBIAN_BOOKWORM_SECURITY_SNAPSHOT}" \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --allow-downgrades --no-install-recommends \
       ca-certificates \

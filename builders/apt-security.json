@@ -1,0 +1,51 @@
+{
+  "advisory": "https://security-tracker.debian.org/tracker/CVE-2026-109518",
+  "distributions": {
+    "bookworm": {
+      "inrelease_sha256": "5d916d253a3ed4b2413b355ac864adc2188295df58d3f569879e5322f50378bf",
+      "package_index_sha256": "9291f4f3c470a046b9751215169d689e539f3d5cade197a367738e58079205ba",
+      "packages": {
+        "apt": {
+          "filename": "apt_2.6.2_amd64.deb",
+          "locator": "962fb70c26f5c4b1e04745b7e6461b03f3626b22",
+          "sha256": "796fc7fe18866f5b1fb27a115d7339e549d71b7ddbc15b8d6fc4226c243e96d1",
+          "size": 1373116
+        },
+        "libapt-pkg6.0": {
+          "filename": "libapt-pkg6.0_2.6.2_amd64.deb",
+          "locator": "d2b619743ff2ce0b225a938e290eac79ede448de",
+          "sha256": "023a7017b75295fc7037c7a4352847f9516a36a82cc5e1650d6832d238860913",
+          "size": 906972
+        }
+      },
+      "version": "2.6.2"
+    },
+    "trixie": {
+      "inrelease_sha256": "d0dbede32d80c3e9462e037ede87b138bdd5e44be10145acf46c9f643388836d",
+      "package_index_sha256": "5f9fc5aa45642005a7d58bf8782e6fe1a483b9082f4e1918dfb186fa490d2a20",
+      "packages": {
+        "apt": {
+          "filename": "apt_3.0.4_amd64.deb",
+          "locator": "36cf89438b23e8e573f051c1d1b75bb1e60930a1",
+          "sha256": "15c2030e0fb46580af4f1b4cc303f4bd26da781b004e99763bc9eff7cf8e19b8",
+          "size": 1453228
+        },
+        "apt-utils": {
+          "filename": "apt-utils_3.0.4_amd64.deb",
+          "locator": "a14325675e90e0789babb77030cffb89786754fb",
+          "sha256": "a77b3af564bb5143e7babb6aa6b098c6426be56b3811623748afc700a0af0e8c",
+          "size": 336868
+        },
+        "libapt-pkg7.0": {
+          "filename": "libapt-pkg7.0_3.0.4_amd64.deb",
+          "locator": "f10f9c5f6525bb96bec57dbc3cdc6987af0832ac",
+          "sha256": "577eb8f489de419290102364892dbd13ca256297b61f96d61b114fd4ac18be41",
+          "size": 1113872
+        }
+      },
+      "version": "3.0.4"
+    }
+  },
+  "memory_bug": "https://bugs.debian.org/1111554",
+  "schema": 1
+}

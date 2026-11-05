@@ -17,7 +17,7 @@ import gzip
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require, unsigned_manifest
-from lanrith import build_cache, build_resources, package_stage, snapshot_metadata, components as component_contract
+from lanrith import apt_security, build_cache, build_resources, package_stage, snapshot_metadata, components as component_contract
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -43,6 +43,7 @@ def image(component, work, inputs):
     shutil.copytree(PROJECT / 'builders' / component, context)
     if component == 'vpp':
         shutil.copytree(PROJECT / 'builders/patches', context / 'patches')
+    apt_security.stage(PROJECT, context, 'trixie')
     values = {key: value for key, value in inputs.items() if key in
               (component.upper() + '_BUILDER_OCI', 'DEBIAN_SNAPSHOT', 'DEBIAN_SECURITY_SNAPSHOT')}
     if component != 'mkosi':

@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
-from lanrith import advisories, build_cache, build_resources, embedded
+from lanrith import advisories, apt_security, build_cache, build_resources, embedded
 
 
 def run(*arguments, **kwargs):
@@ -104,8 +104,13 @@ def main():
                     'DEBIAN_IMAGE': selection['builder_base'],
                     'DEBIAN_SNAPSHOT': selection['debian_snapshot'],
                     'DEBIAN_SECURITY_SNAPSHOT': selection['security_snapshot']}
+    context = args.work/'builder-context'
+    if context.exists():
+        shutil.rmtree(context)
+    shutil.copytree(definition, context)
+    apt_identity = apt_security.stage(ROOT, context, 'trixie')
     identity = hashlib.sha256(canonical({'arguments': image_inputs,
-        'containerfile': file_record(definition/'Containerfile')['sha256']})).hexdigest()
+        'apt_security': apt_identity, 'containerfile': file_record(definition/'Containerfile')['sha256']})).hexdigest()
     tag = 'localhost/lanrith-alloy-builder:'+identity
     command = [args.engine, 'build', '--pull', '--platform', 'linux/amd64', '--file',
                str(definition/'Containerfile'), '--tag', tag]
@@ -115,7 +120,7 @@ def main():
     for name, value in sorted(image_inputs.items()):
         command += ['--build-arg', name+'='+value]
     if args.engine != 'docker' or not build_cache.reuse_image('alloy', tag):
-        run(*command, str(definition))
+        run(*command, str(context))
     if args.engine == 'docker':
         build_cache.record_image('alloy', tag)
     compiler_identity = identity

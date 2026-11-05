@@ -144,7 +144,7 @@ class BuildResourceTests(unittest.TestCase):
         self.prepare()
         spec=importlib.util.spec_from_file_location('resource_test_base',ROOT/'scripts/build-base.py')
         base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
-        with patch.object(base.build_cache,'reuse_image',return_value=False), \
+        with patch.object(base.apt_security,'stage'), patch.object(base.build_cache,'reuse_image',return_value=False), \
                 patch.object(base.build_cache,'image_arguments',return_value=[]), \
                 patch.object(base.build_cache,'record_image'), patch.object(base,'run') as command:
             base.image('mkosi',self.root,{})

@@ -1,0 +1,55 @@
+{
+  "actual_failure": {
+    "all_four_locked_release_preflights_passed": true,
+    "job": 126858424717,
+    "memory_peak_bytes": 8589934592,
+    "oom_kills": 1,
+    "run": 41910287826,
+    "runner_survived": true,
+    "step": "mkosi SDK apt-get install"
+  },
+  "additional_observed_failure": {
+    "after_mirror_fallback": "The complete local SDK build exercised both official snapshot origins, then failed closed on the frozen trixie-security package index with HTTP504 and HTTP503 No healthy backends. The full SDK is not qualified. This shared upstream outage remains outside the code repair; no snapshot date,signature or hash policy was changed to bypass it.",
+    "kind": "Local full SDK validation after installing fixed APT completed without OOM but failed closed on snapshot trixie-security InRelease HTTP504 after every retry.",
+    "log": "pr61-fixed-sdk-build-validation.log"
+  },
+  "advisories": [
+    "https://lists.debian.org/debian-security-announce/2026/msg00526.html",
+    "https://lists.debian.org/deity/2026/11/msg00005.html",
+    "https://bugs.debian.org/1111554"
+  ],
+  "approval": "Fresh actual independent human approval of the final source only after full hosted CI passes. No review request,App approval,merge or application release is granted by this record.",
+  "base_commit": "0c476f6abd1f0daa9bdf77e11b885ed02cab90b4",
+  "controls": {
+    "bootstrap": "The controller fetches exact immutable content-addressed Debian apt/libapt packages authenticated by reviewed SHA256 locks derived from verified official signed archive metadata. No old APT process downloads its own fix. Every independent Debian stage checks the package hashes and distribution, installs the fixed packages with dpkg, verifies the minimum versions and prevents older runtime snapshots from downgrading the build tools. SDK apt-utils is supplied at the matching fixed version.",
+    "coverage": "All nine independent APT-using stages across SDK,Alloy,PAM,VPP,Unbound andTayga; context/cache identities cover bootstrap artifacts and installer bytes.",
+    "enforcement": "The aggregate8GiB memory cap,CPU/swap/task limits,all scanner/native/provenance checks,branch protection and immutable-release policy remain enforced.",
+    "snapshot_transport": "After the verified APT bootstrap and CA preparation, use the native mirror+file transport over exactly two fixed official Debian HTTPS snapshot origins, with explicit priority and the same reviewed archive dates. Archive signature and package hash verification remain mandatory; snapshot pinning matches the authenticated Debian Origin at1001 and the patched toolchain remains protected at1002. Real loopback fixtures prove fallback from an unavailable primary and rejection of altered bytes from the alternate. Both origins unavailable still blocks qualification."
+  },
+  "created_at": "2026-11-05T18:41:48.246527+00:00",
+  "kind": "verified-stable-apt-security-bootstrap",
+  "paid_ai": false,
+  "previous_head": "a04202662f59bda11c3c6f357b0074a3be86830e",
+  "protection_bypass": false,
+  "pull_request": 61,
+  "reason": "APT consumed the entire finite compiler budget while retrying package downloads. Debian published stable APT fixes for this known retry memory-exhaustion bug and CVE-2026-109518 on November4. Install those authenticated fixes before the builders first APT invocation, preserving runtime selections and resource controls.",
+  "runtime_inputs": "Snapshot timestamps,component versions and runtime security policy are unchanged. build-inputs custom recipe hashes are refreshed to cover the new control inputs.",
+  "schema": 1,
+  "security_note": {
+    "abuse_cases": [
+      "An upstream response must not substitute different package bytes.",
+      "TLS and hash failures must not be hidden by fallback.",
+      "An old snapshot must not downgrade the patched APT toolchain.",
+      "An independent build stage must not use APT before patching.",
+      "A memory failure must not become a passed qualification."
+    ],
+    "assets": [
+      "build integrity",
+      "archive verification",
+      "runner availability",
+      "source/validation/approval provenance"
+    ],
+    "residual_risk": "Both official snapshot transports can be unavailable. A future incompatible base/tool version requires refreshed authenticated bootstrap locks and qualification; version or dependency conflicts fail closed rather than downgrade a newer base. Old worker losses without logs remain unproven; this incident establishes a contained APT OOM.",
+    "validation": "Official InRelease signatures,index hashes and all five package hashes verified; exact pinned builder container probes and complete suite records accompany the source audit. Hosted Docker probes and final-source full package/native/security qualification remain required."
+  }
+}
