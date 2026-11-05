@@ -64,7 +64,9 @@ print(json.dumps({'uid':a.pw_uid,'gid':a.pw_gid,
         '--memory=256m', '--pids-limit=32', image, 'python3', '-I', '-c', code))
 
 
-def qualify(binary, work, image, denied):
+def qualify(binary, work, image, denied, initial_counter=0):
+    if not 0 <= initial_counter <= 4194300:
+        raise ValueError('isolated counter must leave room for both configuration activations')
     binary = binary.resolve(strict=True)
     binary_hash = digest(binary)
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -95,6 +97,7 @@ def qualify(binary, work, image, denied):
         '--sysctl', 'net.ipv6.conf.all.forwarding=1', '-v', str(binary)+':/runner/test:ro',
         '-v', str(inputs)+':/inputs:ro', '-v', str(signals)+':/signals',
         '-e', 'ROUTER_POLICY_KERNEL_TEST=isolated', '-e', 'ROUTER_POLICY_KEA_FIXTURE=isolated',
+        '-e', 'ROUTER_POLICY_KEA_INITIAL_COUNTER='+str(initial_counter),
         image, '/runner/test', '-test.v', '-test.run=^'+fixture_name+'$',
     ], stdout=fixture_log, stderr=subprocess.STDOUT)
     server, server_name, server_log = None, None, None
@@ -178,6 +181,7 @@ def qualify(binary, work, image, denied):
             assert set(leases.values()) == {'02:00:00:00:00:13', '02:00:00:00:00:14', '02:00:00:00:00:15'}
         assert (inputs/'kea.json').read_bytes() == native and digest(binary) == binary_hash
         report = {'schema': 1, 'passed': True, 'denied': denied, 'nft_image': image,
+            'initial_ownership_counter': initial_counter,
             'binary_sha256': binary_hash, 'native_configuration_sha256': hashlib.sha256(native).hexdigest(),
             'model_sha256': digest(inputs/'policy-baseline.json'), 'kea': metadata,
             'server_episodes': episodes, 'persisted_leases': leases,
@@ -208,10 +212,14 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--image', default=IMAGE)
     parser.add_argument('--denied', action='store_true', help='run Kea while the compiled DHCP permission is absent')
+    parser.add_argument('--initial-counter', type=int, default=0,
+                        help='seed only isolated fixture state before either configuration activation')
     args = parser.parse_args()
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', args.image):
         parser.error('--image must pin a locally available tool image by SHA-256')
-    return qualify(args.binary, args.work, args.image, args.denied)
+    if not 0 <= args.initial_counter <= 4194300:
+        parser.error('--initial-counter must be between 0 and 4194300')
+    return qualify(args.binary, args.work, args.image, args.denied, args.initial_counter)
 
 
 if __name__ == '__main__':
