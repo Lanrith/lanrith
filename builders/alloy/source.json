@@ -52,8 +52,20 @@
   ],
   "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
   "node_version": "24.22.1",
-  "package_version": "1.20.1-1+lanrith5",
+  "package_version": "1.20.1-1+lanrith6",
   "schema": 1,
+  "security_modules": {
+    "github.com/andybalholm/brotli": {
+      "go_mod_sum": "h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=",
+      "sum": "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+      "version": "v1.2.7"
+    },
+    "github.com/klauspost/compress": {
+      "go_mod_sum": "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=",
+      "sum": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+      "version": "v1.20.2"
+    }
+  },
   "supplemental_notices": {
     "github.com/dennwc/ioctl@v1.0.0": {
       "basis": "Upstream license commit contains exactly the same compiled Go source as v1.0.0.",

@@ -261,8 +261,13 @@ def propose(root, tools, repo, producer):
             pin['node_image'] = inputs.image('node', selected+'-bookworm')
             alloy.write_bytes(canonical(pin))
         patch = root/'builders/alloy/ui-dependencies.patch'
+        from .embedded_go import update as embedded_updates
+        previous_modules = pin['security_modules']
+        pin['security_modules'], embedded_reasons = embedded_updates(previous_modules,
+            allow_minor=policy.get('automatic_minor_security_updates', False))
+        reasons.extend(embedded_reasons)
         updated, found = npm_updates(pin, patch.read_bytes(), policy)
-        if updated != patch.read_bytes():
+        if updated != patch.read_bytes() or pin['security_modules'] != previous_modules:
             prefix, separator, number = pin['package_version'].rpartition('+lanrith')
             require(separator and number.isdigit(), 'Alloy package has no reviewed local revision.')
             pin['package_version'] = prefix+'+lanrith'+str(int(number)+1)
