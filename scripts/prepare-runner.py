@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lanrith import build_resources
 
 MINIMUM_FREE_BYTES = 60 * 1024**3
 # Fixed SDK paths only. Go, Python, Node actions, Docker, the source checkout,
@@ -56,6 +58,7 @@ def prepare():
         if available < MINIMUM_FREE_BYTES:
             raise RuntimeError(f'Insufficient runner disk: {available/1024**3:.2f} GiB free after SDK cleanup; '
                                'at least 60.00 GiB is required before downloading build artifacts.')
+        record['build_resources'] = build_resources.prepare()
         record['result'] = 'pass'
         return record
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:

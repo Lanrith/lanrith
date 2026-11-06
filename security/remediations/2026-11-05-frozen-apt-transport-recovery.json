@@ -1,0 +1,44 @@
+{
+  "actual_failure": {
+    "job": 127467520664,
+    "memory_peak_bytes": 169218048,
+    "oom_kills": 0,
+    "run": 42089453440,
+    "source_and_hosted_apt_and_kernel_probes": "passed; full package qualification failed",
+    "step": "mkosi SDK apt-get update"
+  },
+  "approval": "No approval,merge or application release granted. Fresh independent human approval is required only after every final-head/current-base CI job passes.",
+  "base_commit": "0c476f6abd1f0daa9bdf77e11b885ed02cab90b4",
+  "controls": {
+    "actual_accepted_metadata": "APT mirror requests sometimes omit Target-Type. File metadata has strict first priority and an APT Post-Invoke-Success hook verifies actual accepted cache InRelease digests against controller-staged original signed bytes. Different valid signed repositories are rejected; native PGP verification is independently tested with a forged signature even when the expected file hash is changed.",
+    "authority": "Reviewed raw Release SHA256 and the normal Debian archive signature verification remain mandatory. Original signed InRelease files are public source seeds; locator hints never authorize content. Both compressed and expanded package indexes must match size and SHA256 entries from the locked Release.",
+    "future_recovery": "Normal attested package-checkpoint.json retains bounded public original signed metadata and immutable content hints. Future builds may reuse only immutable stable checkpoints whose asset digest matches GitHub metadata and whose raw Release hash equals the current reviewed lock. No cached commands,URLs or changed package universe are trusted.",
+    "native_images": "Pass matching transport trees through mkosi27 Build/SandboxTrees for both base and initrd. The actual pinned mkosi parser accepts both configurations. Preserve archive keyring verification and every native qualification gate.",
+    "resource_and_approval": "Existing8GiB compiler containment,patched APT3.0.4/2.6.2,protected App checks,independent human source approval and immutable normal releases remain enforced.",
+    "tool": "Use immutable content URLs for the exact previously pinned mkosi27 package; same SHA256 and version check. No tool upgrade.",
+    "transport": "Controller fetches exact frozen indexes through official Debian by-hash URLs, then fixed content-addressed Snapshot URLs, then original dated paths. Bounded HTTPS origins,redirects,time,size and LZMA memory/output; altered successful bytes and TLS failures fail closed. Payload mirrors can supply only package bytes accepted by APT hashes from the frozen indexes."
+  },
+  "created_at": "2026-11-05T21:30:59.140852+00:00",
+  "kind": "exact-signed-frozen-apt-transport-recovery",
+  "paid_ai": false,
+  "previous_head": "28624061232dee327d4f640ec7c1f98866690214",
+  "protection_bypass": false,
+  "pull_request": 61,
+  "reason": "Both official snapshot timestamp transports returned503/504 during the SDK APT update. Patched APT used169218048 bytes with zeroOOMkills, confirming this failure is metadata availability rather than the earlier delayed-retry OOM. Recover the identical original signed repositories independently of timestamp lookup.",
+  "repository": "Lanrith/lanrith",
+  "residual_risk": "Recovery still requires exact package/index bytes to exist at an allowed official origin. Missing bytes fail qualification. The local full SDK and parser checks do not certify full application/native CI.",
+  "runtime_inputs": "Snapshot dates,raw Release hashes,runtime component versions and security policy unchanged. Builder recipe lock refreshed for exact new source seeds,transport controls and tool URL.",
+  "schema": 1,
+  "validation": {
+    "abuse_cases": [
+      "Altered signature must fail native APT even if expected file hash is updated.",
+      "Different valid signed metadata must fail exact accepted-cache digest verification.",
+      "Wrong successful index bytes must not be hidden by a fallback.",
+      "Unknown origins,credentials,unsafe redirects,oversized or decompression-bomb indexes must fail.",
+      "Cached metadata must not replace a different reviewed universe."
+    ],
+    "remaining": "Final-source hosted Docker,package,native,security and both App-bound checks must pass before human review is requested. Full local test logs and immutable exact-source audit accompany this repair.",
+    "sdk": "Actual complete SDK Containerfile passes under2GiB with final metadata hook; fixed APT and mkosi27 versions verified.",
+    "signatures": "All four original Debian InRelease signatures verified using the trusted archive keyring; recovered cleartext hashes equal all four existing reviewed locks."
+  }
+}

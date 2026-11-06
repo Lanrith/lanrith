@@ -9,15 +9,13 @@ ARG DEBIAN_SNAPSHOT
 ARG DEBIAN_SECURITY_SNAPSHOT
 ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=go /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap
+RUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh
+
+RUN printf '%s\n' 'Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";' > /etc/apt/apt.conf.d/99-lanrith-tls
 RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
 
-RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
- && printf '%s\n' 'Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";' \
-      > /etc/apt/apt.conf.d/99-lanrith-tls \
- && printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
-      > /etc/apt/sources.list \
+RUN /bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh "${DEBIAN_SNAPSHOT}" "${DEBIAN_SECURITY_SNAPSHOT}" \
  && apt-get -o APT::Update::Error-Mode=any update \
  && apt-get install --yes --no-install-recommends ca-certificates build-essential pkg-config libsystemd-dev git curl python3 \
  && rm -rf /var/lib/apt/lists/*

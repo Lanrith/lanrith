@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith.release import canonical, file_record, require
-from lanrith import advisories, build_cache, embedded
+from lanrith import advisories, apt_security, build_cache, build_resources, embedded
 
 
 def run(*arguments, **kwargs):
@@ -104,17 +104,23 @@ def main():
                     'DEBIAN_IMAGE': selection['builder_base'],
                     'DEBIAN_SNAPSHOT': selection['debian_snapshot'],
                     'DEBIAN_SECURITY_SNAPSHOT': selection['security_snapshot']}
+    context = args.work/'builder-context'
+    if context.exists():
+        shutil.rmtree(context)
+    shutil.copytree(definition, context)
+    apt_identity = apt_security.stage(ROOT, context, 'trixie')
     identity = hashlib.sha256(canonical({'arguments': image_inputs,
-        'containerfile': file_record(definition/'Containerfile')['sha256']})).hexdigest()
+        'apt_security': apt_identity, 'containerfile': file_record(definition/'Containerfile')['sha256']})).hexdigest()
     tag = 'localhost/lanrith-alloy-builder:'+identity
     command = [args.engine, 'build', '--pull', '--platform', 'linux/amd64', '--file',
                str(definition/'Containerfile'), '--tag', tag]
+    command += build_resources.arguments(args.engine)
     if args.engine == 'docker':
         command += build_cache.image_arguments('alloy')
     for name, value in sorted(image_inputs.items()):
         command += ['--build-arg', name+'='+value]
     if args.engine != 'docker' or not build_cache.reuse_image('alloy', tag):
-        run(*command, str(definition))
+        run(*command, str(context))
     if args.engine == 'docker':
         build_cache.record_image('alloy', tag)
     compiler_identity = identity
@@ -122,6 +128,7 @@ def main():
         try:
             probe = run(args.engine, 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
                 '--security-opt', 'no-new-privileges', '--user', str(os.getuid())+':'+str(os.getgid()),
+                *build_resources.arguments(args.engine),
                 '-v', str(ROOT)+':/implementation:ro', tag, 'python3',
                 '/implementation/scripts/compiler-identity.py', capture_output=True, text=True,
                 timeout=180).stdout.strip()
@@ -134,11 +141,14 @@ def main():
             run(scanner, '-version', capture_output=True, text=True).stdout, 'Unexpected Alloy scanner.')
     command = [args.engine, 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                '--user', str(os.getuid())+':'+str(os.getgid())]
+    command += build_resources.arguments(args.engine)
     if args.engine == 'podman':
         command += ['--userns=keep-id']
-    for name, value in {'HOME': '/work/home', 'GOCACHE': '/work/cache', 'GOMODCACHE': '/work/modules',
+    environment = {'HOME': '/work/home', 'GOCACHE': '/work/cache', 'GOMODCACHE': '/work/modules',
                         'GOPATH': '/work/gopath', 'GOTMPDIR': '/work/tmp', 'GOTOOLCHAIN': 'local',
-                        'GOENV': 'off', 'GOMAXPROCS': '2', 'GOMEMLIMIT': '4GiB'}.items():
+                        'GOENV': 'off', 'GOMAXPROCS': '2', 'GOMEMLIMIT': '4GiB'}
+    environment.update(build_resources.compiler_environment())
+    for name, value in environment.items():
         command += ['--env', name+'='+value]
     for name in ('home', 'cache', 'modules', 'gopath', 'tmp'):
         if not args.resume:

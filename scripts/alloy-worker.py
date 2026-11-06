@@ -170,7 +170,7 @@ def main():
     beyla_binary = work/'beyla-security'
     flags = ('-X github.com/grafana/beyla/v3/pkg/buildinfo.Version=v'+selected['beyla']['version']+
              '+lanrith.1 -X github.com/grafana/beyla/v3/pkg/buildinfo.Revision='+selected['beyla']['commit'])
-    run('go', 'build', '-mod=vendor', '-p=2', '-trimpath', '-ldflags', flags,
+    run('go', 'build', '-mod=vendor', '-p=1', '-trimpath', '-ldflags', flags,
         '-o', str(beyla_binary), './cmd/beyla', cwd=beyla, env={**os.environ, 'CGO_ENABLED': '0'})
     beyla_scan = scan(beyla_binary, evidence/'beyla-scan.txt')
     beyla_modules = notices(beyla, evidence/'beyla-notices.txt', definition)
@@ -227,7 +227,7 @@ def main():
              ' -X github.com/grafana/alloy/internal/build.BuildUser=lanrith@builder')
     # Full symbols preserve precise scanner coverage; stripping causes module-only
     # fallback and can both over-report unused APIs and miss symbol-scoped findings.
-    run('go', 'build', '-mod=vendor', '-p=2', '-trimpath', '-tags',
+    run('go', 'build', '-mod=vendor', '-p=1', '-trimpath', '-tags',
         'gore2regex netgo embedalloyui promtail_journal_enabled', '-ldflags', flags,
         '-o', str(binary), '.', cwd=collector)
     alloy_scan = scan(binary, evidence/'alloy-scan.txt')

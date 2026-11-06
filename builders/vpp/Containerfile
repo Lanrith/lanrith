@@ -13,21 +13,15 @@ ARG DEBIAN_SECURITY_SNAPSHOT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+COPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap
+RUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh
+
 RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       ca-certificates \
- && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
- && printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
-      > /etc/apt/sources.list \
- && printf '%s\n' \
-      'Package: *' \
-      'Pin: origin snapshot.debian.org' \
-      'Pin-Priority: 1001' \
-      > /etc/apt/preferences.d/99-lanrith-snapshot \
+ && /bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh "${DEBIAN_SNAPSHOT}" "${DEBIAN_SECURITY_SNAPSHOT}" \
  && apt-get update \
  && apt-get install --yes --allow-downgrades --no-install-recommends \
       ca-certificates \
@@ -76,16 +70,15 @@ FROM ${VPP_BUILDER_OCI}
 ARG DEBIAN_SNAPSHOT
 ARG DEBIAN_SECURITY_SNAPSHOT
 
+COPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap
+RUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh
+
 RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       ca-certificates \
- && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
- && printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
-      > /etc/apt/sources.list
+ && /bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh "${DEBIAN_SNAPSHOT}" "${DEBIAN_SECURITY_SNAPSHOT}"
 
 COPY --from=build /packages/ /packages/
 
