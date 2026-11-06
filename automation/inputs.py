@@ -249,9 +249,14 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
                         'Integration image does not match the selected compiler.')
         elif path in ('builders/alloy/source.json', 'builders/node-exporter/source.json'):
             old, new = document(old_raw), document(new_raw)
-            allowed = {'go_version', 'go_image', 'node_version', 'node_image', 'package_version'} if 'alloy' in path else {'go_version', 'builder'}
+            allowed = {'go_version', 'go_image', 'node_version', 'node_image', 'package_version', 'security_modules'} if 'alloy' in path else {'go_version', 'builder'}
             fields = changed_fields(old, new)
             require(fields <= allowed, 'Component update changed reviewed source or build recipes.')
+            if 'security_modules' in fields:
+                from .embedded_go import validate as validate_embedded
+                validate_embedded(old['security_modules'], new['security_modules'], reasons,
+                    allow_minor=policy.get('automatic_minor_security_updates', False))
+                require('package_version' in fields, 'Embedded security updates must advance the local package revision.')
             if 'go_version' in fields:
                 validate_go(old['go_version'], new['go_version'], reasons, policy)
                 key = 'go_image' if 'alloy' in path else 'builder'
@@ -274,7 +279,8 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
             if 'package_version' in fields:
                 prefix, separator, number = old['package_version'].rpartition('+lanrith')
                 require(separator and new['package_version'] == prefix+'+lanrith'+str(int(number)+1) and
-                        'builders/alloy/ui-dependencies.patch' in after, 'Unexpected local package revision.')
+                        ('builders/alloy/ui-dependencies.patch' in after or 'security_modules' in fields),
+                        'Unexpected local package revision.')
         elif path == 'builders/alloy/ui-dependencies.patch':
             pin = document(read_before('builders/alloy/source.json'))
             if validate_npm_manifests(ui_manifests(pin, old_raw), ui_manifests(pin, new_raw), reasons, policy):

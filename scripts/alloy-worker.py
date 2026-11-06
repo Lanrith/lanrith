@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
+from lanrith import go_pins
 
 
 def run(*arguments, **kwargs):
@@ -159,6 +160,10 @@ def main():
         destination = replacements/module['directory']
         module_copy(work, module['module'], module['version'], destination, module['sum'])
         patch(destination, definition/module['patch'])
+    # Keep the embedded payload, collector and root-module tests on the same
+    # checksum-verified fixes before vendoring or compiling any of them.
+    for graph in (beyla, source/'collector', source):
+        go_pins.apply(graph, selected['security_modules'], run)
     run('go', 'mod', 'edit', '-require=golang.org/x/net@v0.60.0', cwd=beyla)
     run('go', 'mod', 'download', 'all', cwd=beyla)
     run('go', 'mod', 'verify', cwd=beyla)
