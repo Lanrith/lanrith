@@ -205,14 +205,20 @@ class Compiler:
                     continue
                 destination_rows = set().union(*(self.targets(e, family) for e in targets))
                 source_rows = set().union(*(self.sources(e, family) for e in sources))
+                callback_target = any(interface == attachment and intersection(prefix, scope) is not None
+                                      for interface, prefix in destination_rows
+                                      for scope, attachment in self.clients[family])
+                if not callback_target:
+                    # Component output in this family can reach LAN clients
+                    # only. Do not emit an unreachable peer projection to WAN
+                    # or another translator merely because a source has an
+                    # address representation in that family.
+                    source_rows = {row for row in source_rows if row[0] not in self.components}
                 for endpoint in sources:
                     if endpoint['mac'] is None:
                         continue
                     virtual = self.sources({**endpoint, 'mac': None}, family)
-                    relevant = any(interface == attachment and intersection(prefix, scope) is not None
-                                   for interface, prefix in destination_rows
-                                   for scope, attachment in self.clients[family])
-                    require(not relevant or not any(row[0] in self.components for row in virtual),
+                    require(not callback_target or not any(row[0] in self.components for row in virtual),
                             'A MAC-qualified translated callback needs original physical ingress evidence.')
                 if not source_rows or not destination_rows:
                     continue

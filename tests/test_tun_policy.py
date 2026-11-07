@@ -37,6 +37,14 @@ class TunPolicyTests(unittest.TestCase):
         self.assertIn(('lan', ip.ip_network('fd42:1234:5678:10::2'), None), rows)
         self.assertNotIn(('lan', ip.ip_network('fd42:1234:5678:20::2'), None), rows)
 
+    def test_ipv4_source_to_wan_does_not_emit_an_unreachable_ipv6_callback(self):
+        raw = nat64_declaration()
+        raw['access']['rules'] = [{'action': 'deny', 'from': {'network': 'servers', 'addresses': '192.0.2.2'},
+                                   'to': 'uplink'}]
+        program = tun_policy.compile(config.normalize(raw))
+        self.assertEqual(program['access_rules'], 1)
+        self.assertIn('meta nfproto ipv4', program['rules'][0])
+
     def test_mapping_count_changes_data_instead_of_copying_policy(self):
         counts = []
         for size in (1, 6, 60):
