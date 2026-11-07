@@ -15,17 +15,17 @@
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "4997dcc38ff4bf658d0b89841e874d62e1456585d1e9eb31bb3f7d76cbb53596",
-        "router-policy-collector_0.1.10_amd64.deb": "48c2f78cc061ba179787e457fca59665cf985a0d45e619ca69eb5524da3e2985",
-        "router-policy-helper_0.1.10_amd64.deb": "860cc0aaa35d6bffbc8b41cab5bf39e7a726bcf606df83797dabf9fa57793c96",
-        "router-policy-reader_0.1.10_amd64.deb": "8429fdf298804ee4c4259e1d50be25001d22c36927d9f9af67d2e16d08ef42d3",
-        "security.txt": "dccdee416b63c1fece9034239778559278a44baf65cd18b8a4c13857977e1a54",
-        "update-record.json": "bb946e5de0bfa2dea7e650ee1e3516ebf8715228765508ce679e7b76eb696598"
+        "component-release.json": "17ddbb494715a8f2be235b3d068985f7a5a9e3efa22203b2b0e81c6252d12793",
+        "router-policy-collector_0.1.11_amd64.deb": "18b8901a50b61d4e13370e2916bbfcb661ae1fe6719531dece83a50b0835a2b8",
+        "router-policy-helper_0.1.11_amd64.deb": "2da9da9d99aa67865d44557bf24ebbee7a5ec8c65b44e2fbb8564e1f3208b627",
+        "router-policy-reader_0.1.11_amd64.deb": "f1ac7988dc2a7f99a343031c4b0d52d493951d3bec63a931b56468ebe96f5618",
+        "security.txt": "adeabd44e2fbc67ddba9644c850b65239958700c071e874bcf738e2b56dc7d41",
+        "update-record.json": "a90c5f31866d32ff3b5bf9b898bf337dff4b312eaa1ea48a97aaddb5231d71fd"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "ad314e0abce5f1610df2971ce4226b65d1ddf750",
-      "tag": "v0.1.10",
-      "workflow_commit": "ad314e0abce5f1610df2971ce4226b65d1ddf750"
+      "source_commit": "262793033d3b07cc88a93f1659df35b34fa6595b",
+      "tag": "v0.1.11",
+      "workflow_commit": "262793033d3b07cc88a93f1659df35b34fa6595b"
     }
   },
   "custom_package_inputs": {
@@ -39,7 +39,7 @@
     "builders/alloy/source.json": "34422a4d0d0e627970d011e09cf258a255b69e5151865f456bc8f43cd69a70a6",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
-    "builders/build-inputs.lock": "f634994ac1787ab0456d21b554fc3565c3edee5f62133abff76973284bb311f4",
+    "builders/build-inputs.lock": "6e95fae8475cd30f58fb09bce24463accf11dd342258e7bc6d6bea5d52e969db",
     "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
     "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
     "builders/mkosi/Containerfile": "155b3dda6540902f713d5ecb80848a7558ee7e717948ac8cbf96e6517509db5a",
@@ -62,10 +62,10 @@
     "builders/vpp/Containerfile": "3897684ce4bee00fc2d1e7792e8e3a1fa2115aa5e0a42d39223ba05edffe3040"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261103T070000Z",
+  "debian_snapshot": "20261107T130000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "3305e8cbc049a83531191f9ad9706436f0a0e419e0610bd37307061792d65975",
-  "security_snapshot": "20261103T070000Z"
+  "security_release_sha256": "b8bb41265066f3e5185c3799707b5cd74b875b4978d95bf577480414ab799d26",
+  "security_snapshot": "20261107T130000Z"
 }
