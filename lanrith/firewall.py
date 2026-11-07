@@ -2,7 +2,8 @@
 
 import ipaddress
 
-from . import access, intent, service_plane, routing, nat46, nat64, metrics, snmp, discovery, extension_network
+from . import access, intent, service_plane, routing, nat46, nat64, metrics, snmp, discovery, extension_network, tun_policy
+from .release import require
 
 
 ERRORS6 = 'destination-unreachable, packet-too-big, time-exceeded, parameter-problem'
@@ -47,7 +48,11 @@ def values(items):
     return '{ '+', '.join(dict.fromkeys(str(item) for item in items))+' }'
 
 
-def render(value, *, extension_rules=None):
+def render(value, *, extension_rules=None, access_backend='legacy', retained_allocations=None):
+    # Build-time qualification selector. A release must admit the matching
+    # dynamic data writer before this replaces its installed policy backend.
+    require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
+    tun = access_backend == 'tun'
     networks, interfaces, uplink = value['networks'], value['hardware']['interfaces'], value['uplink']
     wan = interfaces[uplink['interface']]['name']
     dhcp = uplink.get('ipv4', 'dhcp') == 'dhcp'
@@ -60,10 +65,11 @@ def render(value, *, extension_rules=None):
     if service_plane.attached(value):
         ipv6_names.append(plane['host_link'])
     ipv6_set = values('"'+name+'"' for name in ipv6_names)
-    translator_chains = [] if policy_managed else nat46.chains(value) + nat64.chains(value)
+    translator_chains = (tun_policy.definitions(value, retained_allocations) if tun else
+                         [] if policy_managed else nat46.chains(value) + nat64.chains(value))
     # The policy agent's NAT64 zone hook is fixed at -300. The immutable source
     # boundary must run first, with an unambiguous priority, in managed mode.
-    source_priority = -310 if policy_managed else -300
+    source_priority = -310 if policy_managed and not tun else -300
     lines = ['#!/usr/sbin/nft -f', 'flush ruleset', 'table inet lanrith {',
              *translator_chains,
              f' chain source_guard {{ type filter hook prerouting priority {source_priority}; policy accept;',
@@ -132,7 +138,8 @@ def render(value, *, extension_rules=None):
             lines.append(f'  iifname "{wan}" {spelling} saddr {values(owned)} drop')
     lines += [' }', ' chain input { type filter hook input priority filter; policy drop;',
               '  iifname "lo" accept',
-              *[f'  iifname "{item["interface"]}" drop' for item in nat64.components(value)],
+              *[f'  iifname "{name}" drop' for name in
+                (intent.translations(value) if tun else [item['interface'] for item in nat64.components(value)])],
               '  ct state invalid drop', *snmp.input_rules(value), '  ct state established,related accept']
     if ipv6_names:
         lines.append(f'  iifname {ipv6_set} meta l4proto ipv6-icmp icmpv6 type {{ {ERRORS6} }} accept')
@@ -180,7 +187,9 @@ def render(value, *, extension_rules=None):
     if len(translators) > 1:
         names = values('"'+name+'"' for name in translators)
         lines.append(f'  iifname {names} oifname {names} drop')
-    if policy_managed:
+    if tun:
+        lines += tun_policy.forward()
+    elif policy_managed:
         # These marks are produced only after the helper's early checks. Its
         # later confirmation and physical-egress hooks still revalidate the
         # exact tuple, epoch, source ownership, and translated geometry.
@@ -200,7 +209,7 @@ def render(value, *, extension_rules=None):
             ports = values(sorted(set(rule['ports'])))
             lines.append(f'  iifname "{networks[rule["from"]]["name"]}" oifname "{networks[rule["to"]]["name"]}" '
                          f'{rule["protocol"]} dport {ports} accept')
-    translation_errors = [] if policy_managed else nat46.local_errors(value) + nat64.local_errors(value)
+    translation_errors = [] if tun or policy_managed else nat46.local_errors(value) + nat64.local_errors(value)
     lines += [' }', ' chain output { type filter hook output priority filter; policy drop;',
               '  oifname "lo" accept',
               *(['  jump extension_output'] if extension_rules and any(extension_rules.values()) else []),

@@ -31,12 +31,13 @@ IMPLEMENTATION = {
     'lanrith/firewall_metadata.py', 'lanrith/observation_spool.py', 'lanrith/observation_accounts.py',
     'lanrith/extensions.py', 'lanrith/extension_observations.py', 'lanrith/extension_network.py',
     'lanrith/build.py', 'lanrith/config.py', 'lanrith/intent.py', 'lanrith/firewall.py', 'lanrith/access.py',
-    'lanrith/service_plane.py', 'lanrith/nat46.py', 'lanrith/nat64.py', 'lanrith/translation.py',
+    'lanrith/service_plane.py', 'lanrith/nat46.py', 'lanrith/nat64.py', 'lanrith/translation.py', 'lanrith/tun_policy.py',
     'lanrith/policy_runtime.py', 'lanrith/release.py', 'lanrith/admission.py',
     'scripts/qualify-firewall.py', 'scripts/qualify-base.py', 'scripts/build-base.py',
     'tests/firewall_metadata_native.py', 'tests/firewall_userspace.py', 'tests/firewall_service_native.py', 'tests/test_firewall_metadata.py',
     'tests/test_firewall_observations.py', 'tests/test_firewall_qualification.py', 'tests/firewall_fixture.py',
-    'tests/test_extension_network.py', 'tests/test_intent.py', 'examples/minimal.yaml'}
+    'tests/test_extension_network.py', 'tests/test_intent.py', 'tests/test_tun_policy.py',
+    'tests/tun_policy_native.py', 'tests/translation_reference.py', 'examples/minimal.yaml'}
 ASSEMBLY = {'etc/nftables.conf', 'usr/share/lanrith/firewall-observations.json',
     'etc/modules-load.d/65-lanrith-firewall-observations.conf',
     'etc/systemd/system/nftables.service.d/62-lanrith-observations.conf',
