@@ -103,8 +103,17 @@ def main(fixture, finalizer, profile):
             '-ruleset', str(listing), '-guards', str(fixture/'identity-egress.nft'),
             '-output-directory', str(output))
         assert metadata == json.loads((output/'router-profile-metadata.json').read_text()), 'build and runtime program pins differ'
+        observed = root/'usr/share/lanrith/policy-program.json'
+        program = json.loads(observed.read_text())
+        assert observed.stat().st_mode & 0o777 == 0o444
+        assert set(program) == {'schema_version', 'backend', 'program_sha256', 'objects'}
+        assert program['schema_version'] == 1 and program['backend'] == 'tun'
+        assert program['program_sha256'] == metadata['floor_sha256']
+        assert program['objects'] == [row for row in json.loads(listing.read_text())['nftables'] if 'metainfo' not in row]
+        assert 'baseline' not in program
         print(json.dumps({'status': 'pass', 'actual_finalizer': True, 'numeric_runtime_pin_matches': True,
-            'baseline_and_scratch_removed': True, 'runtime_profile_mode': '0400', 'runtime_yaml': False}, sort_keys=True))
+            'baseline_and_scratch_removed': True, 'runtime_profile_mode': '0400', 'runtime_yaml': False,
+            'native_observation_program': True}, sort_keys=True))
 
 
 if __name__ == '__main__':

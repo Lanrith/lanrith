@@ -62,6 +62,12 @@ the intermediate policy baseline, and the final-tree check rejects configuration
 sources, compiler modules and the retired NAT64 allocation supervisor. New intent
 requires a new image and an operator-triggered A/B update.
 
+Image finalization also writes `policy-program.json`, a read-only snapshot of
+the compiled native firewall objects bound to the policy program digest. An
+observation extension can use this independent baseline to display installed
+rules without reading the private delegation model or learning a baseline from
+the running kernel. A matching rule or grant is not a packet outcome.
+
 Use the same rules for every routed destination. Network names come from your
 `networks` map. `uplink` selects the declared uplink interface; `any` imposes no
 interface restriction. An IP address or CIDR selects that address range. A list

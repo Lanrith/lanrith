@@ -161,6 +161,15 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         shutil.copyfile(destination/'router-guards.nft', parent/'guards.nft'); (parent/'guards.nft').chmod(0o400)
         if access_backend != 'tun':
             base.run('nft', '-f', str(parent/'guards.nft'))
+        else:
+            # Same native observation input produced by image finalization,
+            # captured before any publisher can change the runtime set data.
+            observed = Path('/usr/share/lanrith/policy-program.json')
+            observed.parent.mkdir(parents=True, exist_ok=True)
+            observed.write_bytes(canonical({'schema_version': 1, 'backend': 'tun',
+                'program_sha256': metadata['floor_sha256'], 'objects': [row for row in
+                    json.loads((work/'ruleset.json').read_bytes())['nftables'] if 'metainfo' not in row]}))
+            observed.chmod(0o444)
     # A trusted companion may now install/start generated service dependencies
     # using the actual completed profile. No runtime CLI or source intent can
     # select this hook, and the baseline, floor and guard artifacts stay pinned.

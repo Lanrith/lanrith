@@ -120,6 +120,17 @@ subprocess.run(['/usr/bin/router-policy-profile', '-backend', selected,
         raise ValueError('Policy profile metadata destination already exists.')
     os.replace(output/'router-profile-metadata.json', public)
     public.chmod(0o444)
+    # Independent readers consume the image's compiled native objects. Never
+    # give them the delegation model or let them learn a baseline at runtime.
+    observed = root/'usr/share/lanrith/policy-program.json'
+    if observed.exists() or observed.is_symlink():
+        raise ValueError('Native policy observation destination already exists.')
+    listing = json.loads((scratch/'ruleset.json').read_bytes())
+    observed.write_text(json.dumps({'schema_version': 1, 'backend': 'tun',
+        'program_sha256': metadata['floor_sha256'],
+        'objects': [row for row in listing['nftables'] if 'metainfo' not in row]},
+        sort_keys=True, separators=(',', ':'))+'\n')
+    observed.chmod(0o444)
     shutil.rmtree(scratch)
     shutil.rmtree(root/'usr/lib/lanrith-build')
 
