@@ -1,0 +1,158 @@
+{
+  "actual_failure": {
+    "artifact": 13489311917,
+    "attempt": 1,
+    "job": 127794743583,
+    "memory_peak_bytes": 8589934592,
+    "oom_kills": 0,
+    "run": 42187697907,
+    "scanner_exit_code": 3,
+    "step": "Beyla binary govulncheck"
+  },
+  "advisories": [
+    {
+      "evidence_sha256": "d6953c2855dec04ea518d4441a130b1250900538352cfa1ff09b9717e0776eec",
+      "fixed": "v1.2.7",
+      "id": "GO-2026-6888",
+      "installed_beyla": "v1.2.2",
+      "published": "2026-11-05T22:55:15Z",
+      "references": [
+        {
+          "type": "ADVISORY",
+          "url": "https://github.com/andybalholm/brotli/security/advisories/GHSA-c9gr-gmg4-2vqv"
+        },
+        {
+          "type": "FIX",
+          "url": "https://github.com/andybalholm/brotli/commit/33c2a9884269798192b5ecf171288f98939dbe42"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/andybalholm/brotli/releases/tag/v1.2.7"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/google/brotli/commit/0ed4268a4401abcb4472096340477cf4af7d1a2b"
+        }
+      ],
+      "source": "https://vuln.go.dev/ID/GO-2026-6888.json"
+    },
+    {
+      "evidence_sha256": "fc5ec92d487d0906d49662c98bfac60f0b78435ec6c4faed58a96c9641a4b976",
+      "fixed": "v1.20.2",
+      "id": "GO-2026-6865",
+      "installed_beyla": "v1.19.2",
+      "published": "2026-11-05T22:54:32Z",
+      "references": [
+        {
+          "type": "ADVISORY",
+          "url": "https://github.com/klauspost/compress/security/advisories/GHSA-fpmh-frq8-7rj8"
+        },
+        {
+          "type": "FIX",
+          "url": "https://github.com/klauspost/compress/commit/7f5d8528720c895a6106f201719f87eb030a565d"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/klauspost/compress/releases/tag/v1.20.2"
+        }
+      ],
+      "source": "https://vuln.go.dev/ID/GO-2026-6865.json"
+    }
+  ],
+  "approval": "This source/control change needs fresh independent human approval after all new PR CI passes. PriorPR61 approval does not approve these bytes. Future qualified data-only embedded updates use the existing independent reviewer App and normal protected merge/release flow.",
+  "base_commit": "1ee1118ac46498b3d1cf00e1922cfa11449bea7a",
+  "changes": {
+    "automation": "Existing security proposer queries advisories for the reviewed embedded module pins,selects the minimum permitted stable fixes and records advisory evidence. Existing independent reviewer rederives minimal Go graphs and verifies module sums. A changed dependency requires exactly one local Alloy package revision. Adding/removing/replacing modules,unneeded versions,major/prerelease migrations and altered checksums remain ineligible for automatic approval.",
+    "current_fix": "Checksum-pin Brotli1.2.7 and klauspost/compress1.20.2 in builders/alloy/source.json. Before vendoring,apply the same pins to existing unreplaced dependencies in Beyla,Alloy collector and root tests. Verify both module/GoMod sums through the official checksum database and require the actual graph to select the reviewed versions.",
+    "package_identity": "Alloy local revision advances from1.20.1-1+lanrith5 to1.20.1-1+lanrith6;exact package-policy pins and builder recipe hash follow.",
+    "preserved": "Upstream Alloy/Beyla commits,component registration,toolchain versions,snapshot dates,Debian signatures,all binary/source/native scanners,compiler limits,branch protections,review timing and immutable-release policy are preserved. No paid agents."
+  },
+  "created_at": "2026-11-06T15:12:03.686140+00:00",
+  "kind": "embedded-compression-security-and-advisory-bound-update-inputs",
+  "paid_ai": false,
+  "protection_bypass": false,
+  "reason": "Fresh binary scanning blocked the Main release on two compression vulnerabilities published during the preceding PR qualification. The SDK and frozen-repository repairs completed; no application release was published. Patch the existing modules consistently and make future security fixes ordinary verified update inputs.",
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "source_and_checksum_identity": {
+    "brotli-v1.2.7.json": {
+      "Dir": "/work/go-modules/github.com/andybalholm/brotli@v1.2.7",
+      "GoMod": "/work/go-modules/cache/download/github.com/andybalholm/brotli/@v/v1.2.7.mod",
+      "GoModSum": "h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=",
+      "Info": "/work/go-modules/cache/download/github.com/andybalholm/brotli/@v/v1.2.7.info",
+      "Origin": {
+        "Hash": "33c2a9884269798192b5ecf171288f98939dbe42",
+        "Ref": "refs/tags/v1.2.7",
+        "URL": "https://github.com/andybalholm/brotli",
+        "VCS": "git"
+      },
+      "Path": "github.com/andybalholm/brotli",
+      "Sum": "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+      "Version": "v1.2.7",
+      "Zip": "/work/go-modules/cache/download/github.com/andybalholm/brotli/@v/v1.2.7.zip"
+    },
+    "compress-v1.20.2.json": {
+      "Dir": "/work/go-modules/github.com/klauspost/compress@v1.20.2",
+      "GoMod": "/work/go-modules/cache/download/github.com/klauspost/compress/@v/v1.20.2.mod",
+      "GoModSum": "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=",
+      "Info": "/work/go-modules/cache/download/github.com/klauspost/compress/@v/v1.20.2.info",
+      "Origin": {
+        "Hash": "7f5d8528720c895a6106f201719f87eb030a565d",
+        "Ref": "refs/tags/v1.20.2",
+        "URL": "https://github.com/klauspost/compress",
+        "VCS": "git"
+      },
+      "Path": "github.com/klauspost/compress",
+      "Sum": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+      "Version": "v1.20.2",
+      "Zip": "/work/go-modules/cache/download/github.com/klauspost/compress/@v/v1.20.2.zip"
+    }
+  },
+  "validation": {
+    "binary_reproduction": {
+      "actual_pin_helper": true,
+      "compatibility": "brotli/zstd roundtrip and malformed FSE/Huffman rejection",
+      "fixed_binary_clean": true,
+      "go": "1.27.3",
+      "modules": {
+        "github.com/andybalholm/brotli": {
+          "go_mod_sum": "h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=",
+          "sum": "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+          "version": "v1.2.7"
+        },
+        "github.com/klauspost/compress": {
+          "go_mod_sum": "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=",
+          "sum": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+          "version": "v1.20.2"
+        }
+      },
+      "old_beyla_versions_rejected": true,
+      "result": "pass",
+      "scanner": "v1.9.0",
+      "scope": "Actual fixed module/library/harness validation; full Alloy/Beyla and native hosted qualification remains required.",
+      "upstream_tests": [
+        "brotli .",
+        "compress ./fse ./huff0"
+      ]
+    },
+    "live_automation": {
+      "adversarial_rejections": [
+        "wrong-hash",
+        "unnecessary-version",
+        "new-module"
+      ],
+      "result": "pass"
+    },
+    "python_suite": {
+      "environment_skips": 20,
+      "passed": 973,
+      "result": "pass",
+      "tests": 993
+    },
+    "remaining": "Full exact-head/current-base hosted package,native and security qualification is required. Small harness/library tests do not certify the complete Alloy/Beyla application.",
+    "upstream_tests": [
+      "Brotli1.2.7 package tests",
+      "compress1.20.2 FSE and Huffman tests"
+    ]
+  }
+}

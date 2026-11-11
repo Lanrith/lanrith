@@ -27,6 +27,8 @@ class InventoryApplicabilityTests(unittest.TestCase):
             subprocess.run(['git',*args],cwd=root,capture_output=True,check=True)
         actual=subprocess.run
         def command(args,**kwargs):
+            if args == ['go', 'env', 'GOVERSION']:
+                return subprocess.CompletedProcess(args, 0, (kwargs['env']['GOTOOLCHAIN']+'\n').encode(), b'')
             if args==['govulncheck','./...']:
                 return scan(args,**kwargs)
             return actual(args,**kwargs)
