@@ -189,8 +189,6 @@ class Compiler:
         return self.sets[key]
 
     def compile(self):
-        raw = self.value.get('access', {})
-        require(not ({'internet', 'between_networks'} & set(raw)), 'TUN policy requires ordered access intent.')
         # Validation is shared with the public contract; names are metadata.
         normalized = intent.access(self.value)
         for index, rule in enumerate(normalized['rules']):

@@ -22,8 +22,7 @@ class ProcessingBudgetTests(unittest.TestCase):
                 contract = policy_agent.runtime_contract(config.normalize(value))
                 before = copy.deepcopy(contract)
                 with patch.object(policy_runtime.pwd, 'getpwnam', side_effect=accounts.__getitem__), \
-                        patch.object(policy_runtime, 'atomic') as publish, \
-                        patch.object(policy_runtime, 'nat64_pin', return_value=None):
+                        patch.object(policy_runtime, 'atomic') as publish:
                     policy_runtime.publish_runtime(contract, {'floor_sha256': 'a'*64, 'profile_sha256': 'b'*64}, 'c'*64)
                 self.assertEqual(contract, before)
                 helper = publish.call_args_list[0].args[1]

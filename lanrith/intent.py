@@ -449,7 +449,14 @@ def expand(value, selected, *, stack=()):
 def access(value):
     declaration = value.get('access', {})
     if not ({'default', 'rules'} & set(declaration)):
-        return declaration
+        fields(declaration, {'internet', 'between_networks'})
+        # Shorthand keeps its historical ordering; retain the original owner
+        # model because its Internet list also selects IPv4 source NAT.
+        rules = [{'action': 'allow', 'from': key, 'to': 'uplink'}
+                 for key in declaration.get('internet', [])]
+        rules += [{**rule, 'action': 'allow', 'ports': sorted(set(rule['ports']))}
+                  for rule in declaration.get('between_networks', [])]
+        declaration = {'default': 'deny', 'rules': rules}
     fields(declaration, {'default', 'rules', 'delegation_limits'})
     result = {'default': declaration.get('default', 'deny'), 'rules': []}
     for rule in sequence(declaration.get('rules', [])):

@@ -51,7 +51,7 @@ class Nat46Tests(unittest.TestCase):
         self.assertIn('oifname "nat46"', rules[0])
         self.assertTrue(rules[0].endswith('drop'))
         self.assertEqual(len(rules), 4)
-        text = firewall.render(value)
+        text = firewall.render(value, access_backend='legacy')
         self.assertLess(text.index('jump nat46_output'), text.index('chain output'))
         self.assertLess(text.index('iifname "lr-services" drop'), text.index('jump nat46_output'))
         self.assertIn('@nh,160,32 . tcp sport . tcp dport @n46_0_tcp_forward', text)
@@ -120,7 +120,7 @@ class Nat46Tests(unittest.TestCase):
         raw = declaration()
         value = config.normalize(raw)
         files = nat46.render(value)
-        rendered = config.render(value)
+        rendered = config.render(value, access_backend='legacy')
         for name, content in files.items():
             self.assertEqual(rendered[name], content)
         self.assertEqual(files['etc/tayga-nat46.conf'].count('\nmap '), 6)

@@ -50,6 +50,18 @@ receive access to it. Lease observations alone grant no forwarding permission.
 
 ## Access rules
 
+Image builds use the TUN policy backend by default. The compiler emits immutable
+access rules and selector sets; the policy helper publishes fresh bindings and
+expiring directory grants into those sets. NAT64 checks the IPv6 client side of
+its TUN interface, and NAT46 checks the IPv4 client side. Stock TAYGA performs
+translation. Neither component adds permission merely by being enabled.
+
+Owner YAML is consumed only during the build. The installed root and initrd contain
+native daemon files and narrow runtime JSON contracts. The image finalizer removes
+the intermediate policy baseline, and the final-tree check rejects configuration
+sources, compiler modules and the retired NAT64 allocation supervisor. New intent
+requires a new image and an operator-triggered A/B update.
+
 Use the same rules for every routed destination. Network names come from your
 `networks` map. `uplink` selects the declared uplink interface; `any` imposes no
 interface restriction. An IP address or CIDR selects that address range. A list

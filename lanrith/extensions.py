@@ -121,7 +121,7 @@ def admit(directory, expected):
     return value
 
 
-def overlay(configuration, selected, destination, base_files=None, *, access_backend='legacy',
+def overlay(configuration, selected, destination, base_files=None, *, access_backend='tun',
             retained_allocations=None):
     require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
     require(set(selected) == set(configuration['extensions']), 'Integration selections differ from configuration.')

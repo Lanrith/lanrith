@@ -37,7 +37,7 @@ class TunAssemblyTests(unittest.TestCase):
                     archive.addfile(entry, io.BytesIO(data))
             build.assembly(value, base, root/'image', version='0.1.0', sequence=9,
                 integrations={'example-observer': (extension, pin)},
-                access_backend='tun', retained_allocations=retained)
+                retained_allocations=retained)
             output = root/'image/mkosi.extra'
             firewall = (output/'etc/nftables.conf').read_text()
             self.assertIn('tcp dport 8443', firewall)
@@ -49,7 +49,10 @@ class TunAssemblyTests(unittest.TestCase):
             self.assertEqual(runtime['observer']['user'], 'example-agent')
             self.assertEqual((output/'usr/lib/lanrith-build/policy-backend').read_text(), 'tun\n')
             for relative in ('usr/lib/lanrith/lanrith/config.py', 'usr/lib/lanrith/lanrith/tun_policy.py',
-                             'etc/router-policy-agent/nat64-runtime/runtime.json'):
+                             'etc/router-policy-agent/nat64-runtime/runtime.json',
+                             'usr/lib/lanrith/lanrith/nat64_runtime.py',
+                             'usr/lib/lanrith/lanrith/nat64_packets.py',
+                             'usr/lib/lanrith/lanrith/nat64_allocations.py'):
                 self.assertFalse((output/relative).exists(), relative)
             self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in output.rglob('*')))
             installed = json.loads((output/'usr/share/lanrith/installed.json').read_text())
@@ -65,8 +68,8 @@ class TunAssemblyTests(unittest.TestCase):
         before = json.dumps(value, sort_keys=True)
         for function, args in ((config.rendered_digest, (value,)),
                                (config.effective_digest, (value, {'example-observer': 'a'*64}))):
-            self.assertEqual(function(*args), function(*args, access_backend='legacy'))
-            self.assertNotEqual(function(*args), function(*args, access_backend='tun'))
+            self.assertEqual(function(*args), function(*args, access_backend='tun'))
+            self.assertNotEqual(function(*args), function(*args, access_backend='legacy'))
             with self.assertRaises(ReleaseError):
                 function(*args, access_backend='unknown')
         self.assertEqual(json.dumps(value, sort_keys=True), before)
@@ -75,6 +78,41 @@ class TunAssemblyTests(unittest.TestCase):
             digest = config.write(value, output, access_backend='tun')
             self.assertEqual((output/'usr/share/lanrith/configuration.sha256').read_text().strip(), digest)
             self.assertEqual(digest, config.rendered_digest(value, access_backend='tun'))
+
+    def test_assembly_refuses_legacy_before_creating_an_image(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root/'image'
+            (root/'base.tar').write_bytes(b'synthetic assembly input')
+            with self.assertRaisesRegex(ReleaseError, 'supported TUN'):
+                build.assembly(settings(), root/'base.tar', output, version='0.1.0',
+                               sequence=9, access_backend='legacy')
+            self.assertFalse(output.exists())
+
+    def test_empty_access_and_shorthand_share_normal_build_and_admission_identity(self):
+        from lanrith import owner_inputs, policy_agent, policy_runtime
+        from test_intent import minimal
+        for access in ({}, {'internet': ['home']}, {'rules': []}):
+            with self.subTest(access=access), tempfile.TemporaryDirectory() as temporary:
+                raw = minimal()
+                raw['access'] = access
+                value = config.normalize(raw)
+                before = json.dumps(value, sort_keys=True)
+                options, records = owner_inputs.load(Path(temporary), value)
+                self.assertEqual(options, {})
+                self.assertEqual(records, {})
+                self.assertEqual(config.render(value, **options), config.render(value, access_backend='tun'))
+                self.assertEqual(json.dumps(value, sort_keys=True), before)
+        contract = policy_agent.runtime_contract(config.normalize(settings()))
+        self.assertEqual(contract['backend'], 'tun')
+        with tempfile.TemporaryDirectory() as temporary:
+            import os
+            path = Path(temporary)/'runtime.json'
+            for mutation in ({'backend': 'legacy'}, {'backend': None}, {'guard_interfaces': []}):
+                path.write_text(json.dumps({**contract, **mutation}))
+                path.chmod(0o600)
+                with self.assertRaises(policy_runtime.PolicyRuntimeError):
+                    policy_runtime.load_contract(path, owner=os.getuid())
 
     def test_native_boot_probes_do_not_require_legacy_allocation_supervisor(self):
         value = settings()

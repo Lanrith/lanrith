@@ -212,7 +212,7 @@ def _baseline(value, retained_allocations):
     return result
 
 
-def runtime_contract(value):
+def runtime_contract(value, *, access_backend="tun"):
     """Project only the immutable runtime inputs needed by the policy owner."""
     identity = value.get('identity', {})
     policy = identity.get('policy', {})
@@ -253,7 +253,7 @@ def runtime_contract(value):
             'interface': admission['name'],
             'parent': attachment,
         }
-    return {
+    contract = {
         'schema_version': 1,
         'profile_directory': '/etc/router-policy-agent/profile',
         'profile_metadata': '/usr/share/lanrith/policy-profile-metadata.json',
@@ -276,17 +276,20 @@ def runtime_contract(value):
         'translation_manifests': translations,
     }
 
+    require(access_backend in ('legacy', 'tun'), 'Unknown policy compiler.')
+    if access_backend == 'tun':
+        from . import tun_policy
+        contract['backend'] = 'tun'
+        contract['guard_interfaces'] = tun_policy.Compiler(value).physical
+    return contract
 
-def render(value, *, observer=None, access_backend="legacy"):
+
+def render(value, *, observer=None, access_backend="tun"):
     """Emit private runtime policy and complete public service ownership."""
     policy = value.get('identity', {}).get('policy', {})
     if not policy.get('enabled', False):
         return {}
-    contract = runtime_contract(value)
-    if access_backend == "tun":
-        from . import tun_policy
-        contract["backend"] = "tun"
-        contract["guard_interfaces"] = tun_policy.Compiler(value).physical
+    contract = runtime_contract(value, access_backend=access_backend)
     if observer is not None:
         contract['observer'] = observer
     reference = contract['directory']['credential_name']

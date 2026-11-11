@@ -127,7 +127,7 @@ def _translators(value, retained_allocations, access_backend):
     }
 
 
-def router_manifest(value, retained_allocations=None, *, access_backend='legacy'):
+def router_manifest(value, retained_allocations=None, *, access_backend='tun'):
     settings = value['services']['discovery']
     publisher = _publisher(value)
     sources = {network['name']: _discovery_prefixes(value, key) for key, network in selected(value)}
@@ -280,7 +280,7 @@ def firewall_rules(value, direction):
     return result
 
 
-def render(value, retained_allocations=None, *, access_backend='legacy'):
+def render(value, retained_allocations=None, *, access_backend='tun'):
     if not active(value):
         return {}
     router = router_manifest(value, retained_allocations, access_backend=access_backend)

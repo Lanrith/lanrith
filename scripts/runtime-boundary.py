@@ -14,12 +14,15 @@ COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config
             'recovery_build', 'recovery_failure_build', 'state_formats', 'directory_config', 'credential_config'}
 
 
+RETIRED = {'nat64_runtime', 'nat64_packets', 'nat64_allocations'}
+
+
 def check(root):
     library = root/'usr/lib/lanrith/lanrith'
     modules = {path.stem for path in library.glob('*.py')}
     helpers = {path.stem for path in library.parent.glob('*.py')}
     if (not {'runtime', 'boot_health', 'hardware', 'factory', 'release', 'update'} <= modules or
-            (modules | helpers) & (COMPILER | {'yaml', 'ruamel'})):
+            (modules | helpers) & (COMPILER | RETIRED | {'yaml', 'ruamel'})):
         raise ValueError('The image has an incomplete runtime or contains configuration compiler code.')
     build_inputs = root/'usr/lib/lanrith-build'
     if build_inputs.exists() or build_inputs.is_symlink():

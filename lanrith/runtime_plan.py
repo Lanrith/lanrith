@@ -54,7 +54,7 @@ def required_units(value, *, target_facts=None, integrations=()):
     return sorted(set(units))
 
 
-def health(value, *, target_facts=None, integrations=(), access_backend='legacy'):
+def health(value, *, target_facts=None, integrations=(), access_backend='tun'):
     require(access_backend in ('legacy', 'tun'), 'Unknown boot health translation backend.')
     probes = []
     if value.get('translation', {}).get('nat46', {}).get('enabled'):
@@ -71,7 +71,7 @@ def health(value, *, target_facts=None, integrations=(), access_backend='legacy'
             **({'native_translation': True} if access_backend == 'tun' else {})}
 
 
-def render(value, *, target_facts=None, access_backend='legacy'):
+def render(value, *, target_facts=None, access_backend='tun'):
     admin = value['administration']
     return {'usr/share/lanrith/health.json': canonical(health(value, target_facts=target_facts,
                                                            access_backend=access_backend)).decode(),

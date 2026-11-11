@@ -61,7 +61,7 @@ def load(path):
 
 
 def effective_digest(value, integrations, serial_provisioning_sha256=None, *, target_facts=None,
-                     retained_allocations=None, boot_inputs=None, access_backend='legacy'):
+                     retained_allocations=None, boot_inputs=None, access_backend='tun'):
     """Bind normalized intent, admitted integrations and selected serial material."""
     value = normalize(value)
     require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
@@ -369,7 +369,7 @@ def normalize(value):
     return value
 
 
-def render(value, *, target_facts=None, retained_allocations=None, access_backend="legacy"):
+def render(value, *, target_facts=None, retained_allocations=None, access_backend="tun"):
     require(access_backend in ("legacy", "tun"), "Unknown build access backend.")
     value = normalize(value)
     integrations.require_runtime(value, target_facts)
@@ -530,7 +530,7 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
     return files
 
 
-def rendered_digest(value, target_facts=None, *, retained_allocations=None, access_backend='legacy'):
+def rendered_digest(value, target_facts=None, *, retained_allocations=None, access_backend='tun'):
     require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
     inputs = value if target_facts is None else {'configuration': value,
              'hardware_ownership': hardware_policy.ownership_manifest(value, target_facts)}
@@ -545,7 +545,7 @@ def rendered_digest(value, target_facts=None, *, retained_allocations=None, acce
     return hashlib.sha256(canonical(inputs)).hexdigest()
 
 
-def write(value, directory, *, target_facts=None, retained_allocations=None, access_backend='legacy'):
+def write(value, directory, *, target_facts=None, retained_allocations=None, access_backend='tun'):
     require(not directory.exists() and not directory.is_symlink(), 'Output directory must not exist.')
     value = normalize(value)
     files = render(value, target_facts=target_facts, retained_allocations=retained_allocations,

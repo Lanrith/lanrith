@@ -134,9 +134,9 @@ class TunPolicyTests(unittest.TestCase):
         self.assertEqual([interface for prefix, interface in routes
                           if ip.ip_address('198.51.100.9') in prefix], ['servers'])
 
-    def test_unknown_backend_is_rejected_and_legacy_selection_is_unchanged(self):
+    def test_unknown_backend_is_rejected_and_tun_is_the_default(self):
         value = config.normalize(nat64_declaration())
-        self.assertEqual(firewall.render(value), firewall.render(value, access_backend='legacy'))
+        self.assertEqual(firewall.render(value), firewall.render(value, access_backend='tun'))
         with self.assertRaises(ReleaseError):
             firewall.render(value, access_backend='unknown')
         text = firewall.render(value, access_backend='tun')

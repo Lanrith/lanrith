@@ -63,20 +63,18 @@ def finalize_policy(root):
 import json, pathlib, subprocess
 root = pathlib.Path('/run/lanrith-policy-build')
 backend = pathlib.Path('/usr/lib/lanrith-build/policy-backend')
-selected = backend.read_text().strip() if backend.exists() else 'legacy'
-if selected not in ('legacy', 'tun'):
-    raise ValueError('Unknown build policy backend.')
-extra = []
-if selected == 'tun':
-    for interface in json.loads(pathlib.Path('/usr/lib/lanrith-build/policy-interfaces.json').read_text()):
-        subprocess.run(['/usr/sbin/ip', 'link', 'add', 'dev', interface, 'type', 'dummy'], check=True)
-    extra = ['-guards', '/usr/lib/lanrith-build/policy-egress.nft']
-# Loading and listing are separate operations in this same disposable network namespace.
+selected = backend.read_text().strip()
+if selected != 'tun':
+    raise ValueError('Image finalization requires the supported TUN backend.')
+for interface in json.loads(pathlib.Path('/usr/lib/lanrith-build/policy-interfaces.json').read_text()):
+    subprocess.run(['/usr/sbin/ip', 'link', 'add', 'dev', interface, 'type', 'dummy'], check=True)
+extra = ['-guards', '/usr/lib/lanrith-build/policy-egress.nft']
+# Loading and listing share this disposable namespace; numeric identifiers keep
+# the immutable program pin independent of the builder's account database.
 subprocess.run(['/usr/sbin/nft', '-f', '/etc/nftables.conf'],
     check=True, stdin=subprocess.DEVNULL, capture_output=True)
-if selected == 'tun':
-    subprocess.run(['/usr/sbin/nft', '-f', '/usr/lib/lanrith-build/policy-egress.nft'], check=True)
-listing = subprocess.run(['/usr/sbin/nft', '-j']+(['-n'] if selected == 'tun' else [])+['list', 'ruleset'],
+subprocess.run(['/usr/sbin/nft', '-f', '/usr/lib/lanrith-build/policy-egress.nft'], check=True)
+listing = subprocess.run(['/usr/sbin/nft', '-j', '-n', 'list', 'ruleset'],
     check=True, stdin=subprocess.DEVNULL, capture_output=True).stdout
 (root/'ruleset.json').write_bytes(listing)
 (root/'output').mkdir(mode=0o700)

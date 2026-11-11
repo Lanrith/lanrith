@@ -37,7 +37,7 @@ def resolve(configuration, declarations, *, service='policy'):
     return {'user': reader['name'], 'uid': reader['uid'], 'gid': reader['gid']}
 
 
-def install(configuration, declarations, destination, *, access_backend='legacy'):
+def install(configuration, declarations, destination, *, access_backend='tun'):
     observer = resolve(configuration, declarations)
     log_observer = resolve(configuration, declarations, service='logs')
     dns_observer = resolve(configuration, declarations, service='dns')

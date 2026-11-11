@@ -76,21 +76,19 @@ class CompiledRuntimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 policy_runtime.load_contract(path, owner=os.getuid())
 
-    def test_nat64_runtime_contract_is_private_compiled_json_not_source_intent(self):
+    def test_native_translation_uses_compiled_manifests_without_allocation_supervision(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            output = root/'output'
+            output = Path(temporary)/'output'
             config.write(nat64_declaration(), output)
-            directory = output/'etc/router-policy-agent/nat64-runtime'
-            manifest = directory/'runtime.json'
-            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
-            self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
-            value = json.loads(manifest.read_bytes())
-            self.assertEqual(set(value), {'schema_version', 'components'})
-            self.assertTrue(all(set(component) == {'id', 'status_directory', 'configuration_file',
-                                                    'executable', 'username'}
-                                for component in value['components']))
-            self.assertNotIn('networks', manifest.read_text())
+            self.assertFalse((output/'etc/router-policy-agent/nat64-runtime').exists())
+            for name in ('nat64', 'nat64-internal'):
+                manifest = output/'usr/share/lanrith'/f'{name}.json'
+                value = json.loads(manifest.read_bytes())
+                self.assertEqual(value['interface'], name)
+                self.assertNotIn('networks', value)
+                unit = (output/'usr/lib/systemd/system'/f'lanrith-{name}.service').read_text()
+                self.assertIn('ExecStart=/usr/lib/lanrith/tayga-internal --nodetach', unit)
+                self.assertNotIn('lanrith.nat64_runtime', unit)
             self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in output.rglob('*')))
 
     def test_root_and_initrd_run_without_source_yaml_or_compiler(self):

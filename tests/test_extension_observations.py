@@ -116,7 +116,7 @@ class ObservationAdmissionTests(unittest.TestCase):
                     raise KeyError(name)
                 return account
             with self.subTest(account=account), patch.object(policy_runtime.pwd, 'getpwnam', side_effect=lookup), \
-                    patch.object(policy_runtime, 'atomic') as atomic, patch.object(policy_runtime, 'nat64_pin', return_value=None), \
+                    patch.object(policy_runtime, 'atomic') as atomic, \
                     patch.object(policy_runtime, 'prepare_observation_directory'):
                 policy_runtime.publish_runtime(contract, {'floor_sha256': 'a'*64, 'profile_sha256': 'b'*64}, 'c'*64)
                 helper = atomic.call_args_list[0].args[1]
@@ -131,7 +131,6 @@ class ObservationAdmissionTests(unittest.TestCase):
                     'example-agent': SimpleNamespace(pw_uid=1801, pw_gid=1801)}
         with patch.object(policy_runtime.pwd, 'getpwnam', side_effect=accounts.__getitem__), \
                 patch.object(policy_runtime, 'atomic') as atomic, \
-                patch.object(policy_runtime, 'nat64_pin', return_value=None), \
                 patch.object(policy_runtime, 'prepare_observation_directory', side_effect=OSError('unavailable')):
             policy_runtime.publish_runtime(contract, {'floor_sha256': 'a'*64, 'profile_sha256': 'b'*64}, 'c'*64)
         self.assertNotIn('observer_uid', atomic.call_args_list[0].args[1])

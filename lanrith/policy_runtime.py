@@ -22,7 +22,6 @@ import time
 
 
 CONTRACT = Path('/etc/router-policy-agent/runtime/runtime.json')
-NAT64_RUNTIME = Path('/etc/router-policy-agent/nat64-runtime')
 ROOT = Path('/run/lanrith-policy')
 CONFIG = ROOT/'config'
 GENERATION = ROOT/'generation'
@@ -88,8 +87,8 @@ def load_contract(path=CONTRACT, *, owner=0):
     value = decode(read(path, 64*1024, owner=owner, private=True), 64*1024)
     observer = value.get('observer') if isinstance(value, dict) else None
     backend = value.get('backend') if isinstance(value, dict) else None
-    if backend not in (None, 'tun'):
-        raise PolicyRuntimeError('Unknown policy backend.')
+    if backend != 'tun':
+        raise PolicyRuntimeError('Policy runtime requires the supported TUN backend.')
     value = exact(value, {
         'schema_version', 'profile_directory', 'profile_metadata', 'generation_directory',
         'state_directory', 'binding_directory', 'nft_executable', 'helper_executable',
@@ -235,10 +234,7 @@ def translation_hash(contract):
         path = Path(entry['manifest'])
         data = read(path, 1024*1024)
         manifest = decode(data, 1024*1024)
-        if entry['kind'] == 'nat46' or contract.get('backend') == 'tun':
-            from .translation_runtime import status
-        else:
-            from .nat64_runtime import status
+        from .translation_runtime import status
         status(manifest)
         evidence.append({'kind': entry['kind'], 'manifest': entry['manifest'],
                          'sha256': hashlib.sha256(data).hexdigest()})
@@ -246,16 +242,6 @@ def translation_hash(contract):
                          sort_keys=True, separators=(',', ':')).encode()
     return hashlib.sha256(encoded).hexdigest()
 
-
-def nat64_pin():
-    path = NAT64_RUNTIME/'runtime.json'
-    if not path.exists():
-        return None
-    data = read(path, 64*1024, private=True)
-    value = exact(decode(data, 64*1024), {'schema_version', 'components'}, 'NAT64 runtime')
-    if value['schema_version'] != 1 or not isinstance(value['components'], list) or not value['components']:
-        raise PolicyRuntimeError('NAT64 runtime value differs.')
-    return {'directory': str(NAT64_RUNTIME), 'sha256': hashlib.sha256(data).hexdigest()}
 
 
 def wait_interfaces(contract):
@@ -394,12 +380,7 @@ def publish_runtime(contract, profile, mapping):
                 pass  # Optional observations never prevent the core bootstrap.
             else:
                 helper.update(observer_uid=observer['uid'], observations_socket=str(OBSERVATIONS))
-    if contract.get('backend') == 'tun':
-        helper.update(backend='tun', conntrack_executable='/usr/sbin/conntrack')
-    else:
-        runtime = nat64_pin()
-        if runtime is not None:
-            helper['nat64_runtime'] = runtime
+    helper.update(backend='tun', conntrack_executable='/usr/sbin/conntrack')
     atomic(CONFIG/'helper.json', helper)
     atomic(GENERATION/'generation.json', generation)
 

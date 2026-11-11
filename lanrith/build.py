@@ -18,7 +18,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
              integrations=None, serial_hash=None, initrd_base=None,
              fallback_release=None, fallback_disk_by_id=None, fallback_esp_uuid=None,
              pcr_key=None, pcr_certificate=None, recovery_hash=None,
-             target_facts=None, retained_allocations=None, access_backend='legacy'):
+             target_facts=None, retained_allocations=None, access_backend='tun'):
     for path in (base, destination, certificate, private_key, initrd_base, fallback_release,
                  pcr_key, pcr_certificate, recovery_hash, serial_hash):
         require(path is None or isinstance(path, Path) and path.is_absolute() and
@@ -30,6 +30,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     require((certificate is None) == (private_key is None), 'Both signing inputs are required together.')
     require(release.VERSION.fullmatch(version) and type(sequence) is int and 1 <= sequence <= 999999999,
             'Invalid image release identity.')
+    require(access_backend == 'tun', 'Image assembly requires the supported TUN policy backend.')
     value = config.normalize(value)
     # Fail before creating a workspace if hardware evidence or runtime support
     # is missing. Configuration and facts are independently bound in the digest.
@@ -154,7 +155,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'dns_observations_runtime.py', 'dns_metadata.py', 'observation_spool.py',
                    'firewall_observations_runtime.py', 'firewall_metadata.py',
-                   'translation_runtime.py', 'nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py',
+                   'translation_runtime.py',
                    'metrics_runtime.py', 'router_metrics_runtime.py', 'ntp_health_runtime.py', 'directory_runtime.py', 'policy_runtime.py',
                    'radius_runtime.py', 'kea_runtime.py', 'logs_runtime.py', 'systemd_credential.py', 'credential_values.py', 'credential_store.py',
                    'credential_operation.py', 'extension_credential_values.py', 'extension_credential_operation.py',

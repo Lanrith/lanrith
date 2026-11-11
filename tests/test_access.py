@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import unittest
 
-from lanrith import config
+from lanrith import config, tun_policy
 from lanrith.release import ReleaseError
 
 
@@ -24,7 +24,8 @@ class AccessTests(unittest.TestCase):
     def test_network_and_uplink_rules_need_no_component_roles(self):
         text = self.firewall([{'action': 'allow', 'from': ['home', 'guest'], 'to': 'uplink'}])
         for name in ('lan.10', 'lan.20'):
-            self.assertIn(f'iifname "{name}" oifname "wan"', text)
+            self.assertIn(f'"{name}" . 0.0.0.0/0', text)
+        self.assertIn('"wan" . 0.0.0.0/0', text)
         self.assertIn('policy drop;', text)
         self.assertNotIn('chain forward { type filter hook forward priority filter; policy accept;', text)
 
@@ -32,37 +33,41 @@ class AccessTests(unittest.TestCase):
         text = self.firewall([{'action': 'allow', 'from': 'home',
             'to': {'network': 'guest', 'addresses': '172.20.20.7'},
             'protocol': 'tcp', 'ports': [443, 80]}])
-        self.assertIn('iifname "lan.10" oifname "lan.20" ip daddr { 172.20.20.7/32 }', text)
+        self.assertIn('"lan.10" . 0.0.0.0/0', text)
+        self.assertIn('"lan.20" . 172.20.20.7/32', text)
         self.assertIn('meta l4proto tcp tcp dport { 80, 443 }', text)
-        self.assertNotIn('ip daddr { 172.20.20.0/24 }', text)
+        self.assertNotIn('"lan.20" . 172.20.20.0/24', text)
 
-    def test_explicit_denies_keep_list_order_and_precede_return_shortcut(self):
+    def test_explicit_denies_keep_list_order_for_original_flows(self):
         text = self.firewall([
             {'action': 'deny', 'from': 'home', 'to': {'network': 'uplink', 'addresses': '203.0.113.9'}},
             {'action': 'allow', 'from': 'home', 'to': 'uplink'},
         ])
-        deny = text.index('ip daddr { 203.0.113.9/32 }')
-        allow = text.index('iifname "lan.10" oifname "wan" ct state')
-        established = text.index('ct state established,related accept', text.index('chain forward'))
-        self.assertLess(deny, allow)
-        self.assertLess(allow, established)
+        rules = text.split(' chain tp_access {', 1)[1].split(' }', 1)[0].splitlines()
+        self.assertTrue(rules[1].endswith(' drop'))
+        self.assertTrue(rules[2].endswith(' goto tp_inherit'))
+        self.assertIn('"wan" . 203.0.113.9/32', text)
+        forward = text.split(' chain forward {', 1)[1].split(' chain output', 1)[0]
+        self.assertIn('ct direction reply', forward)
+        self.assertNotIn('ct state established,related accept', forward)
 
     def test_address_family_is_explicit_or_derived_without_cross_family_matches(self):
         text = self.firewall([{'action': 'allow', 'from': ['192.0.2.7', '2001:db8:1::7'],
             'to': ['198.51.100.8', '2001:db8:2::8']}])
-        rules = [line for line in text.splitlines() if 'saddr {' in line and 'ct state' in line]
+        rules = [line for line in text.splitlines() if 'goto tp_inherit' in line]
         self.assertEqual(len(rules), 2)
         self.assertTrue(any('meta nfproto ipv4' in line for line in rules))
         self.assertTrue(any('meta nfproto ipv6' in line for line in rules))
 
     def test_mac_state_direction_and_return_flags_are_generic_optional_selectors(self):
         text = self.firewall([{'action': 'allow',
-            'from': {'interface': 'transit0', 'addresses': '198.51.100.0/24', 'mac': '02:00:00:00:00:07'},
+            'from': {'interface': 'lan.20', 'addresses': '172.20.20.0/24', 'mac': '02:00:00:00:00:07'},
             'to': 'home', 'protocol': 'tcp', 'tcp_flags': ['ack'],
             'states': ['established'], 'direction': 'reply'}])
-        self.assertIn('ether saddr 02:00:00:00:00:07', text)
-        self.assertIn('tcp flags & (ack) == (ack) ct state { established } ct direction reply accept', text)
-        self.assertLess(text.index('ct state invalid,untracked drop'), text.index('tcp flags & (ack)'))
+        self.assertIn('"lan.20" . 172.20.20.0/24 . 02:00:00:00:00:07', text)
+        self.assertIn('ct state { established } ct direction reply tcp flags & (ack) == (ack) goto tp_inherit', text)
+        forward = text.split(' chain forward {', 1)[1]
+        self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index('goto tp_access'))
 
     def test_icmp_types_and_non_transport_protocols_are_supported(self):
         text = self.firewall([
@@ -76,7 +81,8 @@ class AccessTests(unittest.TestCase):
 
     def test_default_rules_exclude_invalid_connections(self):
         text = self.firewall([{'action': 'allow', 'from': 'home', 'to': 'guest'}])
-        self.assertIn('ct state { new, established, related } accept', text)
+        forward = text.split(' chain forward {', 1)[1]
+        self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index('goto tp_access'))
 
     def test_optional_names_survive_compilation_without_changing_firewall_permissions(self):
         rule = {'action': 'allow', 'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}
@@ -119,8 +125,15 @@ class AccessTests(unittest.TestCase):
             {'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}]}
         value['uplink'].pop('masquerade', None)
         text = config.render(value)['etc/nftables.conf']
-        self.assertIn('iifname "lan.10" oifname "wan" accept', text)
-        self.assertIn('iifname "lan.10" oifname "lan.20" tcp dport { 443 } accept', text)
+        before = copy.deepcopy(value)
+        ordered = copy.deepcopy(value)
+        ordered['access'] = {'rules': [
+            {'action': 'allow', 'from': 'home', 'to': 'uplink'},
+            {'action': 'allow', 'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}]}
+        a, b = (tun_policy.compile(config.normalize(item)) for item in (value, ordered))
+        self.assertEqual(a['rules'], b['rules'])
+        self.assertEqual(a['declarations'], b['declarations'])
+        self.assertEqual(value, before)
         self.assertIn('ip saddr 192.168.10.0/24 oifname "wan" masquerade', text)
 
     def test_invalid_and_injectable_selectors_are_rejected_without_echoing_values(self):

@@ -48,9 +48,9 @@ def values(items):
     return '{ '+', '.join(dict.fromkeys(str(item) for item in items))+' }'
 
 
-def render(value, *, extension_rules=None, access_backend='legacy', retained_allocations=None):
-    # Build-time qualification selector. A release must admit the matching
-    # dynamic data writer before this replaces its installed policy backend.
+def render(value, *, extension_rules=None, access_backend='tun', retained_allocations=None):
+    # The default and all deployed builds use client-facing TUN enforcement.
+    # Explicit legacy rendering remains available for migration comparisons.
     require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
     tun = access_backend == 'tun'
     networks, interfaces, uplink = value['networks'], value['hardware']['interfaces'], value['uplink']

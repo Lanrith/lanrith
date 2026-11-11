@@ -50,45 +50,33 @@ class PolicyAgentContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, 'dynamic uplink source translation'):
             config.render(value)
 
-    def test_base_firewall_bridges_only_agent_admission_marks(self):
+    def test_base_firewall_enforces_identity_without_permission_carrier_marks(self):
         from lanrith import firewall
         value = config.normalize(declaration())
         text = firewall.render(value)
-        self.assertIn('chain source_guard { type filter hook prerouting priority -310; policy accept;', text)
-        self.assertIn('meta mark & 0xff000000 { 0xb1000000, 0xb2000000, 0xb3000000, 0xd1000000', text)
-        self.assertIn('0xf6000000 } accept', text)
-        self.assertNotIn('jump directory_grants', text)
-        self.assertNotIn('ct state established,related accept\n }\n chain output', text)
+        self.assertIn('chain source_guard { type filter hook prerouting priority -300; policy accept;', text)
+        self.assertNotIn('meta mark & 0xff000000', text)
         self.assertNotIn('chain n64_', text)
         self.assertNotIn('chain nat46_input', text)
-        self.assertNotIn('flags dynamic,timeout', text)
+        forward = text.split(' chain forward {', 1)[1].split(' chain output', 1)[0]
+        self.assertLess(forward.index('jump tp_identity'), forward.index('ct direction reply ct mark'))
+        self.assertNotIn('ct state established,related accept', forward)
+        unmanaged = firewall.render(config.normalize(minimal()))
+        self.assertNotIn('jump tp_identity', unmanaged)
 
-        unmanaged = config.normalize(minimal())
-        static = firewall.render(unmanaged)
-        self.assertIn('chain source_guard { type filter hook prerouting priority -300; policy accept;', static)
-        self.assertNotIn('meta mark & 0xff000000 { 0xb1000000', static)
-
-    def test_nat64_target_kinds_are_selected_behind_mandatory_guards(self):
+    def test_nat64_transit_is_selected_behind_mandatory_guards(self):
         from lanrith import firewall
         raw = declaration()
         for enabled in (False, True):
             with self.subTest(nat64=enabled):
                 raw['translation'] = {'nat64': {'enabled': enabled}}
-                value = config.normalize(raw)
-                text = firewall.render(value)
-                forward = text[text.index('chain forward'):text.index('chain output')]
-                bridge = next(line for line in forward.splitlines()
-                              if 'meta mark & 0xff000000 {' in line)
-                for mark in firewall.NAT64_TARGET_MARKS:
-                    self.assertEqual(mark in bridge, enabled)
-                self.assertLess(forward.index('ct state invalid,untracked drop'),
-                                forward.index(bridge))
+                text = firewall.render(config.normalize(raw))
+                forward = text.split(' chain forward {', 1)[1].split(' chain output', 1)[0]
+                for guard in ('ct state invalid,untracked drop', 'jump tp_identity', 'jump tp_boundary'):
+                    self.assertLess(forward.index(guard), forward.index('jump tp_transit'))
+                self.assertEqual('oifname "nat64" meta nfproto ipv6' in text, enabled)
+                self.assertNotIn('meta mark & 0xff000000', text)
                 self.assertNotIn('ct state established,related accept', forward)
-        # Optional translation alone supplies no helper or forwarding permit.
-        ordinary = minimal()
-        ordinary['translation'] = {'nat64': {'enabled': True}}
-        text = firewall.render(config.normalize(ordinary))
-        self.assertNotIn('meta mark & 0xff000000 { 0xb1000000', text)
 
     def test_service_source_allocations_are_not_inferred_from_delegation_ceilings(self):
         raw = declaration()
