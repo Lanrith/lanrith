@@ -170,6 +170,8 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
                 'program_sha256': metadata['floor_sha256'], 'objects': [row for row in
                     json.loads((work/'ruleset.json').read_bytes())['nftables'] if 'metainfo' not in row]}))
             observed.chmod(0o444)
+            observed.with_name('policy-profile-metadata.json').write_bytes(canonical(metadata))
+            observed.with_name('policy-profile-metadata.json').chmod(0o444)
     # A trusted companion may now install/start generated service dependencies
     # using the actual completed profile. No runtime CLI or source intent can
     # select this hook, and the baseline, floor and guard artifacts stay pinned.
