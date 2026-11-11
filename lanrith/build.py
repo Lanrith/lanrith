@@ -245,7 +245,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     required = runtime_plan.required_units(value, target_facts=target_facts,
                                            integrations=integration['health_units'])
     (metadata/'health.json').write_bytes(release.canonical(
-        runtime_plan.health(value, target_facts=target_facts, integrations=integration['health_units'])))
+        runtime_plan.health(value, target_facts=target_facts, integrations=integration['health_units'],
+                            access_backend=access_backend)))
     if value.get('observability', {}).get('metrics', {}).get('enabled'):
         metric_policy = json.loads((metadata/'router-metrics.json').read_bytes())
         metric_policy['units'] = required

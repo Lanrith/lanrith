@@ -77,7 +77,7 @@ while True:
 
 def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None,
             prepare_interfaces=None, prepare_ruleset=None, after_profile=None,
-            retained_allocations=None, snapshot_provider=None, access_backend='legacy'):
+            retained_allocations=None, snapshot_provider=None, access_backend='legacy', service_graph=None):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
@@ -85,6 +85,8 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         not output.exists() and output.is_absolute() and output.parent.is_dir(), 'Fixture topology/output exists.')
     sources = {name: sha(ROOT/name) for name in (*base.SOURCE_FILES, 'lanrith/kea_runtime.py',
         'tests/policy_bindings_component_native.py', 'tests/test_radius.py')}
+    if service_graph is not None:
+        sources['tests/policy_service_graph_native.py'] = sha(ROOT/'tests/policy_service_graph_native.py')
     require(isinstance(collector_sha, str) and re.fullmatch('[0-9a-f]{64}', collector_sha) and
         sha(candidate/COLLECTOR) == collector_sha and not (Path('/usr/bin')/COLLECTOR).exists(),
         'Candidate collector hash differs.')
@@ -166,7 +168,8 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         after_profile(copy.deepcopy(value), dict(files), copy.deepcopy(contract), dict(metadata))
     policy_runtime.publish_runtime(contract, metadata, 'c'*64)
     policy_runtime.empty_bindings()
-    base.run('/usr/bin/router-policy-helper', '-config-directory', str(policy_runtime.CONFIG), '-initialize-state')
+    if service_graph is None:
+        base.run('/usr/bin/router-policy-helper', '-config-directory', str(policy_runtime.CONFIG), '-initialize-state')
     units = Path('/run/systemd/system')
     names = (base.HELPER, *base.SOCKETS, *base.DEPENDENCIES, 'kea-dhcp4-server.service', 'freeradius.service')
     for name in (base.HELPER, base.DEPENDENCIES[1]):
@@ -195,6 +198,8 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     with path.open('w') as stream:
         writer = csv.DictWriter(stream, fieldnames=list(lease), lineterminator='\n'); writer.writeheader(); writer.writerow(lease)
     os.chown(path, account.pw_uid, account.pw_gid); path.chmod(0o600)
+    if service_graph is not None:
+        service_graph.install(candidate, contract, files, metadata, units)
     checks, observed, paused = [], {}, None
     def bindings(): return json.loads((policy_runtime.BINDINGS/'bindings.json').read_bytes())
     # Follow the selected helper's bounded processing cap. This changes only
@@ -203,8 +208,11 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     # the real compiler/baseline contract; directory proposals still enter the
     # same authenticated reader socket and independently checked source path.
     proposal = snapshot if snapshot_provider is None else snapshot_provider
-    def submit(): return base.request(base.PROPOSAL, proposal(), uid=1701, gid=1701,
-                                      response_timeout=10 if contract['translation_manifests'] else 7).get('reply', {})
+    def submit():
+        if service_graph is not None:
+            return service_graph.submit()
+        return base.request(base.PROPOSAL, proposal(), uid=1701, gid=1701,
+                            response_timeout=10 if contract['translation_manifests'] else 7).get('reply', {})
     def observe(): return base.request(policy_runtime.OBSERVATIONS, base.OBSERVE).get('reply', {})
     try:
         base.run('systemctl', 'daemon-reload')
@@ -272,6 +280,8 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         require(submit().get('grant_count', 0) > 0, 'Fresh directory confirmation did not restore permission.')
         if observe_stage is not None: observe_stage('directory-reconfirmed', value, files)
         checks.append('recovered-producer-needs-fresh-directory-confirmation-without-helper-restart')
+        if service_graph is not None:
+            service_graph.qualify(checks, observed, observe, bindings)
     except BaseException:
         try:
             diagnostic = {'result': 'failure-diagnostic-only', 'bindings': bindings(),
@@ -279,12 +289,14 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
             output.with_suffix('.failure.json').write_bytes(canonical(diagnostic))
         except Exception:
             pass  # Preserve the original failure if its diagnostic read fails.
-        raw = base.run('journalctl', '--no-pager', '-n', '60', '-u', base.HELPER, '-u', base.DEPENDENCIES[1],
+        raw = base.run('journalctl', '--no-pager', '-n', '80', '-u', base.HELPER, '-u', base.DEPENDENCIES[0],
+            '-u', base.DEPENDENCIES[1], '-u', base.DEPENDENCIES[2], '-u', 'lanrith-policy-guards.service',
             '-u', 'kea-dhcp4-server.service', check=False).stdout
         sys.stderr.buffer.write(raw[-16000:])  # Only isolated synthetic data.
         raise
     finally:
         if paused is not None: os.kill(paused, signal.SIGCONT)
+        if service_graph is not None: service_graph.close()
         base.run('systemctl', 'stop', *names, check=False)
         for name in names:
             (units/name).unlink(missing_ok=True)
@@ -303,6 +315,12 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
             'real Kea serves a lease seeded before startup; no DHCP packets or RADIUS/LDAP authentication',
             'development component bytes only; no release/package admission',
             'no application packets, translators, complete image boot, upgrade/fallback or physical acceptance']}
+    if service_graph is not None:
+        result.update(test='offline-generated-policy-service-graph',
+            reader_sha256=sha(candidate/'router-policy-reader'),
+            limits=['synthetic TLS directory and accounting service; real reader/helper/collector and bootstrap units',
+                    'real Kea seeded lease; no DHCP packets or RADIUS authentication',
+                    'development component bytes; no release admission, full image boot or hardware acceptance'])
     with output.open('xb') as stream: stream.write(canonical(result))
     print(json.dumps({'result': 'pass', 'checks': len(checks)}))
 

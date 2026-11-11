@@ -524,7 +524,7 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
     for key in value['administration']['networks']:
         files['etc/ssh/sshd_config.d/00-lanrith.conf'] += ''.join(
             'ListenAddress '+str(ipaddress.ip_interface(a).ip)+'\n' for a in networks[key]['addresses'])
-    files.update(runtime_plan.render(value, target_facts=target_facts))
+    files.update(runtime_plan.render(value, target_facts=target_facts, access_backend=access_backend))
     files['usr/share/lanrith/configuration.sha256'] = rendered_digest(
         value, target_facts, retained_allocations=retained_allocations, access_backend=access_backend) + '\n'
     return files

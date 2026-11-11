@@ -14,7 +14,9 @@ IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 
 
 def check(plan):
-    require(isinstance(plan, dict) and set(plan) == {'schema', 'units', 'interfaces', 'probes'} and
+    require(isinstance(plan, dict) and {'schema', 'units', 'interfaces', 'probes'} <= set(plan) <=
+            {'schema', 'units', 'interfaces', 'probes', 'native_translation'} and
+            ('native_translation' not in plan or plan['native_translation'] is True) and
             plan['schema'] == 1 and isinstance(plan['units'], list) and 3 <= len(plan['units']) <= 256 and
             isinstance(plan['interfaces'], list) and 1 <= len(plan['interfaces']) <= 256 and
             isinstance(plan['probes'], list) and len(plan['probes']) <= len(PROBES),
@@ -26,7 +28,7 @@ def check(plan):
             len(set(plan['probes'])) == len(plan['probes']), 'Invalid compiled boot requirements.')
     for probe in plan['probes']:
         manifest = json.loads(read(Path('/usr/share/lanrith', probe+'.json'), 1024*1024))
-        if probe == 'nat46':
+        if probe == 'nat46' or probe in ('nat64', 'nat64-internal') and plan.get('native_translation'):
             from .translation_runtime import status
         elif probe == 'ownership':
             from .hardware import ownership_status as status

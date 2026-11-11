@@ -3,7 +3,7 @@
 import ipaddress
 
 from . import fancontrol_config, hardware_config, intent
-from .release import canonical
+from .release import canonical, require
 
 
 def required_units(value, *, target_facts=None, integrations=()):
@@ -54,7 +54,8 @@ def required_units(value, *, target_facts=None, integrations=()):
     return sorted(set(units))
 
 
-def health(value, *, target_facts=None, integrations=()):
+def health(value, *, target_facts=None, integrations=(), access_backend='legacy'):
+    require(access_backend in ('legacy', 'tun'), 'Unknown boot health translation backend.')
     probes = []
     if value.get('translation', {}).get('nat46', {}).get('enabled'):
         probes.append('nat46')
@@ -66,12 +67,14 @@ def health(value, *, target_facts=None, integrations=()):
             'interfaces': [{'name': item['name'],
                             'addresses': [str(ipaddress.ip_interface(a).ip) for a in intent.gateway_addresses(item)],
                             **({'namespace': item['namespace']} if 'namespace' in item else {})}
-                           for item in value['networks'].values()], 'probes': probes}
+                           for item in value['networks'].values()], 'probes': probes,
+            **({'native_translation': True} if access_backend == 'tun' else {})}
 
 
-def render(value, *, target_facts=None):
+def render(value, *, target_facts=None, access_backend='legacy'):
     admin = value['administration']
-    return {'usr/share/lanrith/health.json': canonical(health(value, target_facts=target_facts)).decode(),
+    return {'usr/share/lanrith/health.json': canonical(health(value, target_facts=target_facts,
+                                                           access_backend=access_backend)).decode(),
             'usr/share/lanrith/administration.json': canonical(
                 {'schema': 1, **{k: admin[k] for k in ('username', 'host_key_state', 'host_key_rotation',
                                                        'serial', 'root_access')}}).decode(),
