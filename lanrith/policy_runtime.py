@@ -87,11 +87,14 @@ def exact(value, keys, label):
 def load_contract(path=CONTRACT, *, owner=0):
     value = decode(read(path, 64*1024, owner=owner, private=True), 64*1024)
     observer = value.get('observer') if isinstance(value, dict) else None
+    backend = value.get('backend') if isinstance(value, dict) else None
+    if backend not in (None, 'tun'):
+        raise PolicyRuntimeError('Unknown policy backend.')
     value = exact(value, {
         'schema_version', 'profile_directory', 'profile_metadata', 'generation_directory',
         'state_directory', 'binding_directory', 'nft_executable', 'helper_executable',
         'recover_executable', 'collector_executable', 'managed_interfaces', 'directory',
-        'binding_collector', 'translation_manifests'} | ({'observer'} if observer is not None else set()),
+        'binding_collector', 'translation_manifests'} | ({'observer'} if observer is not None else set()) | ({'backend', 'guard_interfaces'} if backend is not None else set()),
         'Policy runtime')
     if observer is not None:
         exact(observer, {'user', 'uid', 'gid'}, 'Policy observer')
@@ -119,6 +122,11 @@ def load_contract(path=CONTRACT, *, owner=0):
             len(interfaces) > 64 or any(not isinstance(name, str) or not IFNAME.fullmatch(name)
                                        for name in interfaces)):
         raise PolicyRuntimeError('Policy managed-interface inventory differs.')
+    if backend == 'tun':
+        guards = value['guard_interfaces']
+        if (not isinstance(guards, list) or not guards or guards != sorted(set(guards)) or len(guards) > 128 or
+                any(not isinstance(name, str) or not IFNAME.fullmatch(name) for name in guards)):
+            raise PolicyRuntimeError('TUN guard interface inventory differs.')
     directory = exact(value['directory'], {'url', 'base_dn', 'bind_dn', 'credential_name', 'ca_file'},
                       'Directory runtime')
     if (not all(isinstance(directory[key], str) and 0 < len(directory[key]) <= 2048
@@ -227,7 +235,7 @@ def translation_hash(contract):
         path = Path(entry['manifest'])
         data = read(path, 1024*1024)
         manifest = decode(data, 1024*1024)
-        if entry['kind'] == 'nat46':
+        if entry['kind'] == 'nat46' or contract.get('backend') == 'tun':
             from .translation_runtime import status
         else:
             from .nat64_runtime import status
@@ -252,7 +260,7 @@ def nat64_pin():
 
 def wait_interfaces(contract):
     deadline = time.monotonic()+45
-    while not all((Path('/sys/class/net')/name).exists() for name in contract['managed_interfaces']):
+    while not all((Path('/sys/class/net')/name).exists() for name in contract.get('guard_interfaces', contract['managed_interfaces'])):
         if time.monotonic() >= deadline:
             raise PolicyRuntimeError('Policy guard interfaces are unavailable.')
         time.sleep(0.2)
@@ -386,9 +394,12 @@ def publish_runtime(contract, profile, mapping):
                 pass  # Optional observations never prevent the core bootstrap.
             else:
                 helper.update(observer_uid=observer['uid'], observations_socket=str(OBSERVATIONS))
-    runtime = nat64_pin()
-    if runtime is not None:
-        helper['nat64_runtime'] = runtime
+    if contract.get('backend') == 'tun':
+        helper.update(backend='tun', conntrack_executable='/usr/sbin/conntrack')
+    else:
+        runtime = nat64_pin()
+        if runtime is not None:
+            helper['nat64_runtime'] = runtime
     atomic(CONFIG/'helper.json', helper)
     atomic(GENERATION/'generation.json', generation)
 

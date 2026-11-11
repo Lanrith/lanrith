@@ -277,12 +277,16 @@ def runtime_contract(value):
     }
 
 
-def render(value, *, observer=None):
+def render(value, *, observer=None, access_backend="legacy"):
     """Emit private runtime policy and complete public service ownership."""
     policy = value.get('identity', {}).get('policy', {})
     if not policy.get('enabled', False):
         return {}
     contract = runtime_contract(value)
+    if access_backend == "tun":
+        from . import tun_policy
+        contract["backend"] = "tun"
+        contract["guard_interfaces"] = tun_policy.Compiler(value).physical
     if observer is not None:
         contract['observer'] = observer
     reference = contract['directory']['credential_name']
@@ -370,6 +374,7 @@ def render(value, *, observer=None):
         'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=256M\nMemorySwapMax=0\n'
         'TasksMax=64\nLimitNOFILE=1024\n')
     return {
+        **({'etc/xtables/connlabel.conf': '127 lanrith-identity\n'} if access_backend == 'tun' else {}),
         'etc/router-policy-agent/runtime/runtime.json': canonical(contract).decode(),
         # nft sends the complete immutable schema as one atomic transaction and
         # the helper inspects the complete listing. Bound both directions to the

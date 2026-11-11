@@ -105,3 +105,52 @@ def evidence(value, retained=None):
     result = manifests(value, retained)
     return {'schema': 1, 'translators': result,
             'sha256': hashlib.sha256(canonical(result)).hexdigest(), 'runtime_qualified': False}
+
+
+def render_native(value, retained=None):
+    """Run the packaged translator directly on image-owned TUN interfaces.
+
+    Systemd owns process lifecycle; TAYGA owns its native dynamic.map. Stable
+    source allocations are compiled into the same immutable configuration.
+    """
+    files = {}
+    for manifest in manifests(value, retained):
+        name, state = manifest['interface'], manifest['state_directory']
+        account = 'lanrith-'+name
+        files[manifest['config'].lstrip('/')] = manifest['text']
+        files['usr/share/lanrith/'+name+'.json'] = canonical(manifest).decode()
+        files['usr/lib/sysusers.d/80-lanrith-'+name+'.conf'] = f'u {account} - "IP translation" /\n'
+        if manifest['component'] == 'nat64':
+            files['usr/lib/tmpfiles.d/80-lanrith-'+name+'.conf'] = f'd {state} 0750 {account} {account} -\n'
+        files['usr/lib/systemd/system/lanrith-'+name+'-network.service'] = (
+            '[Unit]\nDescription=Configure translator interface and routes\n'
+            'Requires=nftables.service systemd-networkd.service\n'
+            'After=nftables.service systemd-networkd.service systemd-sysusers.service systemd-tmpfiles-setup.service\n'
+            f'BindsTo=nftables.service\nBefore=lanrith-{name}.service\n'
+            '[Service]\nType=oneshot\nRemainAfterExit=yes\nEnvironment=PYTHONPATH=/usr/lib/lanrith\n'
+            f'ExecStart=/usr/bin/python3 -m lanrith.translation_runtime start {name}\n'
+            f'ExecStop=/usr/bin/python3 -m lanrith.translation_runtime stop {name}\n'
+            'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
+            'CapabilityBoundingSet=CAP_NET_ADMIN\nRestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6\n')
+        # The existing admitted 0.9.6 package installs this path. All three
+        # components use it; package/path renaming is independent of behavior.
+        binary = '/usr/lib/lanrith/tayga-internal'
+        files['usr/lib/systemd/system/lanrith-'+name+'.service'] = (
+            '[Unit]\nDescription=Translate IP packets with TAYGA\n'
+            f'Requires=lanrith-{name}-network.service nftables.service\n'
+            f'After=lanrith-{name}-network.service nftables.service\n'
+            f'BindsTo=lanrith-{name}-network.service nftables.service\n'
+            f'[Service]\nType=exec\nUser={account}\nGroup={account}\n'
+            'Environment=PYTHONPATH=/usr/lib/lanrith\n'
+            f'ExecStartPre=+/usr/bin/python3 -m lanrith.translation_runtime reset {name}\n'
+            f'ExecStart={binary} --nodetach --config {manifest["config"]}\n'
+            f'ExecStopPost=+/usr/bin/python3 -m lanrith.translation_runtime reset {name}\n'
+            'Restart=on-failure\nRestartSec=2s\nNoNewPrivileges=yes\n'
+            'KillMode=control-group\nTimeoutStartSec=15s\nTimeoutStopSec=15s\n'
+            'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=16\nLimitNOFILE=256\n'
+            'CapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'+
+            (f'ReadWritePaths={state}\n' if manifest['component'] == 'nat64' else '')+
+            'RestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6\nRestrictNamespaces=yes\n'
+            'DevicePolicy=closed\nDeviceAllow=/dev/net/tun rw\n'
+            '[Install]\nWantedBy=multi-user.target\n')
+    return files

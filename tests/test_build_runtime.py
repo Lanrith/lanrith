@@ -158,6 +158,7 @@ with patch.object(boot_health, 'command', command): boot_health.check(plan)
                     ('usr/lib/lanrith/owner.yaml', 'schema: 1'),
                     ('usr/lib/lanrith-build/policy-baseline.json', '{}'),
                     ('usr/lib/lanrith/lanrith/config.py', 'pass'),
+                    ('usr/lib/lanrith/lanrith/tun_policy.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/owner_inputs.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/discovery.py', 'pass'),
                     ('usr/lib/lanrith/lanrith/logs.py', 'pass'),

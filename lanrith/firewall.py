@@ -181,6 +181,8 @@ def render(value, *, extension_rules=None, access_backend='legacy', retained_all
     for network in networks.values():
         if not network.get('forwarding', True):
             lines += [f'  iifname "{network["name"]}" drop', f'  oifname "{network["name"]}" drop']
+    if tun and value.get('routing', {}).get('asymmetric_replies'):
+        lines.append('  jump tp_asymmetric')
     lines.append('  ct state invalid,untracked drop')
     lines += core_forward(value, plane)
     translators = list(intent.translations(value))
@@ -188,7 +190,7 @@ def render(value, *, extension_rules=None, access_backend='legacy', retained_all
         names = values('"'+name+'"' for name in translators)
         lines.append(f'  iifname {names} oifname {names} drop')
     if tun:
-        lines += tun_policy.forward()
+        lines += tun_policy.forward(value)
     elif policy_managed:
         # These marks are produced only after the helper's early checks. Its
         # later confirmation and physical-egress hooks still revalidate the

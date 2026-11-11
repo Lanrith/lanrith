@@ -101,7 +101,7 @@ def _forbidden(value, publisher):
     return list(dict.fromkeys(str(ip.ip_network(prefix)) for prefix in result))
 
 
-def _translators(value, retained_allocations):
+def _translators(value, retained_allocations, access_backend):
     components = {item['interface']: item for item in translation.manifests(value, retained_allocations)}
     if 'nat46' not in components or 'nat64-internal' not in components:
         return None
@@ -114,7 +114,8 @@ def _translators(value, retained_allocations):
         'systemctl': ['/usr/bin/systemctl'],
         'nat46': {
             'interface': nat46['interface'], 'unit': nat46['unit'], 'config': nat46['config'],
-            'binary': '/usr/sbin/tayga', 'ipv4': nat46['ipv4'], 'ipv6': nat46['ipv6'],
+            'binary': '/usr/lib/lanrith/tayga-internal' if access_backend == 'tun' else '/usr/sbin/tayga',
+            'ipv4': nat46['ipv4'], 'ipv6': nat46['ipv6'],
             'prefix': nat46['prefix'], 'data_directory': '/var/lib/tayga-nat46',
         },
         'nat64': {
@@ -126,7 +127,7 @@ def _translators(value, retained_allocations):
     }
 
 
-def router_manifest(value, retained_allocations=None):
+def router_manifest(value, retained_allocations=None, *, access_backend='legacy'):
     settings = value['services']['discovery']
     publisher = _publisher(value)
     sources = {network['name']: _discovery_prefixes(value, key) for key, network in selected(value)}
@@ -152,7 +153,7 @@ def router_manifest(value, retained_allocations=None):
         manifest['gateway'] = {'host': publisher['host'], 'port': 9443, 'clients': publisher['clients']}
         manifest['publication'] = {'host': publisher['host'], 'port': 9444,
                                    'clients': publisher['clients'], 'source': publisher['name']}
-    translators = _translators(value, retained_allocations)
+    translators = _translators(value, retained_allocations, access_backend)
     if translators:
         manifest['translators'] = translators
     return manifest
@@ -279,10 +280,10 @@ def firewall_rules(value, direction):
     return result
 
 
-def render(value, retained_allocations=None):
+def render(value, retained_allocations=None, *, access_backend='legacy'):
     if not active(value):
         return {}
-    router = router_manifest(value, retained_allocations)
+    router = router_manifest(value, retained_allocations, access_backend=access_backend)
     dns = dns_manifest(value)
     interfaces = ' '.join('--interface='+network['name']+':routable' for _, network in selected(value))
     collector_after = ['avahi-daemon.service', 'nftables.service', 'systemd-networkd.service']

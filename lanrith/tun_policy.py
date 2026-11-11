@@ -94,6 +94,7 @@ class Compiler:
                         for family in (4, 6)}
         self.routes = {family: route_scopes(value, family) for family in (4, 6)}
         self.sets = {}
+        self.set_prefix = 'tp_'
         self.rules = []
 
     def endpoint(self, selected, source):
@@ -183,7 +184,7 @@ class Compiler:
         ordered = sorted(compact)
         key = (family, source, mac, tuple(ordered))
         if key not in self.sets:
-            name = 'tp_'+hashlib.sha256(repr(key).encode()).hexdigest()[:16]
+            name = self.set_prefix+hashlib.sha256(repr(key).encode()).hexdigest()[:16]
             self.sets[key] = name
         return self.sets[key]
 
@@ -285,7 +286,7 @@ def definitions(value, retained_allocations=None):
     isolation before calling forward(). Runtime writers update only set data.
     """
     compiler = Compiler(value, retained_allocations).compile()
-    lines = compiler.declarations()
+    lines = compiler.declarations() + identity_definitions(value) + asymmetric_definitions(value)
     client_families = {6 if c['component'] == 'nat64' else 4 for c in compiler.components.values()}
     transit_families = {4 if c['component'] == 'nat64' else 6 for c in compiler.components.values()}
     for family in (4, 6):
@@ -372,8 +373,139 @@ def definitions(value, retained_allocations=None):
     return lines
 
 
-def forward():
+def forward(value=None):
     """Run after mandatory source, destination and service guards."""
-    return ['  ct status & 512 != 0 drop', '  jump tp_boundary', f'  ct mark {DIRECTORY} goto tp_fresh',
+    return (['  jump tp_identity'] if identity_enabled(value) else []) + ['  ct status & 512 != 0 drop', '  jump tp_boundary', f'  ct mark {DIRECTORY} goto tp_fresh',
             f'  ct state established,related ct direction reply ct mark {OWNER} accept',
             '  jump tp_transit', '  goto tp_access']
+
+
+def identity_enabled(value):
+    return bool(value and value.get('identity', {}).get('policy', {}).get('enabled', False))
+
+
+def asymmetric_definitions(value):
+    """Retain declared IPv6 reply exceptions without opening connection starts.
+
+    These replies can be invalid to conntrack because their request traversed
+    another router. Source validation and management isolation precede this
+    chain; current physical identity still applies before its accept verdict.
+    """
+    replies = value.get('routing', {}).get('asymmetric_replies', [])
+    if not replies:
+        return []
+    compiler = Compiler(value)
+    compiler.set_prefix = 'tp_asym_'
+    clauses = []
+    for reply in replies:
+        sources = set()
+        destinations = set()
+        for selector in integrations.endpoints(value, reply['from']):
+            interface = value['networks'][selector['network']]['name']
+            sources.update((interface, ip.ip_network(prefix), None) for prefix in selector['addresses'])
+        for selector in integrations.endpoints(value, reply['to']):
+            interface = value['networks'][selector['network']]['name']
+            destinations.update((interface, ip.ip_network(prefix)) for prefix in selector['addresses'])
+        source = compiler.selector_set(6, sources, True)
+        destination = compiler.selector_set(6, destinations, False)
+        predicate = ('tcp flags & (syn | ack | rst) == ack' if reply['mode'] == 'tcp_dsr'
+                     else 'icmpv6 type echo-reply')
+        clauses.append(f'  iifname . ip6 saddr @{source} oifname . ip6 daddr @{destination} '
+                       +predicate+' goto tp_asymmetric_allow')
+    return compiler.declarations() + [' chain tp_asymmetric {', *clauses, ' }',
+        ' chain tp_asymmetric_allow {',
+        *(['  jump tp_identity'] if identity_enabled(value) else []), '  accept', ' }']
+
+
+def identity_definitions(value):
+    """Fixed binding guards, evaluated before owner and directory permissions.
+
+    Bindings apply at physical ingress/egress, where the real device address
+    remains available. TUN traffic receives no invented Ethernet identity.
+    Historical classification is additive; an empty current set denies it.
+    """
+    if not identity_enabled(value):
+        return []
+    physical = sorted({value['hardware']['interfaces'][value['uplink']['interface']]['name'],
+                       *(n['name'] for n in value['networks'].values())})
+    physical_set = '{ '+', '.join(map(quote, physical))+' }'
+    managed = value['identity']['policy']['networks']
+    lines = [' set tp_started { type mark; size 1; }',
+             ' set tp_history_mac { type ether_addr; size 4096; }']
+    for family in (4, 6):
+        lines += [f' set tp_history{family} {{ type ipv{family}_addr; size 16384; }}',
+                  f' set tp_bound{family} {{ type ifname . ether_addr . ipv{family}_addr; flags timeout; size 16384; }}',
+                  f' set tp_dest{family} {{ type ifname . ipv{family}_addr; flags timeout; size 16384; }}',
+                  f' set tp_cleanup{family} {{ type ipv{family}_addr; size 32768; }}',
+                  f' chain tp_source{family} {{',
+                  f'  iifname . ether saddr . {"ip" if family == 4 else "ip6"} saddr @tp_bound{family} return',
+                  '  drop', ' }',
+                  f' chain tp_target{family} {{',
+                  f'  oifname . {"ip" if family == 4 else "ip6"} daddr @tp_dest{family} return',
+                  '  drop', ' }']
+    # A local negative-cleanup label groups connections involving known device
+    # endpoints. Nothing accepts traffic based on this label. Each translated
+    # family labels its own conntrack entry; TAYGA never transfers metadata.
+    lines += [' chain tp_cleanup { type filter hook forward priority -1; policy accept;']
+    for family, spelling in ((4, 'ip'), (6, 'ip6')):
+        for field in ('saddr', 'daddr'):
+            lines.append(f'  {spelling} {field} @tp_cleanup{family} ct label set ct label | 127')
+    lines += [' }', ' chain tp_identity {', '  numgen inc mod 1 != @tp_started drop']
+    for family, spelling in ((4, 'ip'), (6, 'ip6')):
+        lines += [f'  meta nfproto ipv{family} iifname {physical_set} ether saddr @tp_history_mac jump tp_source{family}',
+                  f'  iifname {physical_set} {spelling} saddr @tp_history{family} jump tp_source{family}',
+                  f'  oifname {physical_set} {spelling} daddr @tp_history{family} jump tp_target{family}']
+        for key in managed:
+            network = value['networks'][key]
+            device = quote(network['name'])
+            lines.append(f'  meta nfproto ipv{family} iifname {device} jump tp_source{family}')
+            # Match the declared destination space even before it first appears
+            # in history, including physical return legs of either translator.
+            for prefix in [*[ip.ip_interface(a).network for a in network['addresses']],
+                           *[ip.ip_network(a) for a in network.get('additional_subnets', [])],
+                           *[ip.ip_network(a) for a in routing.routed_sources(value, key)]]:
+                if prefix.version == family:
+                    lines.append(f'  oifname {device} {spelling} daddr {prefix} jump tp_target{family}')
+    return lines + [' }']
+
+
+def identity_egress(value):
+    """Verify the final Ethernet destination after neighbour resolution.
+
+    The image installs these hooks after its physical interfaces exist. They
+    consume the same current bindings as the inet guards, with no packet marks
+    or protocol-specific permission copies at the physical boundary.
+    """
+    if not identity_enabled(value):
+        return '# No directory identity egress hooks.\n'
+    physical = Compiler(value).physical
+    lines = ['table netdev lanrith_identity {',
+             ' set tp_history_mac { type ether_addr; size 4096; }']
+    for family in (4, 6):
+        lines += [f' set tp_history{family} {{ type ipv{family}_addr; size 16384; }}',
+                  f' set tp_bound{family} {{ type ifname . ether_addr . ipv{family}_addr; flags timeout; size 16384; }}',
+                  f' chain tp_target{family} {{',
+                  f'  oifname . ether daddr . {"ip" if family == 4 else "ip6"} daddr @tp_bound{family} return',
+                  '  drop', ' }']
+    lines += [' chain tp_identity {',
+              '  ether type ip6 ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } return']
+    for network in value['networks'].values():
+        for address in intent.gateway_addresses(network):
+            gateway = ip.ip_interface(address)
+            if gateway.version == 4 and network.get('dhcp4'):
+                lines.append(f'  oifname {quote(network["name"])} ip saddr {gateway.ip} udp sport 67 udp dport 68 return')
+    for family, spelling in ((4, 'ip'), (6, 'ip6')):
+        lines += [f'  ether type {spelling} ether daddr @tp_history_mac jump tp_target{family}',
+                  f'  {spelling} daddr @tp_history{family} jump tp_target{family}']
+        for key in value['identity']['policy']['networks']:
+            network = value['networks'][key]
+            for prefix in [*[ip.ip_interface(a).network for a in network['addresses']],
+                           *[ip.ip_network(a) for a in network.get('additional_subnets', [])],
+                           *[ip.ip_network(a) for a in routing.routed_sources(value, key)]]:
+                if prefix.version == family:
+                    lines.append(f'  oifname {quote(network["name"])} {spelling} daddr {prefix} jump tp_target{family}')
+    lines += [' }']
+    for index, interface in enumerate(physical):
+        lines += [f' chain tp_egress_{index} {{ type filter hook egress device {quote(interface)} priority 0; policy accept;',
+                  '  jump tp_identity', ' }']
+    return '\n'.join(lines+['}'])+'\n'

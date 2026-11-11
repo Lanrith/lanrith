@@ -60,19 +60,30 @@ def finalize_policy(root):
         raise ValueError('Policy profile scratch path already exists.')
     scratch.mkdir(mode=0o700)
     program = r'''
-import pathlib, subprocess
+import json, pathlib, subprocess
 root = pathlib.Path('/run/lanrith-policy-build')
+backend = pathlib.Path('/usr/lib/lanrith-build/policy-backend')
+selected = backend.read_text().strip() if backend.exists() else 'legacy'
+if selected not in ('legacy', 'tun'):
+    raise ValueError('Unknown build policy backend.')
+extra = []
+if selected == 'tun':
+    for interface in json.loads(pathlib.Path('/usr/lib/lanrith-build/policy-interfaces.json').read_text()):
+        subprocess.run(['/usr/sbin/ip', 'link', 'add', 'dev', interface, 'type', 'dummy'], check=True)
+    extra = ['-guards', '/usr/lib/lanrith-build/policy-egress.nft']
 # Loading and listing are separate operations in this same disposable network namespace.
 subprocess.run(['/usr/sbin/nft', '-f', '/etc/nftables.conf'],
     check=True, stdin=subprocess.DEVNULL, capture_output=True)
-listing = subprocess.run(['/usr/sbin/nft', '-j', 'list', 'ruleset'],
+if selected == 'tun':
+    subprocess.run(['/usr/sbin/nft', '-f', '/usr/lib/lanrith-build/policy-egress.nft'], check=True)
+listing = subprocess.run(['/usr/sbin/nft', '-j']+(['-n'] if selected == 'tun' else [])+['list', 'ruleset'],
     check=True, stdin=subprocess.DEVNULL, capture_output=True).stdout
 (root/'ruleset.json').write_bytes(listing)
 (root/'output').mkdir(mode=0o700)
-subprocess.run(['/usr/bin/router-policy-profile',
+subprocess.run(['/usr/bin/router-policy-profile', '-backend', selected,
     '-baseline', '/usr/lib/lanrith-build/policy-baseline.json',
     '-ruleset', '/run/lanrith-policy-build/ruleset.json',
-    '-output-directory', '/run/lanrith-policy-build/output'],
+    '-output-directory', '/run/lanrith-policy-build/output']+extra,
     check=True, stdin=subprocess.DEVNULL)
 '''
     result = subprocess.run(['unshare', '--net', '--fork', '--', 'chroot', str(root),

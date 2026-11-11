@@ -37,7 +37,7 @@ def resolve(configuration, declarations, *, service='policy'):
     return {'user': reader['name'], 'uid': reader['uid'], 'gid': reader['gid']}
 
 
-def install(configuration, declarations, destination):
+def install(configuration, declarations, destination, *, access_backend='legacy'):
     observer = resolve(configuration, declarations)
     log_observer = resolve(configuration, declarations, service='logs')
     dns_observer = resolve(configuration, declarations, service='dns')
@@ -46,7 +46,7 @@ def install(configuration, declarations, destination):
     # select a reader, but cannot supply a helper unit, command, path or parser.
     if observer is not None:
         from . import policy_agent
-        files = policy_agent.render(configuration, observer=observer)
+        files = policy_agent.render(configuration, observer=observer, access_backend=access_backend)
         for name in ('etc/router-policy-agent/runtime/runtime.json',
                      'usr/lib/systemd/system/lanrith-policy-helper.service'):
             path = destination/name

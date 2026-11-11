@@ -121,7 +121,9 @@ def admit(directory, expected):
     return value
 
 
-def overlay(configuration, selected, destination, base_files=None):
+def overlay(configuration, selected, destination, base_files=None, *, access_backend='legacy',
+            retained_allocations=None):
+    require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
     require(set(selected) == set(configuration['extensions']), 'Integration selections differ from configuration.')
     units, digests, written, identities, starts, declarations, replaced = [], {}, set(), [], [], [], set()
     observations, credentials = [], []
@@ -168,13 +170,14 @@ def overlay(configuration, selected, destination, base_files=None):
         require('etc/nftables.conf' not in replaced,
                 'Typed integration networking cannot combine with a whole-firewall replacement.')
         from . import firewall, service_plane
-        (destination/'etc/nftables.conf').write_text(firewall.render(configuration, extension_rules=plan))
+        (destination/'etc/nftables.conf').write_text(firewall.render(configuration, extension_rules=plan,
+            access_backend=access_backend, retained_allocations=retained_allocations))
         if plan['services']:
             (destination/'etc/lanrith/services.nft').write_text(service_plane.namespace_firewall(
                 configuration, service_plane.topology(configuration), extension_rules=plan))
     # Observation binding follows the final typed network projection, so adding
     # listeners cannot overwrite the sampled drop path or its ruleset digest.
-    extension_observations.install(configuration, observations, destination)
+    extension_observations.install(configuration, observations, destination, access_backend=access_backend)
     return {'digests': digests, 'health_units': sorted(set(units)), 'identities': identities,
             'start_units': sorted(set(starts)), 'credential_catalogs': credential_catalogs}
 

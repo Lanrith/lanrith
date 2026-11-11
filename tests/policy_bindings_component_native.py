@@ -26,7 +26,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT/'tests')]
-from lanrith import config, policy_agent, policy_runtime
+from lanrith import config, policy_agent, policy_runtime, tun_policy
 from lanrith.release import canonical, require
 import policy_observer_component_native as base
 from test_radius import declaration
@@ -77,7 +77,7 @@ while True:
 
 def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None,
             prepare_interfaces=None, prepare_ruleset=None, after_profile=None,
-            retained_allocations=None, snapshot_provider=None):
+            retained_allocations=None, snapshot_provider=None, access_backend='legacy'):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
@@ -109,8 +109,13 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     for network in value['networks'].values():
         for address in network['addresses']:
             base.run('ip', 'address', 'add', address, 'dev', network['name'], *(['nodad'] if ':' in address else []))
-    files = config.render(value, retained_allocations=copy.deepcopy(retained_allocations))
-    files.update(policy_agent.render(value, observer=observer))
+    files = config.render(value, retained_allocations=copy.deepcopy(retained_allocations),
+                          access_backend=access_backend)
+    files.update(policy_agent.render(value, observer=observer, access_backend=access_backend))
+    if access_backend == 'tun':
+        labels = Path('/etc/xtables/connlabel.conf')
+        labels.parent.mkdir(parents=True, exist_ok=True)
+        labels.write_text(files['etc/xtables/connlabel.conf'])
     library = Path('/usr/lib/lanrith/lanrith'); require(not library.exists(), 'Runtime library exists.')
     library.mkdir(parents=True)
     for name in ('__init__.py', 'release.py', 'policy_runtime.py', 'kea_runtime.py'):
@@ -133,18 +138,27 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         work = Path(temporary)
         (work/'base.nft').write_text(ruleset)
         base.run('nft', '-f', str(work/'base.nft'))
+        compiler_flags = []
+        numeric = []
+        if access_backend == 'tun':
+            guards = work/'egress.nft'
+            guards.write_text(tun_policy.identity_egress(value))
+            base.run('nft', '-f', str(guards))
+            compiler_flags = ['-backend', 'tun', '-guards', str(guards)]
+            numeric = ['-n']
         (work/'baseline.json').write_bytes(canonical(policy_agent.baseline(value, retained_allocations)))
-        (work/'ruleset.json').write_bytes(base.run('nft', '-j', 'list', 'ruleset').stdout)
+        (work/'ruleset.json').write_bytes(base.run('nft', '-j', *numeric, 'list', 'ruleset').stdout)
         destination = work/'profile'; destination.mkdir(mode=0o700)
         base.run('/usr/bin/router-policy-profile', '-baseline', str(work/'baseline.json'),
-            '-ruleset', str(work/'ruleset.json'), '-output-directory', str(destination))
+            '-ruleset', str(work/'ruleset.json'), '-output-directory', str(destination), *compiler_flags)
         metadata = json.loads((destination/'router-profile-metadata.json').read_bytes())
         profile = (destination/'router-profile.json').read_bytes().removesuffix(b'\n')
         require(hashlib.sha256(profile).hexdigest() == metadata['profile_sha256'], 'Profile digest differs.')
         parent = Path(contract['profile_directory'])
         (parent/'profile.json').write_bytes(profile); (parent/'profile.json').chmod(0o400)
         shutil.copyfile(destination/'router-guards.nft', parent/'guards.nft'); (parent/'guards.nft').chmod(0o400)
-        base.run('nft', '-f', str(parent/'guards.nft'))
+        if access_backend != 'tun':
+            base.run('nft', '-f', str(parent/'guards.nft'))
     # A trusted companion may now install/start generated service dependencies
     # using the actual completed profile. No runtime CLI or source intent can
     # select this hook, and the baseline, floor and guard artifacts stay pinned.
@@ -281,6 +295,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     require(sources == {name: sha(ROOT/name) for name in sources} and sha(candidate/COLLECTOR) == collector_sha,
         'Source or candidate collector changed during qualification.')
     result = {'schema': 1, 'result': 'pass', 'test': 'offline-nonempty-generated-policy-bindings',
+        'access_backend': access_backend,
         'assessed_at': datetime.now(timezone.utc).isoformat(), 'checks': checks, 'observed': observed,
         'component': component, 'collector_sha256': collector_sha, 'source_sha256': sources,
         'external_network': False, 'private_image_qualified': False, 'selected_pinned_component_qualified': False,
@@ -297,5 +312,6 @@ if __name__ == '__main__':
     parser.add_argument('--candidate', type=Path, required=True)
     parser.add_argument('--collector-sha256', required=True)
     parser.add_argument('--result', type=Path, required=True)
+    parser.add_argument('--access-backend', choices=('legacy', 'tun'), default='legacy')
     args = parser.parse_args()
-    qualify(args.candidate, args.collector_sha256, args.result)
+    qualify(args.candidate, args.collector_sha256, args.result, access_backend=args.access_backend)

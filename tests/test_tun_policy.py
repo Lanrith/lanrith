@@ -147,6 +147,51 @@ class TunPolicyTests(unittest.TestCase):
         self.assertIn('iifname "nat46" meta nfproto ipv4',
                       firewall.render(config.normalize(nat46_declaration()), access_backend='tun'))
 
+    def test_build_selector_emits_native_services_and_strict_runtime_contract(self):
+        import json
+        raw = directory_declaration()
+        raw['networks']['home']['vlan'] = 1
+        raw['translation'] = {'nat64': {'enabled': True}}
+        files = config.render(raw, access_backend='tun')
+        self.assertIn('jump tp_identity', files['etc/nftables.conf'])
+        self.assertEqual(files['usr/lib/lanrith-build/policy-backend'], 'tun\n')
+        contract = json.loads(files['etc/router-policy-agent/runtime/runtime.json'])
+        self.assertEqual(contract['backend'], 'tun')
+        for name in ('nat64', 'nat64-internal'):
+            unit = files['usr/lib/systemd/system/lanrith-'+name+'.service']
+            self.assertIn('User=lanrith-'+name, unit)
+            self.assertIn('CapabilityBoundingSet=\n', unit)
+            self.assertIn('ExecStart=/usr/lib/lanrith/tayga-internal --nodetach --config /etc/', unit)
+        text = '\n'.join(files.values())
+        self.assertNotIn('lanrith.nat64_runtime', text)
+        self.assertNotIn('nat64-runtime/runtime.json', files)
+
+    def test_identity_guards_precede_owner_reply_shortcut_and_are_optional(self):
+        value = config.normalize(directory_declaration())
+        self.assertEqual(tun_policy.forward(value)[0], '  jump tp_identity')
+        text = '\n'.join(tun_policy.definitions(value))
+        self.assertIn('iifname . ether saddr . ip saddr @tp_bound4 return', text)
+        self.assertIn('oifname . ip6 daddr @tp_dest6 return', text)
+        self.assertIn('numgen inc mod 1 != @tp_started drop', text)
+        value['identity']['policy']['enabled'] = False
+        self.assertNotIn('tp_identity', '\n'.join(tun_policy.definitions(value)))
+        self.assertNotIn('tp_started', '\n'.join(tun_policy.definitions(value)))
+
+    def test_asymmetric_replies_are_ipv6_scoped_and_keep_identity_checks(self):
+        raw = directory_declaration()
+        raw['routing'] = {'asymmetric_replies': [
+            {'mode': mode, 'from': {'network': 'home', 'addresses': 'fd42:1234:5678:10::2'},
+             'to': {'network': 'home', 'addresses': 'fd42:1234:5678:10::3'}}
+            for mode in ('tcp_dsr', 'icmp_echo_reply')]}
+        value = config.normalize(raw)
+        text = firewall.render(value, access_backend='tun')
+        self.assertLess(text.index('  jump tp_asymmetric'), text.index('  ct state invalid,untracked drop'))
+        code = '\n'.join(tun_policy.asymmetric_definitions(value))
+        self.assertIn('tcp flags & (syn | ack | rst) == ack goto tp_asymmetric_allow', code)
+        self.assertIn('icmpv6 type echo-reply goto tp_asymmetric_allow', code)
+        self.assertIn('chain tp_asymmetric_allow {\n  jump tp_identity\n  accept', code)
+        self.assertNotIn('ipv4_addr', code)
+
     def test_unrecoverable_callback_mac_is_rejected_rather_than_ignored(self):
         value = config.normalize(nat64_declaration())
         value['access']['rules'] = [{'action': 'deny',

@@ -18,7 +18,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
              integrations=None, serial_hash=None, initrd_base=None,
              fallback_release=None, fallback_disk_by_id=None, fallback_esp_uuid=None,
              pcr_key=None, pcr_certificate=None, recovery_hash=None,
-             target_facts=None, retained_allocations=None):
+             target_facts=None, retained_allocations=None, access_backend='legacy'):
     for path in (base, destination, certificate, private_key, initrd_base, fallback_release,
                  pcr_key, pcr_certificate, recovery_hash, serial_hash):
         require(path is None or isinstance(path, Path) and path.is_absolute() and
@@ -33,7 +33,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     value = config.normalize(value)
     # Fail before creating a workspace if hardware evidence or runtime support
     # is missing. Configuration and facts are independently bound in the digest.
-    config.render(value, target_facts=target_facts, retained_allocations=retained_allocations)
+    config.render(value, target_facts=target_facts, retained_allocations=retained_allocations,
+                  access_backend=access_backend)
 
     from . import boot_policy
     require((pcr_key is None) == (pcr_certificate is None), 'Both PCR signing inputs are required together.')
@@ -70,7 +71,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         require(serial_hash is None, 'Root-disabled images cannot include a serial-login credential.')
     destination.mkdir(mode=0o700, parents=True)
     overlay = destination / 'mkosi.extra'
-    digest = config.write(value, overlay, target_facts=target_facts, retained_allocations=retained_allocations)
+    digest = config.write(value, overlay, target_facts=target_facts, retained_allocations=retained_allocations,
+                          access_backend=access_backend)
     loader = overlay/'efi/loader/loader.conf'
     loader.parent.mkdir(parents=True, exist_ok=True)
     loader.write_text('timeout 5\neditor no\nauto-firmware no\n')
@@ -85,7 +87,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                     require(member.isfile() and 0 < member.size <= 1024*1024 and
                             Path(name).name not in accounts, 'Base service account registry is ambiguous.')
                     accounts[Path(name).name] = archive.extractfile(member).read()
-    integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files)
+    integration = extensions.overlay(value, integrations or {}, overlay, base_files=base_files,
+                                     access_backend=access_backend, retained_allocations=retained_allocations)
     extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
     bindings.verify_accounts(value, accounts, overlay)
     # The effective intent includes every admitted integration, even when it adds no network fields.
@@ -98,7 +101,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         boot_inputs['fallback_binding'] = fallback_binding
     digest = config.effective_digest(value, integration['digests'],
         release.file_record(serial_hash)['sha256'] if serial_hash else None,
-        target_facts=target_facts, retained_allocations=retained_allocations, boot_inputs=boot_inputs)
+        target_facts=target_facts, retained_allocations=retained_allocations, boot_inputs=boot_inputs,
+        access_backend=access_backend)
     (overlay / 'usr/share/lanrith/configuration.sha256').write_text(digest + '\n')
     image_id = value.get('release', {}).get('image_id', 'lanrith')
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,

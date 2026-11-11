@@ -152,6 +152,27 @@ class Nat46Tests(unittest.TestCase):
                 translation_runtime.configure(manifest, 'start')
             command.assert_not_called()
 
+    def test_restart_retires_only_the_selected_components_connections(self):
+        manifest = json.loads(nat46.render(config.normalize(declaration()))['usr/share/lanrith/nat46.json'])
+        for code, diagnostic, allowed in ((0, '', True),
+                (1, 'conntrack v1.4.8 (conntrack-tools): 0 flow entries have been deleted.\n', True),
+                (1, 'permission denied', False), (2, 'invalid arguments', False)):
+            with self.subTest(code=code, diagnostic=diagnostic), \
+                    patch.object(translation_runtime, 'validate'), \
+                    patch.object(translation_runtime.subprocess, 'run',
+                        return_value=SimpleNamespace(returncode=code, stderr=diagnostic)) as run:
+                if not allowed:
+                    with self.assertRaises(ReleaseError):
+                        translation_runtime.reset_connections(manifest)
+                    self.assertEqual(run.call_count, 1)
+                    continue
+                translation_runtime.reset_connections(manifest)
+                arguments = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(arguments, [
+                    ['/usr/sbin/conntrack', '-D', '-f', family, field, manifest[key]]
+                    for family, key in (('ipv4', 'pool'), ('ipv6', 'prefix'))
+                    for field in ('--orig-src', '--orig-dst')])
+
     def test_failed_setup_removes_only_the_interface_it_created(self):
         manifest = json.loads(nat46.render(config.normalize(declaration()))['usr/share/lanrith/nat46.json'])
         for present in (False, True):
