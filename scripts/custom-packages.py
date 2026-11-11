@@ -17,7 +17,7 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
 from lanrith.sbom import go_modules
-from lanrith import build_cache
+from lanrith import apt_security, build_cache, build_resources
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,6 +85,8 @@ def main():
         shutil.copyfile(ROOT/'scripts/collect-notices.py', work/'collect-notices.py')
         run('docker', 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--user', str(os.getuid())+':'+str(os.getgid()),
+            *build_resources.arguments(),
+            *[item for key, value in build_resources.compiler_environment().items() for item in ('--env', key+'='+value)],
             '--env', 'GOCACHE=/work/go-cache', '--env', 'GOMODCACHE=/work/go-mod', '--env', 'GOENV=off',
             '--env', 'LANRITH_GO_VERSION='+pin['go_version'],
             '-v', str(work)+':/work', '-v', str(scanner)+':/scanner:ro', '-w', '/work/node-exporter',
@@ -131,15 +133,17 @@ def main():
         feed_digest = advisories.assess(queries, diagnostic=diagnostic)
         shutil.copyfile(ROOT/'scripts/collect-notices.py', pam/'collect-notices.py')
         shutil.copyfile(ROOT/'builders/pam/.dockerignore', pam/'.dockerignore')
+        apt_identity = apt_security.stage(ROOT, pam, 'bookworm')
         pam_inputs = {key: inputs[key] for key in ('PAM_RSSH_BUILDER_OCI', 'PAM_RSSH_RUST_VERSION',
             'DEBIAN_BOOKWORM_SNAPSHOT', 'DEBIAN_BOOKWORM_SECURITY_SNAPSHOT')}
         identity = hashlib.sha256(canonical({'arguments': pam_inputs, 'commit': commit,
             'containerfile': file_record(ROOT/'builders/pam/Containerfile')['sha256'],
-            'context_filter': file_record(ROOT/'builders/pam/.dockerignore')['sha256'],
+            'context_filter': file_record(ROOT/'builders/pam/.dockerignore')['sha256'], 'apt_security': apt_identity,
             'notices': file_record(work/'collect-notices.py')['sha256']})).hexdigest()
         pam_tag = 'lanrith-pam:'+identity
         argv = ['docker', 'build', '--pull', '--platform', 'linux/amd64',
                 '--file', str(ROOT/'builders/pam/Containerfile'), '--tag', pam_tag]
+        argv += build_resources.arguments()
         argv += build_cache.image_arguments('pam')
         argv += [argument for key in ('PAM_RSSH_BUILDER_OCI', 'PAM_RSSH_RUST_VERSION', 'DEBIAN_BOOKWORM_SNAPSHOT',
                                      'DEBIAN_BOOKWORM_SECURITY_SNAPSHOT')

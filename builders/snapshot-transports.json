@@ -1,0 +1,69 @@
+{
+  "records": [
+    {
+      "archive": "debian-security",
+      "index": {
+        "locator": "50a41e81c597bf51c8433709cc95b7c7e238a32a",
+        "sha256": "f8239930f429cd17ea38e03ca2437079be2f86d8641dea78b7ea29787dfc927f",
+        "size": 297208
+      },
+      "inrelease": {
+        "locator": "2d83a5cdef1323d30753e5ebfc25d9af43cd325f",
+        "sha256": "a8e217418cb4c361b5c3a3eb76804f78633491e995b18735f3862aaaece070b4",
+        "size": 43409
+      },
+      "release_sha256": "3305e8cbc049a83531191f9ad9706436f0a0e419e0610bd37307061792d65975",
+      "snapshot": "20261103T070000Z",
+      "suite": "trixie-security"
+    },
+    {
+      "archive": "debian",
+      "index": {
+        "locator": "efe5b90ec48b9c017922c5aa4996807d0f044064",
+        "sha256": "9e0b5aabb2465b3d2e7a7fe27f9913846277833f7a2826e7767acccff5b588c5",
+        "size": 8790396
+      },
+      "inrelease": {
+        "locator": "736a99b8b096598d48c438eb356bd074fecfbf23",
+        "sha256": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa",
+        "size": 151075
+      },
+      "release_sha256": "abcf5882746e0f68171f41adbb4ac01b74b49d62d203379befb9265804311a4f",
+      "snapshot": "20261103T070000Z",
+      "suite": "bookworm"
+    },
+    {
+      "archive": "debian",
+      "index": {
+        "locator": "32fc3b1c3e78ef911b125ee266a7e73d5884083f",
+        "sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+        "size": 9678380
+      },
+      "inrelease": {
+        "locator": "aa33cb317177428f33c9ff72fc3e9b634645f6ae",
+        "sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+        "size": 140421
+      },
+      "release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
+      "snapshot": "20261103T070000Z",
+      "suite": "trixie"
+    },
+    {
+      "archive": "debian-security",
+      "index": {
+        "locator": "c92d910614ff8a21a53728406db2b124e9f9cbaa",
+        "sha256": "cafd5e600d7f14a61282c01b3886a0754c4bcc89a9ab7384b92c8d0881bd31df",
+        "size": 359764
+      },
+      "inrelease": {
+        "locator": "577b1586ba92700a501dc9ababe107a572b9259c",
+        "sha256": "7b58164d2af0386b3c56507835d36062b28dc2855a0136db692621a4c263c135",
+        "size": 34770
+      },
+      "release_sha256": "24865a99c7600a949e1ac78111dcfe336b19487af096fb170ac8e805b75228b5",
+      "snapshot": "20261103T070000Z",
+      "suite": "bookworm-security"
+    }
+  ],
+  "schema": 1
+}

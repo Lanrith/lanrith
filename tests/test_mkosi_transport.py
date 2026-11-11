@@ -15,7 +15,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-URL = 'https://snapshot.debian.org/archive/debian/20260912T080811Z/pool/main/m/mkosi/mkosi_27-1_all.deb'
+URL = 'https://${host}/file/8be9af6ae90e8288b524b7a2ba046901e717ed95/mkosi_27-1_all.deb'
 SHA = '374b121fe598b89f1c2e3b99a65b305822b31b75e621ebda1f431a1e306766e9'
 
 
@@ -73,7 +73,12 @@ class MkosiTransportTests(unittest.TestCase):
         self.counts, self.payload = counts, payload
         self.url = 'https://127.0.0.1:'+str(server.server_port)
         source = (ROOT/'builders/mkosi/Containerfile').read_text()
-        self.script = source[source.index('RUN curl ')+4:].split(' && dpkg-deb', 1)[0].strip().removesuffix('\\').strip()
+        self.script = source[source.index('RUN set -eu; for host ')+4:].split('\n\n', 1)[0]
+        # Stop each successful branch after the real checksum gate. Installing
+        # the package is outside this transport-only fixture.
+        start = self.script.index('        dpkg-deb ')
+        end = self.script.index('        exit 0;', start)
+        self.script = self.script[:start]+self.script[end:]
         self.assertIn(URL, self.script)
         self.assertIn(SHA, self.script)
         self.assertIn('sha256sum --check --strict', self.script)
@@ -101,7 +106,7 @@ class MkosiTransportTests(unittest.TestCase):
 
     def test_persistent_partial_transfers_stop_at_the_configured_attempt_bound(self):
         self.assertNotEqual(self.fetch('/permanent').returncode, 0)
-        self.assertEqual(self.counts['/permanent'], 4)
+        self.assertEqual(self.counts['/permanent'], 6)  # Three attempts on each of two origins.
 
     def test_corrupt_complete_content_fails_the_original_checksum_guard(self):
         result = self.fetch('/corrupt')

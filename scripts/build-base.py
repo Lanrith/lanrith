@@ -17,7 +17,7 @@ import gzip
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require, unsigned_manifest
-from lanrith import build_cache, package_stage, components as component_contract
+from lanrith import apt_security, build_cache, build_resources, frozen_apt, package_stage, components as component_contract
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -43,6 +43,7 @@ def image(component, work, inputs):
     shutil.copytree(PROJECT / 'builders' / component, context)
     if component == 'vpp':
         shutil.copytree(PROJECT / 'builders/patches', context / 'patches')
+    apt_security.stage(PROJECT, context, 'trixie')
     values = {key: value for key, value in inputs.items() if key in
               (component.upper() + '_BUILDER_OCI', 'DEBIAN_SNAPSHOT', 'DEBIAN_SECURITY_SNAPSHOT')}
     if component != 'mkosi':
@@ -56,6 +57,7 @@ def image(component, work, inputs):
         return tag
     argv = ['docker', 'build', '--pull', '--platform', 'linux/amd64', '--file', str(context / 'Containerfile'),
             '--tag', tag]
+    argv += build_resources.arguments()
     argv += build_cache.image_arguments(component)
     for key, value in sorted(values.items()):
         argv += ['--build-arg', key + '=' + value]
@@ -107,6 +109,7 @@ def compile_packages(args, selection, inputs):
     packages = args.work / 'packages'
     packages.mkdir()
     components(selection['component_releases'], packages)
+    metadata_transports = {}
     for key in ('DEBIAN_RELEASE_SHA256', 'DEBIAN_SECURITY_RELEASE_SHA256',
                 'DEBIAN_BOOKWORM_RELEASE_SHA256', 'DEBIAN_BOOKWORM_SECURITY_RELEASE_SHA256'):
         prefix = 'DEBIAN_BOOKWORM' if 'BOOKWORM' in key else 'DEBIAN'
@@ -116,9 +119,11 @@ def compile_packages(args, selection, inputs):
         if 'SECURITY' in key:
             archive, suite = 'debian-security', suite+'-security'
         path = args.work / (key + '.Release')
-        run('curl', '--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', str(path),
-            f'https://snapshot.debian.org/archive/{archive}/{snapshot}/dists/{suite}/Release')
-        require(file_record(path)['sha256'] == inputs[key], 'Debian snapshot Release differs from the reviewed lock.')
+        signed, _, transport = frozen_apt.repository(str(PROJECT),archive,snapshot,suite,inputs[key])
+        path.write_bytes(frozen_apt.cleartext(signed))
+        metadata_transports[key] = transport
+    (packages/'security-diagnostics').mkdir(exist_ok=True)
+    (packages/'security-diagnostics/snapshot-metadata.json').write_bytes(canonical(metadata_transports))
     builder = image('mkosi', args.work, inputs)
     # Exercise the pinned updater interface before the expensive source builds.
     run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
@@ -133,7 +138,12 @@ def compile_packages(args, selection, inputs):
     # assembly, so a later failure can be reproduced without recompilation.
     checkpoint = {'schema':1,'qualification_only':True,'source_commit':os.environ.get('GITHUB_SHA'),
         'inputs_sha256':file_record(PROJECT/'build-inputs.json')['sha256'],
-        'packages':{path.name:file_record(path) for path in sorted(packages.iterdir()) if path.is_file()}}
+        'packages':{path.name:file_record(path) for path in sorted(packages.iterdir()) if path.is_file()},
+        'snapshot_transports':frozen_apt.used()}
+    resource_configuration = build_resources.configuration()
+    if resource_configuration:
+        checkpoint['build_resources'] = {'configuration': resource_configuration,
+                                        'counters': build_resources.counters(resource_configuration)}
     (args.output/'package-checkpoint.json').write_bytes(canonical(checkpoint))
     shutil.copyfile(args.work/'custom-security.json',args.output/'custom-security.json')
     run('docker', 'tag', builder, 'ghcr.io/lanrith/lanrith-builder:' + os.environ['GITHUB_SHA'])
@@ -177,13 +187,14 @@ def main():
     else:
         require(args.package_stage is None and (args.cache_output is None or args.phase == 'packages'),
                 'Cache production must be isolated from privileged image qualification.')
-        builder = compile_packages(args, selection, inputs)
-        if args.phase == 'packages':
-            cache_seal = build_cache.export(PROJECT, args.cache_output, os.environ) if args.cache_output else None
-            package_stage.write(PROJECT, args.work, args.output, builder, version, os.environ['GITHUB_SHA'])
-            if args.cache_output:
-                build_cache.offer(args.cache_output, cache_seal, os.environ)
-            return
+        with build_resources.recording(args.work/'packages/security-diagnostics/build-resources.json'):
+            builder = compile_packages(args, selection, inputs)
+            if args.phase == 'packages':
+                cache_seal = build_cache.export(PROJECT, args.cache_output, os.environ) if args.cache_output else None
+                package_stage.write(PROJECT, args.work, args.output, builder, version, os.environ['GITHUB_SHA'])
+                if args.cache_output:
+                    build_cache.offer(args.cache_output, cache_seal, os.environ)
+                return
     packages = args.work/'packages'
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',
         '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
@@ -207,12 +218,14 @@ def main():
     shutil.copyfile(packages/'pam-rssh.notices.txt', notices)
     package_list = json.loads((PROJECT / 'mkosi/packages.json').read_text())['packages']
     from lanrith.image import base_configuration, initrd_configuration
-    (build / 'mkosi.conf').write_text(base_configuration(inputs['DEBIAN_SNAPSHOT'], version, package_list))
+    (build / 'mkosi.conf').write_text(base_configuration(inputs['DEBIAN_SNAPSHOT'], version, package_list,
+        package_manager_tree='/opt/lanrith-apt-bootstrap/sandbox'))
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work) + ':/work', '-w', '/work/image', builder,
         'mkosi', '--force', 'build')
     initrd = args.work/'initrd-image'
     initrd.mkdir()
-    (initrd/'mkosi.conf').write_text(initrd_configuration(inputs['DEBIAN_SNAPSHOT']))
+    (initrd/'mkosi.conf').write_text(initrd_configuration(inputs['DEBIAN_SNAPSHOT'],
+        package_manager_tree='/opt/lanrith-apt-bootstrap/sandbox'))
     run('docker', 'run', '--rm', '--privileged', '-v', str(args.work)+':/work', '-w', '/work/initrd-image',
         builder, 'mkosi', '--force', 'build')
     generated = args.work / 'output'

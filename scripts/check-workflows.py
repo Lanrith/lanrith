@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
 """Enforce pinned actions and the absence of privileged PR signing paths."""
 
-import hashlib
-import json
 from pathlib import Path
 import re
+import sys
 import yaml
 
 root = Path(__file__).resolve().parents[1]
-assessment = json.loads((root/'security/slsa-assessment.json').read_bytes())
-reviewed = assessment.get('reviewed_workflows', {})
-assert set(reviewed) == {'.github/workflows/build-base.yml', '.github/workflows/release.yml',
-    '.github/workflows/check.yml', '.github/workflows/restore-cache.yml',
-    '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
-    '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml'}, \
-    'The reviewed workflow set is incomplete; review the platform assessment before building.'
-for name, expected in reviewed.items():
-    assert isinstance(expected, str) and re.fullmatch('[0-9a-f]{64}', expected) and \
-        hashlib.sha256((root/name).read_bytes()).hexdigest() == expected, \
-        'Assessed workflow hash differs: '+name+'. Review the workflow and update security/slsa-assessment.json before the package build.'
+sys.path.insert(0, str(root))
+from lanrith.assessment import validate_platform
+
+validate_platform(root)
 
 for path in (root/'.github/workflows').glob('*.yml'):
     text = path.read_text()
@@ -29,12 +21,46 @@ for path in (root/'.github/workflows').glob('*.yml'):
     if path.name == 'build-base.yml':
         jobs = value['jobs']
         assert jobs['packages']['permissions'] == {'contents': 'read'}, path.name
+        version = jobs['version']
+        assert version['needs'] == 'check' and version['permissions'] == {'contents': 'write'}, path.name
+        assert version['runs-on'] == 'ubuntu-24.04' and version['timeout-minutes'] == 5, path.name
+        assert version['if'] == ("github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && "
+            "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"), 'Version selection must be trusted Main only'
+        assert len(version['steps']) == 2, 'The version writer must not execute build or downloaded code'
+        checkout, selector = version['steps']
+        assert checkout['uses'].startswith('actions/checkout@') and checkout['with'] == {
+            'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
+            'persist-credentials': False}, 'Version selection must use its exact reviewed workflow source'
+        assert selector['id'] == 'version' and selector['run'] == 'python3 scripts/next-version.py' and \
+            selector['env'] == {'GH_TOKEN': '${{ github.token }}'}, path.name
+        assert version['outputs'] == {'value': '${{ steps.version.outputs.value }}'}, path.name
+        assert set(jobs['packages']['needs']) == {'check', 'cache', 'version'} and \
+            "needs.version.result == 'success'" in jobs['packages']['if'], path.name
+        assert jobs['packages']['outputs']['version'] == '${{ needs.version.outputs.value }}', path.name
+        assert 'next-version.py' not in str(jobs['packages']), 'Read-only compilation cannot enumerate reserved drafts'
+        receiver = next(s for s in jobs['packages']['steps'] if s.get('env',{}).get('RELEASE_VERSION'))
+        assert receiver['env'] == {'RELEASE_VERSION': '${{ needs.version.outputs.value }}'} and \
+            're.fullmatch' in receiver['run'] and '${{' not in receiver['run'], 'Validate version data without shell interpolation'
         assert '--phase packages' in str(jobs['packages']) and '--privileged' not in str(jobs['packages']), path.name
         assert '--phase image' in str(jobs['build']) and 'cache-artifact-id' not in jobs['build']['outputs'], path.name
         assert set(jobs['attest']['needs']) == {'build', 'packages'}, path.name
         handoff = next(step for step in jobs['attest']['steps'] if step.get('id') == 'cache-download')
         assert handoff['with']['artifact-ids'] == '${{ needs.packages.outputs.cache-artifact-id }}', path.name
         assert "needs.build.outputs.production-qualified == 'true'" in handoff['if'], path.name
+    if path.name in ('build-base.yml', 'package-check.yml'):
+        for job_name, role in (('packages', 'packages'), ('build', 'native')):
+            steps = value['jobs'][job_name]['steps']
+            preparation = next(i for i, step in enumerate(steps) if step.get('id') == 'runner-disk')
+            assert steps[preparation]['run'] == 'python3 scripts/prepare-runner.py', 'Build jobs must share the reviewed disk preparation'
+            first_download = next(i for i, step in enumerate(steps) if step.get('uses', '').startswith('actions/download-artifact@'))
+            assert preparation < first_download, 'Disk preparation must precede artifact downloads'
+            report = steps[preparation+1]
+            assert report['if'] == 'always()' and report['uses'].startswith('actions/upload-artifact@') and report['with'] == {
+                'name': 'runner-disk-'+role+'-${{ github.run_attempt }}',
+                'path': '${{ runner.temp }}/runner-disk.json', 'if-no-files-found': 'ignore', 'retention-days': 1}, \
+                'Disk failures must retain bounded one-day diagnostics'
+        preparation_source = (root/'scripts/prepare-runner.py').read_text()
+        assert 'MINIMUM_FREE_BYTES = 60 * 1024**3' in preparation_source, 'The reviewed 60 GiB build budget must remain enforced'
     if path.name == 'package-check.yml':
         jobs = value['jobs']
         assert jobs['preflight']['uses'] == './.github/workflows/check.yml', path.name
@@ -123,6 +149,35 @@ for path in (root/'.github/workflows').glob('*.yml'):
         assert value['permissions'] == {} and set(value['jobs']) == {'signal'}, path.name
         assert value['jobs']['signal']['steps'] == [{'run': 'true'}], 'Untrusted PR routing can only signal, without checkout or write permissions'
         assert set(value[True]['pull_request']['types']) == {'opened', 'reopened', 'synchronize', 'ready_for_review'}, path.name
+    if path.name == 'retry-runner-capacity.yml':
+        assert value['permissions'] == {} and value.get('cache-mode') == 'none', path.name
+        assert value[True] == {'workflow_run': {'workflows': ['Release', 'Package qualification'], 'types': ['completed']}}, path.name
+        assert value['concurrency'] == {'group': 'runner-capacity-${{ github.event.workflow_run.id }}', 'cancel-in-progress': False}, path.name
+        jobs = value['jobs']
+        assert set(jobs) == {'plan','archive-plan','retry','archive-result'}, path.name
+        assert jobs['plan']['if'] == ("github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && "
+            "github.event.workflow_run.conclusion == 'failure'"), 'Capacity planning must use trusted Main failure events only'
+        assert jobs['plan']['permissions'] == {'contents':'read','actions':'read','pull-requests':'read'}, path.name
+        assert jobs['retry']['permissions'] == {'contents':'read','actions':'write','pull-requests':'read'}, path.name
+        assert jobs['archive-plan']['needs'] == 'plan' and jobs['archive-plan']['if'] == "needs.plan.outputs.archive == 'true'", 'Ignored capacity events must not create archives'
+        upload = next(step for step in jobs['plan']['steps'] if step.get('id') == 'upload')
+        assert upload['if'] == "steps.plan.outputs.archive == 'true'", 'Ignored capacity events must not upload temporary records'
+        assert set(jobs['retry']['needs']) == {'plan','archive-plan'} and jobs['retry']['if'] == "needs.plan.outputs.eligible == 'true'", 'Retry must wait for archived eligible intent'
+        for name in ('plan','retry'):
+            job = jobs[name]
+            assert job['runs-on'] == 'ubuntu-24.04' and job['timeout-minutes'] == 5 and \
+                job['env']['LANRITH_TOOLS_SHA'] == '${{ github.workflow_sha }}', path.name
+            checkout = job['steps'][0]
+            assert checkout['uses'].startswith('actions/checkout@') and checkout['with'] == {
+                'repository':'${{ job.workflow_repository }}','ref':'${{ job.workflow_sha }}',
+                'path':'tools','persist-credentials':False}, 'Capacity recovery must never execute PR source'
+            commands = [step['run'] for step in job['steps'] if 'run' in step]
+            assert len(commands)==1 and commands[0].startswith('python3 tools/scripts/retry-runner-capacity.py '+('plan ' if name=='plan' else 'execute ')), path.name
+            assert 'build-base.py' not in str(job) and 'setup-go@' not in str(job), path.name
+        for name, topic in (('archive-plan','capacity-plan'),('archive-result','capacity-result')):
+            assert jobs[name]['uses'] == './.github/workflows/archive-evidence.yml' and jobs[name]['with']['topic'] == topic, path.name
+        assert jobs['archive-result']['if'] == "always() && needs.retry.outputs.result-id != ''", path.name
+        assert 'MAX_ATTEMPTS = 3' in (root/'automation/capacity.py').read_text(), 'Capacity retries must remain bounded'
     if path.name == 'request-human-review.yml':
         job = value['jobs']['notify']
         assert "github.ref == 'refs/heads/main'" in job['if'] and 'environment' not in job, path.name
@@ -132,6 +187,20 @@ for path in (root/'.github/workflows').glob('*.yml'):
         checkout = next(s['with'] for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@'))
         assert checkout == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
                             'path': 'tools', 'persist-credentials': False}, 'Notification must run only its trusted workflow source'
+    if path.name == 'publish-release.yml':
+        assert value['jobs']['publish']['if'] == ("github.ref == 'refs/heads/main' && "
+            "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"), 'Publication must be trusted Main only'
+        steps = value['jobs']['publish']['steps']
+        assert len(steps) == 4, 'The publisher must only check out trusted tools, download data, publish and upload verification'
+        checkout, download, publisher, upload = steps
+        assert checkout['uses'].startswith('actions/checkout@') and checkout['with'] == {
+            'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
+            'path': 'tools', 'persist-credentials': False}, 'The publisher must use its exact reviewed workflow source'
+        assert download['uses'].startswith('actions/download-artifact@') and download['with']['path'] == 'release', path.name
+        assert download['with']['artifact-ids'] == '${{ inputs.artifact-id }}', path.name
+        assert publisher['run'] == 'python3 tools/scripts/publish-release.py', 'Never execute publisher code from the downloaded artifact'
+        assert upload['uses'].startswith('actions/upload-artifact@'), path.name
+        text = (root/'scripts/publish-release.py').read_text()
     if path.name in ('archive-evidence.yml', 'publish-release.yml'):
         assert '--draft' in text and '--draft=false' in text and '--clobber' not in text.replace('# No overwrite or --clobber path is available, including on retries.', ''), path.name
 print('Workflow trust boundaries verified.')

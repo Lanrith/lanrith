@@ -267,7 +267,9 @@ class PendingInspectionTests(unittest.TestCase):
     def test_pending_is_structured_and_never_eligible_even_with_no_source_findings(self):
         value = policy()
         candidate = evidence.candidate(REPO, BASE, canonical(value), {'.go-version': b'old'},
-            {'.go-version': b'new'}, [{'id': 'test', 'type': 'security-fix'}], PRODUCER)
+            {'.go-version': b'new'}, [{'id': 'test', 'type': 'security-fix', 'package': 'stdlib',
+                'ecosystem': 'Go', 'installed': '1.27.2', 'fixed': '1.27.3',
+                'source': 'https://api.osv.dev/v1/vulns/test', 'evidence_sha256': 'd'*64}], PRODUCER)
         pr = {'state': 'open', 'draft': False, 'number': 16, 'html_url': 'https://github.com/'+REPO+'/pull/16',
             'base': {'sha': BASE, 'ref': 'main'},
             'head': {'sha': HEAD, 'ref': value['proposal_branch'], 'repo': {'full_name': REPO}},

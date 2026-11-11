@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "kind": "release-publication-repair",
+  "recorded_at": "2026-11-01T08:34:24.330037+00:00",
+  "reason": "Release version selection silently omitted private draft reservations when using the read-only compiler token, then publication correctly rejected conflicting assets from an older source.",
+  "failed_release": {
+    "run_id": 41250773610,
+    "source": "d1fd35c7a5ee0aac9363f96b075c453e11a32546",
+    "selected_version": "0.1.14",
+    "packages": "success",
+    "native_qualification": "success",
+    "attestation": "success",
+    "publication": "failure",
+    "published": false,
+    "url": "https://github.com/Lanrith/lanrith/actions/runs/41250773610"
+  },
+  "preserved_draft": {
+    "id": 429122148,
+    "tag": "v0.1.14",
+    "target": "1128615ece3235c9b5964ac974386be71b8d8389",
+    "assets": 10,
+    "modified_by_this_repair": false
+  },
+  "actual_permissions_regression": {
+    "contents_read": {
+      "draft_visible": false,
+      "selected_version": "0.1.14"
+    },
+    "contents_write": {
+      "draft_visible": true,
+      "selected_version": "0.1.15"
+    },
+    "temporary_tokens_revoked": true,
+    "releases_or_tags_modified": false,
+    "reference": "https://docs.github.com/en/rest/releases/releases#list-releases"
+  },
+  "changes": [
+    "Version selection runs on a fresh Main-only hosted VM, using exact reviewed workflow source and only contents:write. It executes no package or downloaded code. Compilation remains contents:read and validates the version received through a job output.",
+    "Publication executes the exact reviewed workflow publisher, never downloaded code. It revalidates actual approval identities, exact-head workflow runs, source, qualification, tag and asset digests; creates an empty draft; resumes only missing assets with bounded transient retries; never overwrites or deletes assets; and promotes stable only after immutable verification.",
+    "Cleanup keeps at most one final attested bundle from the latest completed failed Release for at most one day. Older failures, package stages and cache handoffs retain the existing two-hour cleanup window; active runs remain protected."
+  ],
+  "validation": {
+    "local_suite": {
+      "tests": 876,
+      "passed": 861,
+      "environment_skips": 15,
+      "result": "pass"
+    },
+    "workflow_assessment_preflight": "pass",
+    "public_source_boundary": "pass",
+    "pinned_actionlint": "pass",
+    "hosted_full_qualification": "required-on-final-PR-head-before-human-review-request",
+    "production_publication": "not-yet-performed"
+  },
+  "approval": {
+    "required": "Fresh actual independent human GitHub review after all final-head/current-base required builds pass. Existing approvals for PR42 do not authorize this new source.",
+    "automatic_source_approval": false,
+    "protection_bypass": false
+  },
+  "traceability": {
+    "evidence": "Exact source hashes, staged patch, live permission contrast and full local test log are archived immutably before the PR is published. Hosted CI, actual review, protected merge and final publication will have separate commit-bound records.",
+    "prior_human_approved_merge_checkpoint": "https://github.com/Lanrith/lanrith/releases/tag/audit-pr42-qualified-merge-20261031T230356Z"
+  },
+  "recovery_limit": "The old failed run has no remaining Actions artifacts. This repair requires a fresh approved build and cannot recover or certify the missing old signed payloads.",
+  "paid_ai": false
+}

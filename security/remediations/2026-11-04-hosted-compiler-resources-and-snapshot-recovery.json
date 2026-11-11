@@ -1,0 +1,65 @@
+{
+  "actual_failures": [
+    {
+      "attempt": 1,
+      "failure": "runner shutdown/exit143 during pinned package downloads",
+      "run": 41852139562
+    },
+    {
+      "attempt": 2,
+      "failure": "hosted runner lost server communication; job log unavailable",
+      "run": 41852139562
+    },
+    {
+      "attempt": 3,
+      "failure": "hosted runner lost server communication; job log unavailable",
+      "run": 41852139562
+    },
+    {
+      "failure": "HTTP504 after every curl retry for the exact locked Debian Release URL",
+      "pull_request": 59,
+      "run": 41902027543
+    }
+  ],
+  "approval": "Fresh independent human review of the final source after every hosted build passes; prior PR56 approval does not cover this new code.",
+  "base_commit": "0c476f6abd1f0daa9bdf77e11b885ed02cab90b4",
+  "causation_limit": "The initial missing worker logs do not establish an OOM or CPU-exhaustion cause. Actions was operational when the third loss was inspected. Resource isolation fixes an observed unbounded-execution gap; it is not presented as proof of the lost worker cause.",
+  "controls": {
+    "diagnostics": "The existing early disk diagnostic retains initial RAM/CPU/budget before compilation. The package checkpoint binds resource configuration/counters into its same-run handoff. Existing failure diagnostics retain safe peak/OOM/CPU counters; any observed OOM blocks a successful build.",
+    "resources": "A fresh flat transient cgroup per hosted compiler job reserves 2 GiB of currently available RAM and at least one CPU for the runner; aggregate compiler limit 4\u20138 GiB, at most 2 CPUs, no swap, 2048 tasks. Docker build RUN instructions and unprivileged compiler containers share the same parent. Existing non-root/no-new-privileges/cap-drop controls remain. Each invocation rechecks actual kernel limits; missing or altered configuration blocks compilation. Go concurrency is serialized and per-process GC targets are reduced inside the hard aggregate limit.",
+    "snapshot_metadata": "Use exact archive/date/suite/SHA256-bound content URL locators recovered from already reviewed Release bytes, with bounded retries over two official HTTPS snapshot hosts. SHA1 is only the legacy URL spelling; SHA256 remains authoritative. Unknown future locks use bounded timestamp lookup. Unsafe redirects, altered bytes,invalid TLS,oversize responses and exhausted budgets fail closed. No selected snapshot,version,digest or signature policy changes."
+  },
+  "created_at": "2026-11-04T20:44:55.348265+00:00",
+  "deployment_status": "Prepared source only; not merged or released. Latest verified stable image remains v0.1.19.",
+  "kind": "hosted-compiler-resource-isolation-and-locked-snapshot-recovery",
+  "paid_ai": false,
+  "protection_bypass": false,
+  "reason": "Main release 41852139562 lost three hosted workers; attempts 2/3 explicitly report runner communication loss and their job logs are unavailable. The initial third worker disk record passed with 118333505536 free bytes. Automatic update PR59 qualification 41902027543 separately proves repeated HTTP504 at the locked Debian Release timestamp lookup. Fix the observed metadata lookup failure and bound compiler resources so resource exhaustion cannot consume the runner reserve.",
+  "schema": 1,
+  "security_note": {
+    "abuse_cases": [
+      "A compiler must not exhaust all host memory or CPUs.",
+      "An existing or foreign cgroup must never be modified.",
+      "A tampered resource record must not authorize an unbounded build.",
+      "A mirror or redirect must not substitute unreviewed Release bytes or reach another origin.",
+      "A TLS or hash failure must not be hidden by fallback.",
+      "Failed or partial work must not obtain build or release admission."
+    ],
+    "assets": [
+      "hosted runner agent",
+      "build integrity",
+      "pinned package universe",
+      "credential isolation",
+      "approval and publication evidence"
+    ],
+    "residual_risk": "Provider-level worker loss remains possible. Docker service/controller overhead is outside the compiler group. Snapshot package/index transport beyond this locked Release preflight still relies on existing authenticated APT retry policy; both official origins can remain unavailable, in which case qualification blocks. Hosted proof and independent current-head human approval remain required.",
+    "risk_domain": "CI supply-chain resource exhaustion, metadata availability and audit observability",
+    "validation_evidence": "Denied/allowed resource and transport tests,actual hosted kernel enforcement probe,complete regression suite,live four-lock metadata validation and unchanged workflow policy checks."
+  },
+  "validation": {
+    "hosted_enforcement_probe": "The required hosted Linux full suite builds one fixed 96 MiB tmpfs allocation normally, then proves the identical BuildKit RUN is OOM-contained by a 64 MiB parent while the runner survives. No source, secrets, host devices or privilege are supplied to the test container.",
+    "hosted_full_qualification": "Required on final exact source/current base before requesting human review. All native,scanner,artifact and provenance gates remain required.",
+    "live_metadata": "All four current Release files were fetched with the final production implementation and exactly match the already reviewed SHA256 locks.",
+    "local_full_suite": "960 tests completed in 36.151 seconds: 944 passed and 16 environment skips. The actual hosted kernel probe is skipped locally and required in hosted CI."
+  }
+}

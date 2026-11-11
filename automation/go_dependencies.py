@@ -84,6 +84,31 @@ def verified_download(name, selected):
     return value
 
 
+def affected_packages_absent(root, name, advisory):
+    """Only a complete test-inclusive import graph can dismiss inventory overlap."""
+    affected = [row for row in advisory.get('affected', [])
+                if row.get('package', {}).get('name') == name]
+    paths = set()
+    for row in affected:
+        imports = row.get('ecosystem_specific', {}).get('imports')
+        if not isinstance(imports, list) or not imports:
+            return False
+        for item in imports:
+            path = item.get('path') if isinstance(item, dict) else None
+            if not isinstance(path, str) or not (path == name or path.startswith(name+'/')):
+                return False
+            paths.add(path)
+    if not paths:
+        return False
+    raw = run('go', 'list', '-deps', '-test', '-f', '{{.ImportPath}}', './...',
+              cwd=root, env=environment(), capture_output=True, timeout=300).stdout
+    require(0 < len(raw) <= 8*1024*1024, 'Go import inventory is empty or exceeds its review bound.')
+    imported = {line.split(' [', 1)[0] for line in raw.decode().splitlines()}
+    require(all(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_./+!~\-]*', path) for path in imported),
+            'Go import inventory has an unexpected path.')
+    return paths.isdisjoint(imported)
+
+
 def minimum_targets(reasons, requirements, allow_minor):
     """Derive roots from authenticated fixed ranges, not candidate-selected versions."""
     targets, actual = {}, {}
@@ -175,8 +200,12 @@ def update(root, *, allow_minor=False):
                        version(event['fixed']) > version(installed)]
             # Inventory advisories without fixes may be unreachable. Actual source/binary scans remain required.
             if not choices:
-                require(not fixed_versions, 'Security fix requires a reviewed module migration: '+name+' '+item['id'])
-                print('No patch-line module fix; source scan or human review required: '+name+' '+item['id'])
+                # Module inventory can include packages this project never imports.
+                # Never select a prerelease or migration merely to clear inventory;
+                # propose() must still run its mandatory reachable-source scan.
+                require(not fixed_versions or affected_packages_absent(root, name, advisory),
+                        'Security fix requires a reviewed module migration: '+name+' '+item['id'])
+                print('No permitted stable module fix; mandatory source scan or human review required: '+name+' '+item['id'])
                 continue
             selected = 'v'+min(choices, key=version).removeprefix('v')
             value = fixes.setdefault(name, {'installed': installed, 'fixed': selected, 'ids': set()})

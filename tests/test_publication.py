@@ -12,7 +12,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import yaml
 
 
 SOURCE, HEAD = 'a'*40, 'b'*40
@@ -22,14 +21,15 @@ REPO = 'Lanrith/router-policy-agent'
 class PublicationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = Path(__file__).resolve().parents[1]/'.github/workflows/publish-release.yml'
-        workflow = yaml.safe_load(path.read_text())
-        step = next(s for s in workflow['jobs']['publish']['steps'] if s.get('run'))
-        cls.program = step['run'].split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        cls.program = (Path(__file__).resolve().parents[1]/'scripts/publish-release.py').read_text()
 
     def setUp(self):
         self.state = {'draft': True, 'prerelease': True, 'created': False, 'promoted': False,
                       'tamper_draft': False, 'tamper_published': False, 'wrong_tag': False, 'wrong_check': False}
+        self.uploads = []
+        self.upload_errors = []
+        self.server_assets = None
+        self.edits = []
         self.author = {'login': 'reviewer-app[bot]', 'type': 'Bot'}
         self.review = {'id': 7, 'state': 'APPROVED', 'commit_id': HEAD, 'author_association': 'OWNER',
                        'user': {'id': 1, 'login': 'owner', 'type': 'User'}}
@@ -56,8 +56,8 @@ class PublicationTests(unittest.TestCase):
                            for n, p in enumerate(sorted(root.iterdir()), 1)]
             with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_SHA': SOURCE,
                     'RELEASE_VERSION': '0.1.3', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}), \
-                    patch('subprocess.run', side_effect=self.command):
-                exec(compile(self.program, 'publish-release.yml', 'exec'), {})
+                    patch('subprocess.run', side_effect=self.command), patch('time.sleep'):
+                exec(compile(self.program, 'scripts/publish-release.py', 'exec'), {})
             return json.loads(Path('verification/publication-verification.json').read_text())
 
     def command(self, args, **kwargs):
@@ -85,14 +85,16 @@ class PublicationTests(unittest.TestCase):
                 value = {'check_runs': [{'name': 'Security update admission', 'status': 'completed',
                     'conclusion': 'success', 'app': {'id': 999 if self.state['wrong_check'] else 123, 'slug': 'security-reviewer'}}]}
             elif '/git/ref/tags/' in endpoint:
+                if not self.state['wrong_tag'] and (not self.state['created'] or self.state['draft']):
+                    return subprocess.CompletedProcess(args,1,'','gh: Not Found (HTTP 404)')
                 value = {'object': {'type': 'commit', 'sha': 'f'*40 if self.state['wrong_tag'] else SOURCE}}
             elif endpoint.endswith('/releases/9'):
                 if not self.state['created']:
                     raise subprocess.CalledProcessError(1,args,stderr='gh: Not Found (HTTP 404)')
-                assets = copy.deepcopy(self.assets)
-                if self.state['tamper_draft'] or self.state['tamper_published'] and not self.state['draft']:
+                assets = copy.deepcopy(self.assets if self.server_assets is None else self.server_assets)
+                if assets and (self.state['tamper_draft'] or self.state['tamper_published'] and not self.state['draft']):
                     assets[0]['digest'] = 'sha256:'+'f'*64
-                value = {'id': 9, 'draft': self.state['draft'], 'prerelease': self.state['prerelease'],
+                value = {'tag_name': 'v0.1.3', 'target_commitish': self.state.get('target',SOURCE), 'id': 9, 'draft': self.state['draft'], 'prerelease': self.state['prerelease'],
                          'immutable': not self.state['draft'], 'assets': assets,
                          'html_url': 'https://github.com/'+REPO+'/releases/tag/v0.1.3'}
             else:
@@ -102,14 +104,28 @@ class PublicationTests(unittest.TestCase):
             if not self.state['created']:
                 return subprocess.CompletedProcess(args,1,'','release not found')
             return subprocess.CompletedProcess(args,0,json.dumps({'apiUrl':'https://api.github.com/repos/'+REPO+'/releases/9'}),'')
+        if args[:3] == ('gh', 'release', 'upload'):
+            self.assertNotIn('--clobber', args)
+            name = Path(args[4]).name
+            self.assertFalse(any(a['name']==name for a in self.server_assets), 'Existing assets must never be overwritten')
+            self.uploads.append(name)
+            error = self.upload_errors.pop(0) if self.upload_errors else None
+            if not error or error == 'uploaded then disconnected':
+                self.server_assets.append(copy.deepcopy(next(a for a in self.assets if a['name']==name)))
+            return subprocess.CompletedProcess(args, int(error is not None), '',
+                'unexpected EOF' if error == 'uploaded then disconnected' else error or '')
         if args[:3] == ('gh', 'release', 'create'):
+
             self.assertFalse(self.state['created'],'An existing draft or sealed release must not be recreated')
             self.assertIn('--draft', args)
             self.assertIn('--prerelease', args)
             self.assertIn('--latest=false', args)
+            self.assertFalse(any(str(a).startswith('release/') for a in args), 'Draft creation must not bulk upload files')
             self.state['created'] = True
+            self.server_assets = []
             return subprocess.CompletedProcess(args, 0, '', '')
         if args[:3] == ('gh', 'release', 'edit'):
+            self.edits.append(args)
             if '--draft=false' in args:
                 self.state['draft'] = False
             if '--prerelease=false' in args:
@@ -181,7 +197,7 @@ class PublicationTests(unittest.TestCase):
         self.assertFalse(self.state['promoted'])
 
     def test_post_seal_mismatch_or_wrong_tag_stays_quarantined(self):
-        for attack in ('tamper_published', 'wrong_tag'):
+        for attack in ('tamper_published',):
             with self.subTest(attack=attack):
                 self.setUp()
                 self.state[attack] = True
@@ -241,3 +257,115 @@ class PublicationTests(unittest.TestCase):
         self.state.update(created=True,draft=True)
         self.assertEqual(self.run_program()['result'],'pass')
         self.assertFalse(self.state['draft'])
+
+    def test_conflicting_tag_fails_before_creating_or_sealing_a_release(self):
+        self.state['wrong_tag'] = True
+        with self.assertRaises(AssertionError): self.run_program()
+        self.assertFalse(self.state['created'])
+        self.assertEqual(self.edits, [])
+
+    def test_partial_matching_draft_uploads_only_missing_assets(self):
+        self.state['created'] = True
+        self.server_assets = []
+        # Start with no assets; a retry also works with one matching asset.
+        original = self.command
+        def existing(args, **kwargs):
+            if tuple(args)[:3] == ('gh','release','view') and not self.server_assets:
+                self.server_assets = [copy.deepcopy(self.assets[0])]
+            return original(args, **kwargs)
+        with patch.object(self, 'command', side_effect=existing):
+            report = self.run_program()
+        self.assertEqual(report['result'],'pass')
+        self.assertEqual(self.uploads,['update-record.json'])
+
+    def test_transient_uploads_retry_with_a_strict_limit(self):
+        self.upload_errors = ['HTTP 502','connection reset by peer']
+        self.assertEqual(self.run_program()['result'],'pass')
+        self.assertEqual(self.uploads.count('package.deb'),3)
+
+    def test_disconnected_success_is_verified_without_overwrite(self):
+        self.upload_errors = ['uploaded then disconnected']
+        self.assertEqual(self.run_program()['result'],'pass')
+        self.assertEqual(self.uploads.count('package.deb'),1)
+
+    def test_exhausted_or_fatal_upload_errors_preserve_draft_without_sealing(self):
+        for errors, attempts in ((['HTTP 503']*4,3),(['HTTP 403'],1),(['HTTP 422'],1)):
+            with self.subTest(errors=errors):
+                self.setUp()
+                self.upload_errors = errors
+                with self.assertRaises(RuntimeError): self.run_program()
+                self.assertEqual(len(self.uploads),attempts)
+                self.assertTrue(self.state['draft'])
+                self.assertEqual(self.edits,[])
+
+    def test_other_source_draft_is_rejected_before_upload(self):
+        self.state.update(created=True,target='f'*40)
+        with self.assertRaises(AssertionError): self.run_program()
+        self.assertEqual(self.uploads,[])
+        self.assertEqual(self.edits,[])
+
+    def test_extra_or_conflicting_draft_assets_cannot_be_resumed(self):
+        for attack in ('extra','digest','duplicate'):
+            with self.subTest(attack=attack):
+                self.setUp()
+                self.state['created'] = True
+                original = self.command
+                changed = False
+                def inject(args, **kwargs):
+                    nonlocal changed
+                    if tuple(args)[:3] == ('gh','release','view') and not changed:
+                        self.server_assets = copy.deepcopy(self.assets)
+                        if attack == 'extra':
+                            self.server_assets.append({'name':'unexpected.deb','digest':'sha256:'+'f'*64})
+                        elif attack == 'digest':
+                            self.server_assets[0]['digest']='sha256:'+'f'*64
+                        else:
+                            self.server_assets.append(copy.deepcopy(self.assets[0]))
+                        changed = True
+                    return original(args, **kwargs)
+                with patch.object(self,'command',side_effect=inject), self.assertRaises(AssertionError):
+                    self.run_program()
+                self.assertEqual(self.uploads,[])
+                self.assertEqual(self.edits,[])
+
+    def test_incomplete_immutable_release_is_never_modified(self):
+        self.state.update(created=True,draft=False)
+        self.server_assets = []
+        with self.assertRaises(AssertionError): self.run_program()
+        self.assertEqual(self.uploads,[])
+        self.assertEqual(self.edits,[])
+
+    def test_new_draft_has_no_tag_until_its_complete_asset_set_is_sealed(self):
+        original = self.command
+        absent_observations = []
+        def observe(args, **kwargs):
+            result = original(args, **kwargs)
+            if tuple(args)[:2] == ('gh','api') and '/git/ref/tags/' in args[2] and result.returncode:
+                absent_observations.append(len(self.uploads))
+            return result
+        with patch.object(self,'command',side_effect=observe):
+            self.assertEqual(self.run_program()['result'],'pass')
+        self.assertEqual(absent_observations,[0,2])
+
+    def test_conflicting_tag_created_during_upload_prevents_sealing(self):
+        original = self.command
+        def conflict(args, **kwargs):
+            result = original(args, **kwargs)
+            if tuple(args)[:3] == ('gh','release','upload'):
+                self.state['wrong_tag'] = True
+            return result
+        with patch.object(self,'command',side_effect=conflict), self.assertRaises(AssertionError):
+            self.run_program()
+        self.assertTrue(self.state['draft'])
+        self.assertEqual(self.edits,[])
+
+    def test_tag_authorization_error_cannot_be_treated_as_an_absent_tag(self):
+        original = self.command
+        def forbidden(args, **kwargs):
+            if tuple(args)[:2] == ('gh','api') and '/git/ref/tags/' in args[2]:
+                return subprocess.CompletedProcess(args,1,'','gh: Forbidden (HTTP 403)')
+            return original(args, **kwargs)
+        with patch.object(self,'command',side_effect=forbidden), self.assertRaises(AssertionError):
+            self.run_program()
+        self.assertFalse(self.state['created'])
+        self.assertEqual(self.uploads,[])

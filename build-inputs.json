@@ -15,21 +15,21 @@
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "dd94f6b66be19a1268eaf7165f924f0266de03b383f5c0bccd5cd73f85dec8c3",
-        "router-policy-collector_0.1.9_amd64.deb": "90880b13806358a7ff78812e5e61558d890002ea943bb2c7887e8928b54cfe95",
-        "router-policy-helper_0.1.9_amd64.deb": "bc21ba3f0e9c1e780c4c33285bc1164f491faea581e3eb3ddb897eac7d3d194e",
-        "router-policy-reader_0.1.9_amd64.deb": "7bb0e5a37eb6b00e4a2fac7616a988787152bb4328c2cdd9046eed12fe8e0d58",
-        "security.txt": "ef8ec994b93d74e4ecca59d1da7750abf863b7ae002ed9ae59eb2253f22aaa89",
-        "update-record.json": "b46b712cc9591c72b582931f4ed53baf43f1eff9e191acf793b2b4bdb408268c"
+        "component-release.json": "4997dcc38ff4bf658d0b89841e874d62e1456585d1e9eb31bb3f7d76cbb53596",
+        "router-policy-collector_0.1.10_amd64.deb": "48c2f78cc061ba179787e457fca59665cf985a0d45e619ca69eb5524da3e2985",
+        "router-policy-helper_0.1.10_amd64.deb": "860cc0aaa35d6bffbc8b41cab5bf39e7a726bcf606df83797dabf9fa57793c96",
+        "router-policy-reader_0.1.10_amd64.deb": "8429fdf298804ee4c4259e1d50be25001d22c36927d9f9af67d2e16d08ef42d3",
+        "security.txt": "dccdee416b63c1fece9034239778559278a44baf65cd18b8a4c13857977e1a54",
+        "update-record.json": "bb946e5de0bfa2dea7e650ee1e3516ebf8715228765508ce679e7b76eb696598"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "da6343248d32c578b662b129d4dd2393d655a089",
-      "tag": "v0.1.9",
-      "workflow_commit": "da6343248d32c578b662b129d4dd2393d655a089"
+      "source_commit": "ad314e0abce5f1610df2971ce4226b65d1ddf750",
+      "tag": "v0.1.10",
+      "workflow_commit": "ad314e0abce5f1610df2971ce4226b65d1ddf750"
     }
   },
   "custom_package_inputs": {
-    "builders/alloy/Containerfile": "d17ddaa1d0a7afd9a06b3843e33bd52c8a8a563a9da7f21e9d9cfcd0189661dc",
+    "builders/alloy/Containerfile": "135742652eec5cc0b7ecf28cd109e403e94baa4c9302147173173f5d3bc78f12",
     "builders/alloy/dependencies.patch": "08b85b4882e73eef8ea14ed8a1072ee6f2a7e3a11a910d4139dde9814dbf00db",
     "builders/alloy/licenses/ioctl-LICENSE": "27d4be84d5a5e09f13ddda42f80d4fe846b2f65cf830f70d21a2bf4b623ab885",
     "builders/alloy/loki-compatibility.patch": "a1e10fc5d80c3817829026e7c1b31c2241b2b653053c16af176d46814004096c",
@@ -38,25 +38,34 @@
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
     "builders/alloy/source.json": "34422a4d0d0e627970d011e09cf258a255b69e5151865f456bc8f43cd69a70a6",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
-    "builders/build-inputs.lock": "7397f1592be15bd44343c2c5a3f0b6fe2e81e3041c63384ec5584ced960177f8",
-    "builders/mkosi/Containerfile": "711c6c170eb0d6a0b2a5fd494003b54afeed35f51c14f0b11ec2cf2239558f0b",
+    "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
+    "builders/build-inputs.lock": "f634994ac1787ab0456d21b554fc3565c3edee5f62133abff76973284bb311f4",
+    "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
+    "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
+    "builders/mkosi/Containerfile": "1a5d9b5172c7ae79db77580383fc7b7d735e920d8e24d4c2dddae05e85f5e73d",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18",
     "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",
-    "builders/pam/Containerfile": "5c65522d02b1062c5ea61441aee839f9d59f1f97d1b3eea795abb0d98e2e531f",
+    "builders/pam/Containerfile": "d4bfd6b72f090cf2f21563814ec4a1db1237e6437337c511ed58a9ecf246e9bb",
     "builders/patches/GHSA-rc9p-89wj-mx7h.patch": "331f3464663b277a29bdd924d9385672355d68e313d799889aa89ce0803414bb",
+    "builders/snapshot-transports.json": "c3deba0bb6e8c685e88505f432049a9f1710d60d8ade35162afc75f9225f4ca3",
+    "builders/snapshots/bookworm-security.InRelease": "7b58164d2af0386b3c56507835d36062b28dc2855a0136db692621a4c263c135",
+    "builders/snapshots/bookworm.InRelease": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa",
+    "builders/snapshots/trixie-security.InRelease": "a8e217418cb4c361b5c3a3eb76804f78633491e995b18735f3862aaaece070b4",
+    "builders/snapshots/trixie.InRelease": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
     "builders/tayga-source.lock": "47fe031be8568eb3db5751b366c88108cdf9adce3b32ff4d928536093e71d6dc",
-    "builders/tayga/Containerfile": "7907f28a5146ce1319147f2c7ed6d9e8f1cfa84c654eecd1344536b1967fcb89",
+    "builders/tayga/Containerfile": "b71dc42e39cc6247a48caa660ff1d1606ab6fb7f9a0ea2abd6245d9dc85702a1",
     "builders/unbound-source.lock": "5288ab6c4997873ba550f9bab3dca2ca67d8a7bdd8d1ee16a829b7d15f6be887",
-    "builders/unbound/Containerfile": "5ab04367ffcdfaccbf631b09a17de6a3b42dc55f892a8c2358536e4de0e02289",
+    "builders/unbound/Containerfile": "6e5921848972041f641a7499864041f1ef1312e84b44b360878e2b65b6027848",
+    "builders/verify-apt-snapshots.sh": "4e469c005f43b688d69aa0ee295ed51b98a05ce61c5d7f1d737c3dc6780f48e8",
     "builders/vpp-source.lock": "aff9ec73e3c1f47e0cc968fe70eca5825c4658d0a724268ccce387401ba1f55f",
-    "builders/vpp/Containerfile": "8e83ccd74bd7c747a3429e7fd76f685f3f15218bbd48ebab55fca270957b25fa"
+    "builders/vpp/Containerfile": "3897684ce4bee00fc2d1e7792e8e3a1fa2115aa5e0a42d39223ba05edffe3040"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261030T220000Z",
+  "debian_snapshot": "20261103T070000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "6c7ea9ff1f42a64acd8677234e435b1528c300fbed54203eb30acabfe5b4b7fe",
-  "security_snapshot": "20261030T220000Z"
+  "security_release_sha256": "3305e8cbc049a83531191f9ad9706436f0a0e419e0610bd37307061792d65975",
+  "security_snapshot": "20261103T070000Z"
 }

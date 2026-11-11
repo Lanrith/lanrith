@@ -11,16 +11,36 @@ jobs:
   cache:
     cache-mode: read
     uses: ./.github/workflows/restore-cache.yml
+  version:
+    needs: check
+    if: github.repository == 'Lanrith/lanrith' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - id: version
+        name: Select a version including reserved drafts with push visibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/next-version.py
   packages:
-    needs: [check, cache]
-    if: ${{ !cancelled() && needs.check.result == 'success' }}
+    needs: [check, cache, version]
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.version.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:
       contents: read
     outputs:
       artifact-id: ${{ steps.stage-upload.outputs.artifact-id }}
-      version: ${{ steps.version.outputs.value }}
+      version: ${{ needs.version.outputs.value }}
       cache-artifact-id: ${{ steps.cache-upload.outputs.artifact-id }}
       cache-key: ${{ steps.build.outputs.cache-key }}
     steps:
@@ -33,19 +53,27 @@ jobs:
           cache: false
       - name: Install the reviewed scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-      - name: Reserve disk for the complete source and filesystem build
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-          python3 - <<'PY'
-          import os,shutil
-          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
-          PY
-      - id: version
+      - id: runner-disk
+        name: Prepare hosted runner disk
+        run: python3 scripts/prepare-runner.py
+      - name: Retain bounded runner disk diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-disk-packages-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-disk.json
+          if-no-files-found: ignore
+          retention-days: 1
+      - name: Receive the version selected by the isolated trusted job
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.value }}
         run: |
-          python3 scripts/next-version.py
-          cat "$RUNNER_TEMP/lanrith-version" > VERSION
+          python3 - <<'PYTHON'
+          import os,pathlib,re
+          version=os.environ['RELEASE_VERSION']
+          assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',version)
+          pathlib.Path('VERSION').write_text(version+'\n')
+          PYTHON
       - name: Receive opaque cache data on the fresh build VM
         if: needs.cache.outputs.artifact-id != ''
         continue-on-error: true
@@ -113,13 +141,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Reserve disk for image and native qualification
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-          python3 - <<'PYTHON'
-          import os,shutil
-          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 60*1024**3, 'At least 60 GiB free disk is required'
-          PYTHON
+      - id: runner-disk
+        name: Prepare hosted runner disk
+        run: python3 scripts/prepare-runner.py
+      - name: Retain bounded runner disk diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-disk-native-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-disk.json
+          if-no-files-found: ignore
+          retention-days: 1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.packages.outputs.artifact-id }}

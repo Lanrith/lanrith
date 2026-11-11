@@ -6,21 +6,15 @@ FROM ${MKOSI_BUILDER_OCI}
 ARG DEBIAN_SNAPSHOT
 ARG DEBIAN_SECURITY_SNAPSHOT
 
+COPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap
+RUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh
+
 RUN printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80-lanrith-transport
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-      ca-certificates \
- && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
- && printf '%s\n' \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
-      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT} trixie-security main" \
-      > /etc/apt/sources.list \
- && printf '%s\n' \
-      'Package: *' \
-      'Pin: origin snapshot.debian.org' \
-      'Pin-Priority: 1001' \
-      > /etc/apt/preferences.d/99-lanrith-snapshot \
+      ca-certificates /opt/lanrith-apt-bootstrap/apt-utils_*_amd64.deb \
+ && /bin/sh /opt/lanrith-apt-bootstrap/configure-snapshots.sh "${DEBIAN_SNAPSHOT}" "${DEBIAN_SECURITY_SNAPSHOT}" \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --allow-downgrades --no-install-recommends \
       erofs-utils \
@@ -56,7 +50,6 @@ RUN apt-get update \
       shim-signed \
       tayga \
       avahi-daemon \
-      apt-utils \
       binutils \
       unbound \
       util-linux \
@@ -68,20 +61,21 @@ RUN apt-get update \
 # uses the reviewed interface without an unpinned tool download.
 # Keep the tool artifact on its own immutable snapshot: a runtime security
 # snapshot can stop listing mkosi 27. The package checksum still pins its bytes.
-# Snapshot transfers can terminate mid-stream. Keep a finite transfer/retry
-# budget and the exact checksum gate; HTTP/1.1 avoids the archive's HTTP/2 reset.
-RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --http1.1 --fail --location --show-error \
-      --retry 3 --retry-all-errors --retry-delay 1 --retry-max-time 180 \
-      --connect-timeout 20 --max-time 60 \
-      --output /tmp/mkosi.deb \
-      https://snapshot.debian.org/archive/debian/20260912T080811Z/pool/main/m/mkosi/mkosi_27-1_all.deb \
- && printf '%s  %s\n' \
-      374b121fe598b89f1c2e3b99a65b305822b31b75e621ebda1f431a1e306766e9 \
-      /tmp/mkosi.deb | sha256sum --check --strict \
- && dpkg-deb --extract /tmp/mkosi.deb / \
- && mkosi --version | grep -Fqx 'mkosi 27' \
- && rm -f /tmp/mkosi.deb \
- && rm -rf /var/lib/apt/lists/*
+RUN set -eu; for host in snapshot.debian.org snapshot-cloudflare.debian.org; do \
+      if curl --disable --proto '=https' --tlsv1.2 --http1.1 --fail --silent --show-error \
+        --connect-timeout 5 --max-time 20 --retry 2 --retry-all-errors --retry-max-time 45 --max-filesize 367836 \
+        --output /tmp/mkosi.deb \
+        "https://${host}/file/8be9af6ae90e8288b524b7a2ba046901e717ed95/mkosi_27-1_all.deb"; then \
+        printf '%s  %s\n' \
+          374b121fe598b89f1c2e3b99a65b305822b31b75e621ebda1f431a1e306766e9 \
+          /tmp/mkosi.deb | sha256sum --check --strict; \
+        dpkg-deb --extract /tmp/mkosi.deb /; \
+        mkosi --version | grep -Fqx 'mkosi 27'; \
+        rm -f /tmp/mkosi.deb; \
+        rm -rf /var/lib/apt/lists/*; \
+        exit 0; \
+      fi; \
+    done; exit 1
 
 # The exported tool image has no reusable package-generated host/TLS identity.
 RUN python3 - <<'PY'
