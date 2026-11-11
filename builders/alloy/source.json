@@ -25,8 +25,8 @@
     "version": "3.35.0"
   },
   "commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
-  "go_image": "docker.io/library/golang@sha256:fea12ba16096adec0f699ce1c4da2154d320450e56c1f63671f95d2a3551c77b",
-  "go_version": "1.27.3",
+  "go_image": "docker.io/library/golang@sha256:fb7cceb528b47141eccd9b60bf3cbd27d5ef5f8cf5b7d338bec866da495b50dc",
+  "go_version": "1.27.4",
   "modules": [
     {
       "directory": "github.com_burningalchemist_sql_exporter",

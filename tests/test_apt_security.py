@@ -3,6 +3,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -93,11 +95,36 @@ class AptSecurityTests(unittest.TestCase):
             self.assertEqual(len(mirrors.splitlines()),4)
             self.assertIn('file:/etc/apt/lanrith-repositories/debian/\tpriority:1 type:index',mirrors)
             self.assertIn('https://deb.debian.org/debian/\tpriority:2 type:deb',mirrors)
-            self.assertIn('https://snapshot.debian.org/archive/debian/20261103T070000Z/\tpriority:3 type:deb',mirrors)
-            self.assertIn('https://snapshot-cloudflare.debian.org/archive/debian/20261103T070000Z/\tpriority:4 type:deb',mirrors)
+            stamp=dict(line.split('=',1) for line in (ROOT/'builders/build-inputs.lock').read_text().splitlines() if line and not line.startswith('#'))['DEBIAN_SNAPSHOT']
+            self.assertIn('https://snapshot.debian.org/archive/debian/'+stamp+'/\tpriority:3 type:deb',mirrors)
+            self.assertIn('https://snapshot-cloudflare.debian.org/archive/debian/'+stamp+'/\tpriority:4 type:deb',mirrors)
             self.assertIn('mirror+file:',(context/'lanrith-apt-bootstrap/sources.list').read_text())
             self.assertIn('Pin: release o=Debian',(context/'lanrith-apt-bootstrap/snapshot.pref').read_text())
             with self.assertRaises(ReleaseError):security.stage(ROOT,context,'trixie')
+
+    def test_snapshot_refresh_uses_each_locked_date_and_release_digest(self):
+        project=self.root/'project';(project/'builders').mkdir(parents=True)
+        for name in ('apt-security.json','install-apt-security.sh','configure-apt-snapshots.sh',
+                     'verify-apt-snapshots.sh','build-inputs.lock'):
+            shutil.copyfile(ROOT/'builders'/name,project/'builders'/name)
+        lock=project/'builders/build-inputs.lock'
+        text=lock.read_text()
+        stamps={'DEBIAN':'20261202T060000Z','DEBIAN_SECURITY':'20261203T070000Z',
+                'DEBIAN_BOOKWORM':'20261204T080000Z','DEBIAN_BOOKWORM_SECURITY':'20261205T090000Z'}
+        for prefix,stamp in stamps.items():
+            text=re.sub(r'^'+prefix+r'_SNAPSHOT=.+$',prefix+'_SNAPSHOT='+stamp,text,flags=re.MULTILINE)
+        lock.write_text(text)
+        values=dict(line.split('=',1) for line in text.splitlines() if line and not line.startswith('#'))
+        with patch.object(security,'download',side_effect=lambda item,path:path.write_bytes(b'fixture')), \
+                patch.object(security.frozen_apt,'repository',return_value=(b'signed fixture',b'index fixture',{})) as repository:
+            for distribution,prefix in (('trixie','DEBIAN'),('bookworm','DEBIAN_BOOKWORM')):
+                context=self.root/distribution;context.mkdir();security.stage(project,context,distribution)
+                for archive,suffix in (('debian',''),('debian-security','_SECURITY')):
+                    stamp=stamps[prefix+suffix]
+                    mirrors=(context/'lanrith-apt-bootstrap'/(archive+'.mirrors')).read_text()
+                    self.assertIn('/archive/'+archive+'/'+stamp+'/',mirrors)
+                    repository.assert_any_call(str(project),archive,stamp,
+                        distribution+('-security' if suffix else ''),values[prefix+suffix+'_RELEASE_SHA256'])
 
     def test_each_debian_build_stage_is_patched_before_its_first_apt_call(self):
         count=0
