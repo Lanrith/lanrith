@@ -25,8 +25,8 @@
     "version": "3.35.0"
   },
   "commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
-  "go_image": "docker.io/library/golang@sha256:fea12ba16096adec0f699ce1c4da2154d320450e56c1f63671f95d2a3551c77b",
-  "go_version": "1.27.3",
+  "go_image": "docker.io/library/golang@sha256:fb7cceb528b47141eccd9b60bf3cbd27d5ef5f8cf5b7d338bec866da495b50dc",
+  "go_version": "1.27.4",
   "modules": [
     {
       "directory": "github.com_burningalchemist_sql_exporter",
@@ -52,8 +52,20 @@
   ],
   "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
   "node_version": "24.22.1",
-  "package_version": "1.20.1-1+lanrith5",
+  "package_version": "1.20.1-1+lanrith6",
   "schema": 1,
+  "security_modules": {
+    "github.com/andybalholm/brotli": {
+      "go_mod_sum": "h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=",
+      "sum": "h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=",
+      "version": "v1.2.7"
+    },
+    "github.com/klauspost/compress": {
+      "go_mod_sum": "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=",
+      "sum": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
+      "version": "v1.20.2"
+    }
+  },
   "supplemental_notices": {
     "github.com/dennwc/ioctl@v1.0.0": {
       "basis": "Upstream license commit contains exactly the same compiled Go source as v1.0.0.",

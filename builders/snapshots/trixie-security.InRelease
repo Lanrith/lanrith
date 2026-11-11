@@ -6,8 +6,8 @@ Label: Debian-Security
 Suite: stable-security
 Version: 13
 Codename: trixie-security
-Date: Tue, 03 Nov 2026 01:35:08 UTC
-Valid-Until: Tue, 10 Nov 2026 01:35:08 UTC
+Date: Wed, 11 Nov 2026 05:45:27 UTC
+Valid-Until: Wed, 18 Nov 2026 05:45:27 UTC
 Acquire-By-Hash: yes
 Architectures: amd64 arm64 armel armhf i386 ppc64el riscv64 s390x
 Components: updates/main updates/contrib updates/non-free-firmware updates/non-free
@@ -140,65 +140,65 @@ SHA256:
  f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec       20 main/Contents-udeb-riscv64.gz
  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855        0 main/Contents-udeb-s390x
  f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec       20 main/Contents-udeb-s390x.gz
- 9f598e953869b5dab7c52c4ec82b19324cd38a7d06797978048b7775ce073f74   886061 main/binary-all/Packages
- b1ee8782fd4b278b708476a144beaf5c55db8eb14671fc9294751896abd88979   122796 main/binary-all/Packages.xz
+ 086c169f3390b10ae2fd2065d940f631f6f30610c776efcf03463e6491dcedad   896692 main/binary-all/Packages
+ 509d7816ef688e9d80b77d13f8cb79f71e07436fa667ca3248c526c678101f98   124588 main/binary-all/Packages.xz
  a9b249df22def54d7a08bd9940af911bf36e01ce44d39de63f784e87c53aa361      138 main/binary-all/Release
- f078633de0de4448d6548d3d61a823ea993a579793f97f87a403e3273f524143  2168568 main/binary-amd64/Packages
- f8239930f429cd17ea38e03ca2437079be2f86d8641dea78b7ea29787dfc927f   297208 main/binary-amd64/Packages.xz
+ 1eb52bc6eeff55a49bbffd532adc31afe4fd8e8c99569210ed59852e8fe1012d  2190451 main/binary-amd64/Packages
+ 5bfecdb2585e0396b8b3ce9988bb00454d613897f21c6cfdc32506fb4b05bdae   301568 main/binary-amd64/Packages.xz
  a411ae8d6c7ba04e1ef23972fc56ad762e35246a3d605690327f2ce35171051b      140 main/binary-amd64/Release
- 1c2c8ab4689fce17da11d3548303640f8312ee2dc852158ac640b2a1670d3948  2199567 main/binary-arm64/Packages
- 9f551c8fb751ddc941d758fafde48739daf6aeae19d0e233ce3a4e5f46942d5c   298088 main/binary-arm64/Packages.xz
+ 556e12aab4f278cbf6c2da9612d463c086adb05c934d5ffce1b9da003fc757b5  2221999 main/binary-arm64/Packages
+ 6f810d3bf50e8b3e99062d9474f0dbaa505de79b175c576a1ce805bfb1325680   302200 main/binary-arm64/Packages.xz
  d4b57b7539c1ef14afadd4e7b631a27729d0f12fdcde59c87dd70e45b2f5edd7      140 main/binary-arm64/Release
- 9502bb9612ca5bcab3dc118dad1f2d884c73fce20c82b97bb8d7e4cea4c76b1e  1869643 main/binary-armel/Packages
- 2605d17646033e083ffff0bfb6afdebe4879bc4d5928d18d1edb4844b886ef1f   259976 main/binary-armel/Packages.xz
+ a9f5970462f7540ed802614d750373827f2a69c961c1b047fd313f4b84d56a33  1889079 main/binary-armel/Packages
+ e1d0c24d6567aeddf359909ef111525c21a1720a1ffd655bc5ce35490ffe30be   263980 main/binary-armel/Packages.xz
  045d988078a58d6eb9238ae427f3c20872773030f4c69197317c23c630ec3b7e      140 main/binary-armel/Release
- 00df068657c919bb10b28ec102bbd26be1bcb9f7e1f744bf26ddc3b48978815e  1866913 main/binary-armhf/Packages
- 147695699111edeefa0f97eeb9ce6591d2b5782d75e4bcba6f20ffe522ecb23b   262040 main/binary-armhf/Packages.xz
+ eb042387402eace80f62418d37685564ac42ae7ba77410d26ff9587525fb61a2  1885834 main/binary-armhf/Packages
+ 497ac2e374bf8cfd51cbfe4ecf4a8e18872bbb7225c5087f42a124456bd81910   266056 main/binary-armhf/Packages.xz
  1339e80edeb93fe525a3a25a8661d5e022f5e2f447465cc557d48dd94f6cccd8      140 main/binary-armhf/Release
- fe2d91ad968dc38a90d749349e12bb0ab3de06082ef8b8680e3530ff0054ba1d  1697748 main/binary-i386/Packages
- d1f5e9294a49f2f826b2f9886492ce2dccb093de78d9ac217503a8758ace4f05   246768 main/binary-i386/Packages.xz
+ b4019a15cc022f0a17544bf037d8cc62b6c5dc31ea8ec488719b3ed9b6a7d8a5  1715461 main/binary-i386/Packages
+ 9fced41071b2a10f95728f70f15a06b1d72a158b06a61ffffb2a4633e9dc7ed4   250552 main/binary-i386/Packages.xz
  279a5ddc5e3a0d79c0868745bc05a8481084c4e1f4d028bb067c2a415c2a5247      139 main/binary-i386/Release
- 1d5ee2d7e1e66e65fc7eb78fef57e1c85c3da44cb163179d9f52060913bc05db  2058090 main/binary-ppc64el/Packages
- 42dbad3ac81a64dbd9c895edf15c65a539bdb0b223b42fb6f999570089bd47ef   285536 main/binary-ppc64el/Packages.xz
+ 5f7c545d13a0c795e1b19374b20c4796ddb894e8fa183a44c247b6cf3a735085  2077412 main/binary-ppc64el/Packages
+ 06ecc6636e2d4f2a2e98b6025984539c25b23e64c23a02df9053466f8f48997a   289392 main/binary-ppc64el/Packages.xz
  45bdef6ea19e9e5a1259b0b5346d07e7dcad2cf03f71291cd1ae5b003cf53757      142 main/binary-ppc64el/Release
- 2e305d4d5d489decc0eeda84bff1c41bf0acfa37f293a8f57999880462a6808a  2030849 main/binary-riscv64/Packages
- 0976a6d8cb013d4967e0bd903818fc2150200589245531d1c14b70848c2987dd   283912 main/binary-riscv64/Packages.xz
+ c9cb35db090b089d5428a90357363ec56481a6d6345c7d6b248012e6f10e4d83  2049808 main/binary-riscv64/Packages
+ 48d753b76705f9881d44b5e1dac60c397248364588d9f3da9ce9bc43102509f5   288028 main/binary-riscv64/Packages.xz
  7a191b152cff42e85659876117205b9077d149b5f9a56236490251db4c8964eb      142 main/binary-riscv64/Release
- 562a96458742cd7c7faa63cb1889c7de64efb0b9b5ac77a3392e8241ad4642a1  1768069 main/binary-s390x/Packages
- 9228d5e9abcdcad1abe6773459070de973306133b2080705ef4c75412b2bbf86   260868 main/binary-s390x/Packages.xz
+ f0b33a30972430509b6c86d4952aa061ddd093b407d5a4f16bc31d271d4fdae5  1798887 main/binary-s390x/Packages
+ 4d4478680d2af80be5e19d6e896d3fac748535f91297ff4fc6940b8b8c7f9c37   265972 main/binary-s390x/Packages.xz
  5d0f63804453492d24dd6dbf8e278d0550767d369fc43f49f2a75d217d146f7e      140 main/binary-s390x/Release
  d452cdbfe9b08ed51d4b8f79d1759d972030275c07de11441184767caf114c0f      485 main/debian-installer/binary-all/Packages
  cf35716809bab277c7a6403ceb2094baa7e866260ab3d5e4a99a6664ffbaa40e      404 main/debian-installer/binary-all/Packages.xz
  a9b249df22def54d7a08bd9940af911bf36e01ce44d39de63f784e87c53aa361      138 main/debian-installer/binary-all/Release
- 9842baa871479823c12b64a25988e6421811fceb9666933f8fc01ed4d5d76bbb   425583 main/debian-installer/binary-amd64/Packages
- 66de416d66118f870b063f1206773e7d05270c1c2b9461f0d837aaf983adefc6    36976 main/debian-installer/binary-amd64/Packages.xz
+ 4ac90441603d796bec69d8d826169fed2ac45e8ab8510e1e1897592ec87bb95f   457741 main/debian-installer/binary-amd64/Packages
+ f132aa0945ef29717e5b440a9eeaf8a6db19b9ac1854842cfc4b1c344d7d0138    39276 main/debian-installer/binary-amd64/Packages.xz
  a411ae8d6c7ba04e1ef23972fc56ad762e35246a3d605690327f2ce35171051b      140 main/debian-installer/binary-amd64/Release
- 96ab01623ea7eb6289dffc7d4a84702f324d9290104915a8747fcb1e377f63fa   427986 main/debian-installer/binary-arm64/Packages
- cb15d657e4da09fca08503a7930a5d8445a50d7e2fe13848ce688211153aea43    37052 main/debian-installer/binary-arm64/Packages.xz
+ a6ab19514ebb1143c8c5051e1f6e38bea111a781fae99175ae968d85ae1004b7   452868 main/debian-installer/binary-arm64/Packages
+ 55dfd61f131a67f82aac8d32cb58d52e54ffc4c5da59879e5711bd8763c769b2    38940 main/debian-installer/binary-arm64/Packages.xz
  d4b57b7539c1ef14afadd4e7b631a27729d0f12fdcde59c87dd70e45b2f5edd7      140 main/debian-installer/binary-arm64/Release
- 2cf59df8a9ec510e77a86a4dd3eb2927310a5aeb97ba9cc4d2d7bde800f7e61d    14896 main/debian-installer/binary-armel/Packages
- 6bbfff800aba1fed085f31ac42173585a2d8fae5bfd357b2d5e1966b26a3fb2a     3948 main/debian-installer/binary-armel/Packages.xz
+ f1931e3b2bcf62d993945c54da62c8fec63b68b151107f890c66a8f9473a25fb    15390 main/debian-installer/binary-armel/Packages
+ 24f21b93dbd7155793a2adf7817c204a57fa238b952a83dc0db3ce6ea6162077     4076 main/debian-installer/binary-armel/Packages.xz
  045d988078a58d6eb9238ae427f3c20872773030f4c69197317c23c630ec3b7e      140 main/debian-installer/binary-armel/Release
- 1fecdf10d4e55eb725f98a844d9ed249a463dcae01f4cc365934177a71ade809   136414 main/debian-installer/binary-armhf/Packages
- fc55575a6740e6e90d2faffaf1b35db7ed0d3614e49c59986a483dfa480a8303    15468 main/debian-installer/binary-armhf/Packages.xz
+ f6757e49a354c1a2420a533ff8d5c5e55d37f1cb675fa56d14c183074876d076   161142 main/debian-installer/binary-armhf/Packages
+ feb19eab41a05dbe493b74fcc3bdd04fc4ea533ded34d4aefed36c217ad303cf    17512 main/debian-installer/binary-armhf/Packages.xz
  1339e80edeb93fe525a3a25a8661d5e022f5e2f447465cc557d48dd94f6cccd8      140 main/debian-installer/binary-armhf/Release
- fd06c33400aa0ff009fd55cdae1fb060c09159b818d7700aad757b789a124e8d    14829 main/debian-installer/binary-i386/Packages
- 06cc47d5ce690c7ae442bf027dde15d890fbdb91441f070ade74b3cbdbc8b82c     3932 main/debian-installer/binary-i386/Packages.xz
+ c5b3b4afc29157f1b417f1bcf25290198ef154dcab17c88b097cb9017eb54720    15321 main/debian-installer/binary-i386/Packages
+ 97f6933a8b11b0c079d6c78c8b172bf995b9290b1d8f781f86a8d459c4edc42a     4060 main/debian-installer/binary-i386/Packages.xz
  279a5ddc5e3a0d79c0868745bc05a8481084c4e1f4d028bb067c2a415c2a5247      139 main/debian-installer/binary-i386/Release
- 0893510260848d2412a1b1d7d6a0384474cd99544339eb6f2f6b648a50dd7f49   142901 main/debian-installer/binary-ppc64el/Packages
- 863cf1f59fa1a79c0099fae6ade6bc214b61db9b60b1e567627a2e52d3b8c27f    15476 main/debian-installer/binary-ppc64el/Packages.xz
+ 065c1edbc32fcdc6a1b878bb200432b7b226879fb41a4a084043995311e3d12c   168911 main/debian-installer/binary-ppc64el/Packages
+ 989966dfb98bc956a45881e186d55338bced4e39a578518ac605e2c5f6c3a208    17536 main/debian-installer/binary-ppc64el/Packages.xz
  45bdef6ea19e9e5a1259b0b5346d07e7dcad2cf03f71291cd1ae5b003cf53757      142 main/debian-installer/binary-ppc64el/Release
- 76b97cf1c8f150af870d5364201b7895a314e560f2bc1806ff674d9e14128818   136347 main/debian-installer/binary-riscv64/Packages
- 12deaa51672b20bdce18e8e3a44ac925b7a3f48a411d2f496cb8014b257cc3a3    15344 main/debian-installer/binary-riscv64/Packages.xz
+ 8d59d9cb739f32c639c2b002c5b97bcc0a9139e6c4b5ca74bf422ae085826301   161049 main/debian-installer/binary-riscv64/Packages
+ aeb774738dbd7a805418433b172657e5ca742ccd0f04edcb4d56f42a3b926ca4    17368 main/debian-installer/binary-riscv64/Packages.xz
  7a191b152cff42e85659876117205b9077d149b5f9a56236490251db4c8964eb      142 main/debian-installer/binary-riscv64/Release
- afb8360a9c8c92fc7cf837c6deb05d1f223dc6347c2a1c52ba5c40c19524f5ae    67739 main/debian-installer/binary-s390x/Packages
- 33366c16cee8d7e4257c7ca144011040db3cefd13a52422022d16b9959e46b5c     9348 main/debian-installer/binary-s390x/Packages.xz
+ 98670af51f21fb66e7aaff9a993837dc2d6cb45e55ff8250a6aa09f517ebd24b    81402 main/debian-installer/binary-s390x/Packages
+ 3c7fbf39c62a2a43f5ca428d48c8e2aa86f8aaea9f145d2b68bd8ee7eaee8334    10604 main/debian-installer/binary-s390x/Packages.xz
  5d0f63804453492d24dd6dbf8e278d0550767d369fc43f49f2a75d217d146f7e      140 main/debian-installer/binary-s390x/Release
- 01f089ee21b1cf828a11a11aec9d826957cf7241e1309cf2bb12d888cd8dd5fd  1280206 main/i18n/Translation-en
- 15e2123e10b8608f69dd1109269f0efc9a0a8bda1c65dddf87d7c69ff5152b23   178460 main/i18n/Translation-en.xz
+ 265a370b10880652bbb303ebb69c977ad616e86e650c80f77e062aa9e2355ce1  1315121 main/i18n/Translation-en
+ ca9605641269593cce49134c3c8a17a05baafa1fbdb82239b8bd9a93c47bce97   181684 main/i18n/Translation-en.xz
  7b2b28fa1d43f756b7f598bb435bb502904e6788288692ef43cff4f97e1cefed      141 main/source/Release
- 832b77421cb9a48b27cf766aa2862f13bd4dd03b69ed0fbe879afe75c51bc815  6360587 main/source/Sources
- 5fbeff54531872213e41c6738021da5630cf3ec24c3fd913b0738ae130d22d97   258108 main/source/Sources.xz
+ 4da9f59109e5d524032a329dddd85dee0f0421e8b352f902909c640bdc0d3a1e  6680538 main/source/Sources
+ 793ce470e5eb000954ee9eede06230399952c882b0ebfd160fb5a295032de97a   262716 main/source/Sources.xz
  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855        0 non-free-firmware/Contents-amd64
  f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec       20 non-free-firmware/Contents-amd64.gz
  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855        0 non-free-firmware/Contents-arm64
@@ -387,29 +387,29 @@ SHA256:
  0040f94d11d0039505328a90b2ff48968db873e9e7967307631bf40ef5679275       32 non-free/source/Sources.xz
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCAAdFiEEsMq5Jm6MOSl5iz7uvebSuSFux6gFAmrpOkwACgkQvebSuSFu
-x6iDeg/+NRF+loPlfMFNlfipiFOTgaVRLgY2N0KRQXdGhihxBycA4kH1p7IiNlf2
-1wiQ1AjDH1NatiCxprImhsxmPZ2x0BLwQxovglPyq0iGZlalCHSAPwlisyTgw2IE
-KagkR2dexkq6c9JWP058sDNcuvISQPWjQ8xrvcEFO4rPjSoTKurr+0d8n1TvFNjK
-it5q+i6Y00NnJeB0L1ttYPNTSyK4/al8Ogk34MkUsTNPoi9ee7hjh0TG5Nk6TAf/
-6OS8wOvPFGK8xk5UFnV1VqAw8Yi2r5Jc6ntdy3GLL/q6egL4hcxazuKOkMJlbGmn
-bO8VaDXCkr6zSnP7J86pTkPaeS3y+gGNpqGui5L0kvfTVbFD4MtvacQw+E8Pc67x
-7+ooa+QVZt5YE7ebEuVhIMtby4nZQyMo7A+L6HrShhQLA7bZhNMs8apj1c9jz8sm
-qLE8azcudT1lWgFcjHylAe7h6a5vdPYLNRJ07cnKWGoDlmwU483uHqAFoPzJvrpJ
-h/fXDI8XbcPLfeK43bD3YljzgbC76rRFuyewI8erz/wjMh0C7ubTQqhruahUJ1q8
-QVW82CrAOeozSsJDpUtGhYWcHftxHqLuOhY/eoudPOjDwfFiMXCVWI4a1ByLvmY5
-bXecRq1ovCpAyncgez5PHZQsPHjVB/KX9bIaWmtn6V9dpgFWIHWJAjMEAQEIAB0W
-IQSJyHrOpd1rjmpwaICOn4MSBbS6lQUCauk6TAAKCRCOn4MSBbS6lTKYD/4kitna
-jUdx+tVUFdjdx9wriZ9QoOHGlYr9AIgtEsV5dxgmf+zgDqwJskTnuE08QSsLdrNH
-udM8b4l1v216udK/9XHCmxjygVDZKBO73MhbManeZcm7lOFM8qDrJjQqmBBXspJP
-ucrMcrGUZCDAXRC6mqlawxG9Mdl61GkTpiBl1n+n1aJk6+QZNnhwYPcwel9LCHwv
-KVnLZjUQXZnNn//S9i4mOzHzhIKwf97PueG78bVlUVcIrPRXbVWYkNEtE+7fNgnq
-g+cPt8Ys3tWdvI6xNZWJscyyVohjT/z+kZESNwm/hpU8Qx9elx/Z/TPampWo7tl5
-uIWm8eDNXgDXHMObs1GiXHr2lI08qidOzpzlMot7s5tfqoaExA9T/cYBrV3nWooq
-zwzgRYFeIbuMqOEdkwTnIWVNECIT334Zk5OcgD6jPYWO8zA27Y2MWu7UsmGsHoEj
-Hwg1GsUae4XsNpt0v0CLdu+nOQI7ebXg0fokw/CtZLEXWwOqDv5ClRY69XXiD63a
-1/ob6Ynh4HWJeZJ06fqYF/YXXPGBumIqVRN3IjUwXR2pZDgjwdQJo+9geB+lPMEi
-vqNqepMCU3L4SN4R/KguqQYy22xxZ4YP5i8BrUx87D82wFwndZnIFxNZsivWjzU5
-6+LMIr+qYZHzumPSZ0othBlaKoUJXBqmZxGwQw==
-=XutS
+iQIzBAEBCAAdFiEEsMq5Jm6MOSl5iz7uvebSuSFux6gFAmr0APkACgkQvebSuSFu
+x6jHvBAAgzdg4vI5wrgk7IBFulPL57N6ISpayNvZ7PXhvyl7nadvPWHMqigX4MeG
+xnpJFW3X8+j7JawNYtOd2hZA9+2dVADazIJdjR1HUPaJmZGkqkZ6DKWtvq/fG7qj
+RT+MnloK8ULYIXR6RlRabja1vVTVHw/t5J8nWDgJGjOREiW87MB75OFwx4IUfavh
+UkMThVSajE6xSQUqqOYIyM9k5eQnBFBrvUlTXL1axq5ayQzU0arvc05knAHoFQtk
+kKb8tTzRqgAK1G53BxH+oXzogdh29Btv0HKoyrXwj5H/5krd505PGGU9Ii3XevLU
+1Q/XXN37WcsHZqP3kNLR4oi4RyjhAX2bpoVyELdq8ouOykYzmqFeirCVBJI/5Fsm
+/zBPQzEbjtgtGyrqjnmIYmjOkJ+CoEAYbKG8+8IhI2B4v8c3n0XsxR0+4oFDimnF
+/9M/a7x4HpI1xjii3yNr/WVkc29HJ8WBLvpzOKr8lh3vqCqOaXUKGEp6Ai1WfyjP
+Kj45nJWW+wEuMtgD1y8p1awMWGNFh0mQrYmE3+djeynyZXSVeaqz2iY+eEDc/w8N
+ng30BmgPTo1SCjTReLX+8LDEkIOVyoOEcM9ZJV08nPUGgnsI4WnLsil5dBflAULM
+cTiJkw6J7D49Tlqn1Qv5U6KqeKKq/4cE/kA2wI7xMqusChR/34uJAjMEAQEIAB0W
+IQSJyHrOpd1rjmpwaICOn4MSBbS6lQUCavQA+QAKCRCOn4MSBbS6lWNBEACNOR1e
+r2layreXxsFW6OyjIEBS5rLAiaYCgYfp2A1368h5ZcabyAB2yGx17MkfEzzXarik
+FuJBuj1MloTufcx1gL/FBuVeydgcxvK6KVcfl8FTnEaKRymSJ5iBMyO4gwY2iN9p
+5yj3CF0yvCbX+0Ueme8tVlfx4962WjKML+oBPCk7Xrb3BS3c8vaY2O/hDg00lgvK
+2pEhXjB8iiyWbbRMohngDVFEvH3I1dazXUhVSHBgFV70R+1RBuvUZ6UYjiW6XHdG
+/F94/jTE5lTCx6MKc2Ws6w6vxGTLtKMJXx+yBqVxHvEEnexGJ2rTKHIKvNavhEzP
+fSUEwgaP9IA3BUbi/Ox3R/eU67/VHpsWlu2SNtvnBMZJs0a0QIe9dKz5Q4NBrM1d
+/0nB51vr7SZBCB8W+yz/40a9zdSZsg/G5GdRsMXkG6EZdDdJdjAqmihHfYilMS8u
+4z+wVFeAAMH2eLmrBxaOvXWkrDBvUjfd2GzZjzcXty6AUc478xO48JR+kiXobo4f
+4NgjANMtfS5wHnGcdyYC3WPyb80i1dfq35yEnx9ntMFmtZhAGZI43sr1BbnyAGTZ
+JivVPNPcxe0DcSwV2wUjKB3Wp/u9DM5GmSLSOamY1eHd0Oh/JIhFwCC2FNq/ihL0
+VfyhaWNtVVCUr8Hg+3AO4sjlnpZQGB6ei7eUPA==
+=sm3w
 -----END PGP SIGNATURE-----

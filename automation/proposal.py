@@ -211,6 +211,36 @@ def refresh_snapshot(root):
     (root/'build-inputs.json').write_bytes(canonical(selection))
 
 
+def scan_go(root, previous, reasons, policy):
+    """Scan with the exact reviewed compiler, including an authenticated proposed fix."""
+    selected = (root/'.go-version').read_text().strip()
+    require(re.fullmatch(r'1\.[0-9]+\.[0-9]+', selected) and
+            '.'.join(selected.split('.')[:2]) in policy['go_branches'],
+            'Source scan needs an exact reviewed stable Go version.')
+    if selected != previous:
+        inputs.validate_go(previous, selected, reasons, policy)
+        matching = [r for r in reasons if r['type'] == 'security-fix' and
+                    r['ecosystem'] == 'Go' and r['package'] == 'stdlib' and
+                    r['installed'] == previous and r['fixed'] == selected]
+        for record in matching:
+            inputs.validate_reason(record)
+    from .go_dependencies import environment
+    # No +auto: source manifests cannot select a different compiler. Official Go
+    # downloads the exact SDK through the proxy and verifies it with sum.golang.org.
+    env = {**environment(), 'GOTOOLCHAIN': 'go'+selected}
+    compiler = subprocess.run(['go', 'env', 'GOVERSION'], cwd=root, env=env,
+                              capture_output=True, timeout=300)
+    require(compiler.returncode == 0 and compiler.stdout.decode().strip() == 'go'+selected,
+            'Source scanner did not obtain the exact verified Go compiler: '+
+            (compiler.stdout+compiler.stderr).decode(errors='replace')[-2000:])
+    print('Source scan compiler: '+compiler.stdout.decode().strip())
+    result = subprocess.run(['govulncheck', './...'], cwd=root, env=env,
+                            capture_output=True, timeout=600)
+    print(result.stdout.decode(errors='replace'))
+    require(result.returncode == 0, 'Reachable Go vulnerability or incomplete source scan: '+
+            (result.stdout+result.stderr).decode(errors='replace')[-2000:])
+
+
 def propose(root, tools, repo, producer):
     repository(repo)
     policy_raw = (root/'security/update-policy.json').read_bytes()
@@ -261,8 +291,13 @@ def propose(root, tools, repo, producer):
             pin['node_image'] = inputs.image('node', selected+'-bookworm')
             alloy.write_bytes(canonical(pin))
         patch = root/'builders/alloy/ui-dependencies.patch'
+        from .embedded_go import update as embedded_updates
+        previous_modules = pin['security_modules']
+        pin['security_modules'], embedded_reasons = embedded_updates(previous_modules,
+            allow_minor=policy.get('automatic_minor_security_updates', False))
+        reasons.extend(embedded_reasons)
         updated, found = npm_updates(pin, patch.read_bytes(), policy)
-        if updated != patch.read_bytes():
+        if updated != patch.read_bytes() or pin['security_modules'] != previous_modules:
             prefix, separator, number = pin['package_version'].rpartition('+lanrith')
             require(separator and number.isdigit(), 'Alloy package has no reviewed local revision.')
             pin['package_version'] = prefix+'+lanrith'+str(int(number)+1)
@@ -306,13 +341,7 @@ def propose(root, tools, repo, producer):
         security_path.write_bytes(canonical(security))
     if (root/'go.mod').exists():
         # A new advisory without an eligible fix still needs an actionable failure.
-        # The scanner loads source; it does not execute dependency installation hooks.
-        from .go_dependencies import environment
-        result = subprocess.run(['govulncheck', './...'], cwd=root, env=environment(),
-                                capture_output=True, timeout=600)
-        print(result.stdout.decode(errors='replace'))
-        require(result.returncode == 0, 'Reachable Go vulnerability or incomplete source scan: '+
-                (result.stdout+result.stderr).decode(errors='replace')[-2000:])
+        scan_go(root, before['.go-version'].decode().strip(), reasons, policy)
     after = {name: (root/name).read_bytes() for name in before}
     changed = {name for name in before if before[name] != after[name]}
     if not changed:

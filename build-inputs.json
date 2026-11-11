@@ -4,28 +4,28 @@
   "component_releases": {
     "discovery-bridge": {
       "files": {
-        "discovery-bridge_0.1.7_amd64.deb": "597c57cd77a50165fd46ba873e1338b05aaaebff433c27494cd623c1e43cf1fe",
-        "release.json": "21d1c107d32eb6b7bf841301dc5bdda4d29aa2ee5aba27a9e7bad98e30be1473",
-        "update-record.json": "a8e99f504a7385d5afd3023144ab99dfc0e3f337b85835436b2afed21dc593f8"
+        "discovery-bridge_0.1.8_amd64.deb": "4317bc51c63eaf4c11c6ed81056728fd22698d7ea00c8f0252e148bcf9c8bac2",
+        "release.json": "4afaee289727e47821f34063f6e69b11269196d1cd49af6634b1c589c94078dc",
+        "update-record.json": "4d40ed4c6fce568d7717804bcf9af0f54f2201c6bf355187484c8fc3988d95c6"
       },
       "repository": "Lanrith/discovery-bridge",
-      "source_commit": "63bc01abb29c33806761d20e20c49b563af2e87c",
-      "tag": "v0.1.7",
-      "workflow_commit": "63bc01abb29c33806761d20e20c49b563af2e87c"
+      "source_commit": "0c8c4c5acae394aaf4237bdf0dd07fbebbf797af",
+      "tag": "v0.1.8",
+      "workflow_commit": "0c8c4c5acae394aaf4237bdf0dd07fbebbf797af"
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "4997dcc38ff4bf658d0b89841e874d62e1456585d1e9eb31bb3f7d76cbb53596",
-        "router-policy-collector_0.1.10_amd64.deb": "48c2f78cc061ba179787e457fca59665cf985a0d45e619ca69eb5524da3e2985",
-        "router-policy-helper_0.1.10_amd64.deb": "860cc0aaa35d6bffbc8b41cab5bf39e7a726bcf606df83797dabf9fa57793c96",
-        "router-policy-reader_0.1.10_amd64.deb": "8429fdf298804ee4c4259e1d50be25001d22c36927d9f9af67d2e16d08ef42d3",
-        "security.txt": "dccdee416b63c1fece9034239778559278a44baf65cd18b8a4c13857977e1a54",
-        "update-record.json": "bb946e5de0bfa2dea7e650ee1e3516ebf8715228765508ce679e7b76eb696598"
+        "component-release.json": "bf8f9e391bd9cbbc83c79cf20a8e0394d179086400ab4b180e86d358468c4789",
+        "router-policy-collector_0.1.12_amd64.deb": "ae202389b83df247e05733d06680836e27ab74e56558a591369de678d30887ed",
+        "router-policy-helper_0.1.12_amd64.deb": "a85a6642e18e9c6704355ef4a08e22811bf80f39a7dca434024b03b17e89453d",
+        "router-policy-reader_0.1.12_amd64.deb": "f10565b2eb48623e4e82d292f1493a4affb14ae9d095795ea097b9b06fcbf1b7",
+        "security.txt": "b3eebd8b8feaa1df57aad272f09f18b45cdf56004d4127a61cda679b59149e9f",
+        "update-record.json": "a94178fa8d0a022a1b408b6b43b39a95d8c92b291682bf8c784bcafdc7c1de20"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "ad314e0abce5f1610df2971ce4226b65d1ddf750",
-      "tag": "v0.1.10",
-      "workflow_commit": "ad314e0abce5f1610df2971ce4226b65d1ddf750"
+      "source_commit": "228f16fa8f74cad93f92fa0ebfac86c3beb5fb04",
+      "tag": "v0.1.12",
+      "workflow_commit": "228f16fa8f74cad93f92fa0ebfac86c3beb5fb04"
     }
   },
   "custom_package_inputs": {
@@ -36,22 +36,22 @@
     "builders/alloy/patches/github.com_burningalchemist_sql_exporter.patch": "b97a4ee85a12055205cd232b2b6b4ec8b83079a4d2a891a96a20d3cbfe235cec",
     "builders/alloy/patches/github.com_grafana_snowflake-prometheus-exporter.patch": "94fd8d639043bbbcae3880190c02d39542c92074cae0afab735455bde17eb8ba",
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
-    "builders/alloy/source.json": "34422a4d0d0e627970d011e09cf258a255b69e5151865f456bc8f43cd69a70a6",
+    "builders/alloy/source.json": "ff7a5e7a40a8e2c257a37f83ab7b93fe57573bea722cc319e6d5c501ebd73403",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
-    "builders/build-inputs.lock": "f634994ac1787ab0456d21b554fc3565c3edee5f62133abff76973284bb311f4",
+    "builders/build-inputs.lock": "063223ba3d28e7e9d34a625741b84ac045786cf6e00777599f3054df142f9eb7",
     "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
     "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
     "builders/mkosi/Containerfile": "1a5d9b5172c7ae79db77580383fc7b7d735e920d8e24d4c2dddae05e85f5e73d",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
-    "builders/node-exporter/source.json": "9a5e0872a8cfbffdf0e8e542ac7a3e45220e7e41274d1464e8ef45907a328b18",
+    "builders/node-exporter/source.json": "fc9dc2085b8d9deae190a1f4f399b1e76bdf459ca502c5a523a64d6db00a0715",
     "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",
     "builders/pam/Containerfile": "d4bfd6b72f090cf2f21563814ec4a1db1237e6437337c511ed58a9ecf246e9bb",
     "builders/patches/GHSA-rc9p-89wj-mx7h.patch": "331f3464663b277a29bdd924d9385672355d68e313d799889aa89ce0803414bb",
-    "builders/snapshot-transports.json": "c3deba0bb6e8c685e88505f432049a9f1710d60d8ade35162afc75f9225f4ca3",
-    "builders/snapshots/bookworm-security.InRelease": "7b58164d2af0386b3c56507835d36062b28dc2855a0136db692621a4c263c135",
+    "builders/snapshot-transports.json": "91936b17cecce05a7f5b6142c7e0d75c4863cc49a8d3bb076e9c7bc7b42b827e",
+    "builders/snapshots/bookworm-security.InRelease": "0f619d2c907f5015e1c9f4d270545bff780ab9af40c6d0f020b1562ea3bcdd08",
     "builders/snapshots/bookworm.InRelease": "77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa",
-    "builders/snapshots/trixie-security.InRelease": "a8e217418cb4c361b5c3a3eb76804f78633491e995b18735f3862aaaece070b4",
+    "builders/snapshots/trixie-security.InRelease": "4c08a3fead91593eea49751f9369fecb9501645c81b3f2c4859503d742bee99d",
     "builders/snapshots/trixie.InRelease": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
     "builders/tayga-source.lock": "47fe031be8568eb3db5751b366c88108cdf9adce3b32ff4d928536093e71d6dc",
     "builders/tayga/Containerfile": "b71dc42e39cc6247a48caa660ff1d1606ab6fb7f9a0ea2abd6245d9dc85702a1",
@@ -62,10 +62,10 @@
     "builders/vpp/Containerfile": "3897684ce4bee00fc2d1e7792e8e3a1fa2115aa5e0a42d39223ba05edffe3040"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261103T070000Z",
+  "debian_snapshot": "20261111T060000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "3305e8cbc049a83531191f9ad9706436f0a0e419e0610bd37307061792d65975",
-  "security_snapshot": "20261103T070000Z"
+  "security_release_sha256": "2825ab0ab344bec65dc86103cc8559312e8c150c0591f576f8a0948bd470a00c",
+  "security_snapshot": "20261111T060000Z"
 }

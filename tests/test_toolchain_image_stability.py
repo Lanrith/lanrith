@@ -46,6 +46,8 @@ class ToolchainImageStabilityTests(unittest.TestCase):
         actual_run = subprocess.run
         scans = []
         def command(args, **kwargs):
+            if args == ['go', 'env', 'GOVERSION']:
+                return subprocess.CompletedProcess(args, 0, (kwargs['env']['GOTOOLCHAIN']+'\n').encode(), b'')
             if args == ['govulncheck', './...']:
                 scans.append(args)
                 return subprocess.CompletedProcess(args, 0, b'No vulnerabilities found.\n', b'')
@@ -57,6 +59,7 @@ class ToolchainImageStabilityTests(unittest.TestCase):
         with patch.object(go_dependencies, 'update', return_value=[]), \
                 patch.object(inputs, 'go_security_update', side_effect=security), \
                 patch.object(inputs, 'image', return_value=REBUILT) as image, \
+                patch.object(inputs, 'validate_reason'), \
                 patch.object(proposal.subprocess, 'run', side_effect=command):
             result = proposal.propose(root, root, REPO, 'c'*40)
         self.assertEqual(scans, [['govulncheck', './...']])
