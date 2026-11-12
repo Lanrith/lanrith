@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Verify review and qualification, resume matching drafts, then seal immutable bytes."""
 
-import base64,datetime,hashlib,json,os,pathlib,re,subprocess,time
+import base64,datetime,hashlib,json,os,pathlib,re,subprocess,sys,time
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]))
+from automation.release_authorization import verify_publication
 def run(*args): return subprocess.run(args,check=True,capture_output=True,text=True).stdout
 def authorized_human(review,head,author):
     user=review['user']
@@ -24,7 +26,8 @@ update=json.loads((root/'update-record.json').read_text())
 assert update['repository']==repo and update['source_commit']==source and update['pull_requests']
 assert update['version'].removeprefix('v')==version
 policy_file=json.loads(run('gh','api',f'repos/{repo}/contents/security/update-policy.json?ref={source}'))
-policy=json.loads(base64.b64decode(policy_file['content']))
+policy_raw=base64.b64decode(policy_file['content'])
+policy=json.loads(policy_raw)
 # Independently confirm the claimed review identities before publishing their record.
 for pr in update['pull_requests']:
     current=json.loads(run('gh','api',f"repos/{repo}/pulls/{pr['number']}"))
@@ -33,7 +36,14 @@ for pr in update['pull_requests']:
     assert isinstance(review_pages,list) and all(isinstance(p,list) for p in review_pages)
     actual=[r for page in review_pages for r in page]
     latest={r['user']['id']:r for r in sorted(actual,key=lambda r:r['id']) if r['state'] in ('APPROVED','CHANGES_REQUESTED','DISMISSED')}
-    assert pr['approvals'] and all(any(r['id']==a['id'] and r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['id']==a['actor_id'] for r in latest.values()) for a in pr['approvals'])
+    assert pr['approvals'] or pr.get('maintainer_authorization')
+    if pr['approvals']:
+        assert all(any(r['id']==a['id'] and r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['id']==a['actor_id'] for r in latest.values()) for a in pr['approvals'])
+    else:
+        actor=pr['maintainer_authorization']['actor']
+        assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,38}',actor)
+        permission=json.loads(run('gh','api',f'repos/{repo}/collaborators/{actor}/permission'))
+        verify_publication(repo,source,pr,current,policy_raw,latest.values(),permission)
     assert {v['workflow'] for v in pr['validation']}==set(policy['required_workflows'])
     for validation in pr['validation']:
         current_runs=json.loads(run('gh','api',f"repos/{repo}/actions/workflows/{validation['workflow'].rsplit('/',1)[-1]}/runs?event=pull_request&head_sha={pr['head_sha']}&per_page=100"))['workflow_runs']
@@ -51,7 +61,7 @@ for pr in update['pull_requests']:
         assert admitted
         reviewer=admitted[-1]['app']['slug']+'[bot]'
         assert any(r['state']=='APPROVED' and r['commit_id']==pr['head_sha'] and r['user']['login']==reviewer for r in latest.values())
-    else:
+    elif pr['approvals']:
         # Private organisation membership can appear as CONTRIBUTOR to
         # installation tokens. Verify effective write access directly.
         assert any(authorized_human(r,pr['head_sha'],current['user']['login']) for r in latest.values())
