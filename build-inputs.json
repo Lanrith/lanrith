@@ -36,10 +36,10 @@
     "builders/alloy/patches/github.com_burningalchemist_sql_exporter.patch": "b97a4ee85a12055205cd232b2b6b4ec8b83079a4d2a891a96a20d3cbfe235cec",
     "builders/alloy/patches/github.com_grafana_snowflake-prometheus-exporter.patch": "94fd8d639043bbbcae3880190c02d39542c92074cae0afab735455bde17eb8ba",
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
-    "builders/alloy/source.json": "ff7a5e7a40a8e2c257a37f83ab7b93fe57573bea722cc319e6d5c501ebd73403",
+    "builders/alloy/source.json": "ff4aa2a655c9f6f14c1af0320922bb1a55dec6d362bcbaf83bbc621f109a40bc",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
-    "builders/build-inputs.lock": "063223ba3d28e7e9d34a625741b84ac045786cf6e00777599f3054df142f9eb7",
+    "builders/build-inputs.lock": "4cfd018a874701db7bde137ae8853d850ede15b103d03d743bcdbd4f57796296",
     "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
     "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
     "builders/mkosi/Containerfile": "155b3dda6540902f713d5ecb80848a7558ee7e717948ac8cbf96e6517509db5a",
@@ -62,10 +62,10 @@
     "builders/vpp/Containerfile": "3897684ce4bee00fc2d1e7792e8e3a1fa2115aa5e0a42d39223ba05edffe3040"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261111T060000Z",
+  "debian_snapshot": "20261112T070000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "2825ab0ab344bec65dc86103cc8559312e8c150c0591f576f8a0948bd470a00c",
-  "security_snapshot": "20261111T060000Z"
+  "security_release_sha256": "df493a88be1309de115b7ac1996c05c331122ebf459f34b2e1c72e9c5d186fd3",
+  "security_snapshot": "20261112T070000Z"
 }
