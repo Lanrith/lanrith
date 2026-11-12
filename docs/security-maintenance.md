@@ -205,8 +205,9 @@ publication still apply.
 
 This option trades independent human review for explicit approval by a named
 administrator. It does not change GitHub branch protection or authorize bypassing
-required checks. Enabling it is a separate repository policy decision; no shipped
-policy enables it by default. Component workflows must pin a reviewed collector
+required checks. Enabling it is a separate repository policy decision; omitting
+the field keeps independent review mandatory. The Lanrith platform repository
+explicitly names its administrator in this policy. Component workflows must pin a reviewed collector
 and publisher revision that supports the option before an opted-in release can
 publish. Re-running an older pinned workflow cannot pick up the new behavior.
 
