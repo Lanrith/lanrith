@@ -1,5 +1,6 @@
 """Fixed-category TPM setup diagnostics for disposable signed qualification images."""
 import re
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -44,6 +45,28 @@ def categories(raw):
     return sorted(name for name, phrases in CATEGORIES.items() if any(p in text for p in phrases))
 
 
+def journal_categories(raw):
+    if len(raw) > 65536:
+        return ['oversized-journal']
+    names = set()
+    errnos = {'1':'permission', '2':'missing-file', '5':'io-error', '13':'permission',
+              '28':'no-space', '30':'read-only', '110':'timeout'}
+    try:
+        for line in raw.splitlines():
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                continue
+            message = row.get('MESSAGE')
+            if isinstance(message, str):
+                names.update(categories(message.encode()))
+            value = row.get('ERRNO')
+            if type(value) in (str, int) and str(value) in errnos:
+                names.add(errnos[str(value)])
+    except (ValueError, UnicodeError):
+        names.add('malformed-journal')
+    return sorted(names)
+
+
 def prepare(tree):
     """Add diagnostics before signing; this never changes a production image."""
     helper = tree/'usr/lib/lanrith/qualification-tpm-diagnostic.py'
@@ -63,9 +86,9 @@ def prepare(tree):
 def main():
     try:
         result = subprocess.run(['journalctl', '--no-pager', '--boot', '--unit='+UNIT,
-                                 '--output=cat', '--lines=40'], stdin=subprocess.DEVNULL,
+                                 '--output=json', '--output-fields=MESSAGE,ERRNO', '--lines=40'], stdin=subprocess.DEVNULL,
                                 capture_output=True, timeout=10)
-        names = categories(result.stdout) if result.returncode == 0 else ['journal-unavailable']
+        names = journal_categories(result.stdout) if result.returncode == 0 else ['journal-unavailable']
     except (OSError, subprocess.TimeoutExpired):
         names = ['journal-unavailable']
     for name in names:

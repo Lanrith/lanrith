@@ -427,7 +427,7 @@ class Guest:
                 units.update(match.decode() for match in re.findall(
                     rb'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', line))
         from tpm_diagnostic import CATEGORIES
-        for name in (*CATEGORIES, 'oversized-journal', 'journal-unavailable', 'failure'):
+        for name in (*CATEGORIES, 'io-error', 'oversized-journal', 'malformed-journal', 'journal-unavailable', 'failure'):
             flags['qa-tpm-'+name] = ('LANRITH_QA_TPM_'+name).encode() in buffer
         # Prompts consume the raw buffer, including initrd messages preceding
         # recovery enrollment. Keep only bounded, public diagnostic categories

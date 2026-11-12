@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from tpm_diagnostic import categories, prepare, status
+from tpm_diagnostic import categories, journal_categories, prepare, status
 from vm import Guest
 
 
@@ -60,3 +60,10 @@ class TpmDiagnosticTests(unittest.TestCase):
         self.assertTrue(report['flags']['qa-tpm-read-only'])
         self.assertTrue(report['flags']['qa-tpm-failure'])
         self.assertNotIn('private recovery',encoded)
+
+    def test_structured_errno_preserves_the_cause_without_emitting_message_or_unknown_codes(self):
+        raw=b'{"MESSAGE":"private SRK contents never emitted", "ERRNO":"30"}\n'
+        self.assertEqual(journal_categories(raw), ['read-only','srk'])
+        self.assertEqual(journal_categories(b'{"MESSAGE":"secret", "ERRNO":"123456789"}\n'), [])
+        self.assertEqual(journal_categories(b'private invalid json'), ['malformed-journal'])
+        self.assertEqual(journal_categories(b'x'*65537), ['oversized-journal'])
