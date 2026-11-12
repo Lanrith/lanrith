@@ -426,6 +426,9 @@ class Guest:
             if b'fail' in line.lower() or b'timed out' in line.lower():
                 units.update(match.decode() for match in re.findall(
                     rb'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', line))
+        from tpm_diagnostic import CATEGORIES
+        for name in (*CATEGORIES, 'oversized-journal', 'journal-unavailable', 'failure'):
+            flags['qa-tpm-'+name] = ('LANRITH_QA_TPM_'+name).encode() in buffer
         # Prompts consume the raw buffer, including initrd messages preceding
         # recovery enrollment. Keep only bounded, public diagnostic categories
         # across those prompts so a later failure retains its original cause.
@@ -453,7 +456,17 @@ class Guest:
                 fields = line.split()
                 if fields and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', fields[0]):
                     names.add(fields[0])
-        return {'query_succeeded': result.returncode == 0, 'failed_units': sorted(names)[:32]}
+        report = {'query_succeeded': result.returncode == 0, 'failed_units': sorted(names)[:32]}
+        from tpm_diagnostic import UNIT, status
+        if UNIT in names:
+            try:
+                details = self.ssh('systemctl show '+UNIT+
+                    ' --property=Result,ExecMainCode,ExecMainStatus,StatusErrno',
+                    success=False, timeout=10, agent=False)
+                report['tpm_setup'] = status(details.stdout) if details.returncode == 0 else {}
+            except (OSError, subprocess.TimeoutExpired):
+                report['tpm_setup'] = {}
+        return report
 
     def ssh_arguments(self, command, *, agent=True, user='admin'):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -522,7 +535,7 @@ class Guest:
         self.buffer = b''
 
 
-def image(value, base, initrd, work, secret, sequence):
+def image(value, base, initrd, work, secret, sequence, *, tpm_diagnostics=False):
     assembly = work/('image-'+str(sequence))
     recovery = {}
     disk = work/'installed.raw'
@@ -539,6 +552,9 @@ def image(value, base, initrd, work, secret, sequence):
         certificate=secret/'test.crt', private_key=secret/'test.key',
         serial_hash=secret/'serial.hash' if value['administration'].get('serial', {}).get('enabled') else None,
         initrd_base=initrd, **recovery)
+    if tpm_diagnostics:
+        from tpm_diagnostic import prepare
+        prepare(assembly/'mkosi.extra')
     build.run(assembly)
     update = work/('update-'+str(sequence))
     build.update_payload(assembly, identity, update)
@@ -1249,7 +1265,7 @@ def qualify_rootless(value, base, initrd, work, secret):
     value['hardware']['boot']['tpm'] = 'required'
     value['administration']['root_access'] = 'disabled'
     value['administration']['serial'] = {'enabled': False}
-    assembly, _, _ = image(value, base, initrd, work, secret, 20)
+    assembly, _, _ = image(value, base, initrd, work, secret, 20, tpm_diagnostics=True)
     disk = work/'installed.raw'
     shutil.copyfile(assembly/'output/lanrith_20.raw', disk)
     with disk.open('r+b') as stream:
@@ -1360,6 +1376,12 @@ def main():
             while not (secret/'agent.sock').exists() and time.monotonic() < deadline:
                 time.sleep(0.1)
             run('ssh-add', str(secret/'ssh'), env={**os.environ, 'SSH_AUTH_SOCK': str(secret/'agent.sock')})
+            profile = work/'rootless'
+            profile.mkdir(mode=0o700)
+            (secret/'known-hosts').unlink(missing_ok=True)
+            report['profiles'].append(qualify_rootless(value, base, initrd, profile, secret))
+            print('Native VM profile rootless passed.', flush=True)
+            shutil.rmtree(profile)
             for name, manual in (('tpm2', False), ('manual', True)):
                 profile = work/name
                 profile.mkdir(mode=0o700)
@@ -1367,12 +1389,6 @@ def main():
                 report['profiles'].append(qualify(value, base, initrd, profile, secret, manual=manual))
                 print('Native VM profile '+name+' passed.', flush=True)
                 shutil.rmtree(profile)
-            profile = work/'rootless'
-            profile.mkdir(mode=0o700)
-            (secret/'known-hosts').unlink(missing_ok=True)
-            report['profiles'].append(qualify_rootless(value, base, initrd, profile, secret))
-            print('Native VM profile rootless passed.', flush=True)
-            shutil.rmtree(profile)
         report['result'] = 'pass'
     except StagingFaultError as error:
         report['failure'] = {'kind': 'inactive-slot-interruption', 'diagnostic': error.diagnostic}
