@@ -50,8 +50,8 @@
       "version": "v1.37.2"
     }
   ],
-  "node_image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
-  "node_version": "24.22.1",
+  "node_image": "docker.io/library/node@sha256:aca79828f8a4afc627f189387c965625bcc419233946210a3b9522d90a59b5c6",
+  "node_version": "24.22.3",
   "package_version": "1.20.1-1+lanrith6",
   "schema": 1,
   "security_modules": {
