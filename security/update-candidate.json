@@ -1,33 +1,97 @@
 {
-  "base_sha": "da70a1551b2e2f502cb9b9b5a384fcd990700bd9",
-  "candidate_id": "ddca192ece9741dcb35d3b030b3bd66e290f2536c2d5174d2368620840878074",
+  "base_sha": "9a44f1b51e7df8be438cfc4b8043b68a1207c5f4",
+  "candidate_id": "49a29d82d16338c9fcbac3b14bf8422eb75e015cf8fc8fb545cf928e51e2ecba",
   "changes": {
     "build-inputs.json": {
-      "after_sha256": "f54c28d81051ba8cd605bfcebf1c681fb72dc79a30929e7947f1c0e5ba77ded8",
-      "before_sha256": "d28ee018114dba53071e99f222c122e826198e62fcb7027e597299ceb0b4a243"
+      "after_sha256": "fc2b418c51fa120f4df869cbe1f0dca27c4d516beb1e363c808520bfd8edd43d",
+      "before_sha256": "df3ffd0e2beb5a391b68faf25391d07807700c54809f9dd2776e5edecba60dab"
     },
-    "security/policy.json": {
-      "after_sha256": "03d57237ed23bb85f0adc425a4400421df5795d268be4e311bfadf8d3ebb6315",
-      "before_sha256": "bd9e41c093cdc32a569395e123eb0089cc8320b34dc0d88e06783505439e7ba7"
+    "builders/alloy/source.json": {
+      "after_sha256": "ff4aa2a655c9f6f14c1af0320922bb1a55dec6d362bcbaf83bbc621f109a40bc",
+      "before_sha256": "ff7a5e7a40a8e2c257a37f83ab7b93fe57573bea722cc319e6d5c501ebd73403"
+    },
+    "builders/build-inputs.lock": {
+      "after_sha256": "4cfd018a874701db7bde137ae8853d850ede15b103d03d743bcdbd4f57796296",
+      "before_sha256": "063223ba3d28e7e9d34a625741b84ac045786cf6e00777599f3054df142f9eb7"
     }
   },
-  "created_at": "2026-11-03T19:40:39.178107+00:00",
+  "created_at": "2026-11-12T07:28:03.518336+00:00",
   "kind": "security-update-candidate",
   "policy_sha256": "254735198ea8f209b956870f9748b32123de831fc20dcd3c8a46fb44a1561cf8",
-  "producer_sha": "da70a1551b2e2f502cb9b9b5a384fcd990700bd9",
+  "producer_sha": "9a44f1b51e7df8be438cfc4b8043b68a1207c5f4",
   "reasons": [
     {
-      "ecosystem": "Lanrith",
-      "evidence_sha256": "cb45c31ca7c9018619ea954e40580e3a5b683050e8cfc33a2fab1139d067b18f",
-      "fixed": "v0.1.10",
-      "id": "Lanrith/router-policy-agent@v0.1.10",
-      "installed": "v0.1.9",
-      "package": "router-policy-agent",
-      "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.10",
-      "type": "qualified-component-update"
+      "ecosystem": "Debian",
+      "evidence_sha256": "60240beb7a116a9f364441842d81f26913aa233202bba4bf7cbb3453876d223b",
+      "fixed": "6.12.116-1",
+      "id": "CVE-2026-100080",
+      "installed": "6.12.115-2",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c3eb1d2924db5e6043dc374a1966d14fe52e3e0176963aa2faf36c63f4be501a",
+      "fixed": "6.12.116-1",
+      "id": "CVE-2026-100081",
+      "installed": "6.12.115-2",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "5d963213e48d10544afa83d0f5980a1324e7a4e4bce7ee1cc2bcc86dc0ee8496",
+      "fixed": "6.12.116-1",
+      "id": "CVE-2026-100082",
+      "installed": "6.12.115-2",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ebcf7089cf019d5095f43ab5461ad138d7e940bdb7183125c2ddd5078b5f0f8a",
+      "fixed": "1:1.3.dfsg+really1.3.1-1+deb13u1",
+      "id": "CVE-2026-27171",
+      "installed": "1:1.3.dfsg+really1.3.1-1",
+      "package": "zlib",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "2eec45257143e15abc931925ebc3c855e7bb4e363ffa2a02a6a300fead92c1d6",
+      "fixed": "1:1.3.dfsg+really1.3.1-1+deb13u1",
+      "id": "CVE-2026-76844",
+      "installed": "1:1.3.dfsg+really1.3.1-1",
+      "package": "zlib",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7a51fd067b13ee0a23a25905806f3a303cb3cd67cd4106a5d006c809ace657f1",
+      "fixed": "1:1.3.dfsg+really1.3.1-1+deb13u1",
+      "id": "CVE-2026-85091",
+      "installed": "1:1.3.dfsg+really1.3.1-1",
+      "package": "zlib",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Node.js",
+      "evidence_sha256": "1a94d5f6d1491b94a4addc9d822dfc7293f79b43e947f58033e49685915f3290",
+      "fixed": "24.22.3",
+      "id": "node-v24.22.3",
+      "installed": "24.22.1",
+      "package": "node",
+      "source": "https://nodejs.org/dist/index.json",
+      "type": "node-security-release"
     }
   ],
-  "remediation_id": "security-470a66155be11b262611",
+  "remediation_id": "security-f8acf6b11ab1d51fec57",
   "repository": "Lanrith/lanrith",
   "requires_human": false,
   "schema": 1
