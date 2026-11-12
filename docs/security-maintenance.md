@@ -177,6 +177,39 @@ an independent account with current write or admin access to the repository.
 The publisher checks effective repository permissions directly because private
 organisation membership can be hidden from an installation token.
 
+### A repository with one human maintainer
+
+The default release policy requires independent review. A repository can opt into
+maintainer approval for manually merged changes by adding this field to its
+protected `security/update-policy.json` (the example identity is synthetic):
+
+```json
+"release_authorization": {
+  "mode": "maintainer-merge",
+  "maintainers": [{"login": "example-owner", "id": 123}]
+}
+```
+
+Both the account name and numeric GitHub identity must match the human who merged
+the exact PR to `main`. The publisher also checks that this account still has
+administrator access. An outstanding change request, a direct push, a bot merge,
+or failed required validation prevents publication. Automated security proposals
+continue to require independent review through their existing policy.
+
+The release record keeps `approvals` empty for this path and records a separate
+`maintainer_authorization` with the actor, policy digest, PR head and merge commit.
+The publisher rechecks the live merge and permissions before creating any release.
+Component admission verifies the attested record against the policy at the released
+source. Build qualification, vulnerability scans, hosted attestation and immutable
+publication still apply.
+
+This option trades independent human review for explicit approval by a named
+administrator. It does not change GitHub branch protection or authorize bypassing
+required checks. Enabling it is a separate repository policy decision; no shipped
+policy enables it by default. Component workflows must pin a reviewed collector
+and publisher revision that supports the option before an opted-in release can
+publish. Re-running an older pinned workflow cannot pick up the new behavior.
+
 For an audit bundle, download its files and `evidence.intoto.jsonl`, then verify:
 
 ```sh

@@ -6,6 +6,7 @@ import tarfile
 from pathlib import Path
 
 from . import evidence
+from .release_authorization import authorize_merge
 from .common import api, canonical, contents, digest, document, metadata_bundle, now, pages, repository, require, sha
 
 
@@ -77,9 +78,9 @@ def collect(repo, source, output, version):
         latest = {r['user']['id']: r for r in sorted(reviews, key=lambda r: r['id'])
                   if r['state'] in ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED')}
         approvals = [r for r in latest.values() if r['state'] == 'APPROVED' and r['commit_id'] == pr['head']['sha']]
-        require(approvals, 'A merged release change lacks a commit-bound approval.')
         policy_raw = contents(repo, 'security/update-policy.json', source)
         policy = document(policy_raw)
+        authorization = None if approvals else authorize_merge(repo, source, pr, policy_raw, latest.values())
         latest_runs = []
         for path in policy['required_workflows']:
             result = api('repos/'+repo+'/actions/workflows/'+path.rsplit('/', 1)[-1]+'/runs?event=pull_request&head_sha='+pr['head']['sha']+'&per_page=100')
@@ -98,6 +99,8 @@ def collect(repo, source, output, version):
             'approvals': [{'id': r['id'], 'actor': r['user']['login'], 'actor_id': r['user']['id'],
                           'commit_id': r['commit_id'], 'submitted_at': r['submitted_at'], 'url': r['html_url']}
                          for r in approvals]})
+        if authorization is not None:
+            pulls[-1]['maintainer_authorization'] = authorization
     require(pulls, 'Release source is not a reviewed merged pull request; direct-push releases are blocked.')
     record = {'schema': 1, 'kind': 'release-update-record', 'created_at': now(), 'repository': repo,
         'source_commit': source, 'version': version, 'state': 'qualified-awaiting-publication', 'pull_requests': pulls,
