@@ -2,30 +2,30 @@
   "architecture": "x86-64",
   "builder_base": "docker.io/library/debian@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132",
   "component_releases": {
-    "discovery-bridge": {
-      "files": {
-        "discovery-bridge_0.1.8_amd64.deb": "4317bc51c63eaf4c11c6ed81056728fd22698d7ea00c8f0252e148bcf9c8bac2",
-        "release.json": "4afaee289727e47821f34063f6e69b11269196d1cd49af6634b1c589c94078dc",
-        "update-record.json": "4d40ed4c6fce568d7717804bcf9af0f54f2201c6bf355187484c8fc3988d95c6"
-      },
-      "repository": "Lanrith/discovery-bridge",
-      "source_commit": "0c8c4c5acae394aaf4237bdf0dd07fbebbf797af",
-      "tag": "v0.1.8",
-      "workflow_commit": "0c8c4c5acae394aaf4237bdf0dd07fbebbf797af"
-    },
     "router-policy-agent": {
-      "files": {
-        "component-release.json": "bf8f9e391bd9cbbc83c79cf20a8e0394d179086400ab4b180e86d358468c4789",
-        "router-policy-collector_0.1.12_amd64.deb": "ae202389b83df247e05733d06680836e27ab74e56558a591369de678d30887ed",
-        "router-policy-helper_0.1.12_amd64.deb": "a85a6642e18e9c6704355ef4a08e22811bf80f39a7dca434024b03b17e89453d",
-        "router-policy-reader_0.1.12_amd64.deb": "f10565b2eb48623e4e82d292f1493a4affb14ae9d095795ea097b9b06fcbf1b7",
-        "security.txt": "b3eebd8b8feaa1df57aad272f09f18b45cdf56004d4127a61cda679b59149e9f",
-        "update-record.json": "a94178fa8d0a022a1b408b6b43b39a95d8c92b291682bf8c784bcafdc7c1de20"
-      },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "228f16fa8f74cad93f92fa0ebfac86c3beb5fb04",
-      "tag": "v0.1.12",
-      "workflow_commit": "228f16fa8f74cad93f92fa0ebfac86c3beb5fb04"
+      "tag": "v0.1.13",
+      "source_commit": "ad3a2be2c8dba9974510b1973650eaccd728a945",
+      "workflow_commit": "ad3a2be2c8dba9974510b1973650eaccd728a945",
+      "files": {
+        "component-release.json": "bf065156f3649b9942b814186fe568d22f8d948df0b1292ef3e2ddd994114ef6",
+        "update-record.json": "bfa22088550472a1a7db9877dcf8b1ee48b7ebe00bcb6708724ba3ab8bfa19b7",
+        "router-policy-collector_0.1.13_amd64.deb": "efeeb2add6d574dc28e36320343479a6d847daf81d488c3d7a21a5f64e458c86",
+        "router-policy-helper_0.1.13_amd64.deb": "e1b56e9d48cb206464f06797c9625ea4b04aaf252fe14ae3e5e6c328ee058a12",
+        "router-policy-reader_0.1.13_amd64.deb": "7e687126037b088e37f6bad658af5473062df9ebbddf959f44323a5e6044cbbc",
+        "security.txt": "985265262a5ea2d79a86e25987b49fd18db93ca63961171d0c8f0b4f80de8bb8"
+      }
+    },
+    "discovery-bridge": {
+      "repository": "Lanrith/discovery-bridge",
+      "tag": "v0.1.9",
+      "source_commit": "574c2236378012575aa4ad7d801098c3e1785820",
+      "workflow_commit": "574c2236378012575aa4ad7d801098c3e1785820",
+      "files": {
+        "release.json": "c155482595bdbf171dd141092ca0903ba18d308c367d80e6badb2638d696d44d",
+        "update-record.json": "37b6b8403ac51396e1e06bcc85d13712fbca87bc643739088c0f4a03b3d44713",
+        "discovery-bridge_0.1.9_amd64.deb": "ced7752a534f9b2fee508621d398c2a62674c29e3c499fcd525865c036e618ce"
+      }
     }
   },
   "custom_package_inputs": {
