@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 
 from . import evidence, inputs
+from .release_authorization import validate_record
 from .common import (api, canonical, contents, digest, document, fetch, fetch_json, now,
                      osv_queries, pages, repository, require, run, sha, version)
 
@@ -37,13 +38,16 @@ def component_selection(repo, tag):
         history = document(audit)
         require(history['repository'] == repo and history['source_commit'] == revision and
                 history['version'].removeprefix('v') == tag[1:] and history['pull_requests'] and
-                all(p['approvals'] and p['validation'] for p in history['pull_requests']),
+                all(p['validation'] for p in history['pull_requests']),
                 'Component lacks its qualified change and approval history.')
         run('gh', 'attestation', 'verify', str(root/'update-record.json'),
             '--bundle', str(root/'update-record.json.intoto.jsonl'), '--repo', repo,
             '--signer-workflow', repo+'/.github/workflows/build-release.yml',
             '--source-digest', revision, '--signer-digest', revision, '--source-ref', 'refs/heads/main',
             '--deny-self-hosted-runners', capture_output=True)
+        for pull in history['pull_requests']:
+            if not pull['approvals']:
+                validate_record(repo, revision, pull, contents(repo, 'security/update-policy.json', revision))
         files = {name: digest(raw), 'update-record.json': digest(audit)}
         if repo.endswith('/discovery-bridge'):
             files.update({n: h for n, h in manifest['platforms']['amd64']['artifacts'].items() if n.endswith('_amd64.deb')})

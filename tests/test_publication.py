@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from automation.common import MaintenanceError
+from automation.release_authorization import authorize_merge
 
 
 SOURCE, HEAD = 'a'*40, 'b'*40
@@ -21,7 +23,8 @@ REPO = 'Lanrith/router-policy-agent'
 class PublicationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.program = (Path(__file__).resolve().parents[1]/'scripts/publish-release.py').read_text()
+        cls.program_path = Path(__file__).resolve().parents[1]/'scripts/publish-release.py'
+        cls.program = cls.program_path.read_text()
 
     def setUp(self):
         self.state = {'draft': True, 'prerelease': True, 'created': False, 'promoted': False,
@@ -41,6 +44,7 @@ class PublicationTests(unittest.TestCase):
         self.pull = {'number': 12, 'head_sha': HEAD, 'approvals': [{'id': 7, 'actor_id': 1}], 'candidate': None,
                      'validation': [{'workflow': '.github/workflows/check.yml', 'id': 33, 'attempt': 1}]}
         self.pr_ref = 'security/verified-update-automation'
+        self.merge_actor = {'id': 1, 'login': 'owner', 'type': 'User'}
         self.validation = {'event': 'pull_request', 'head_sha': HEAD, 'path': '.github/workflows/check.yml',
                            'status': 'completed', 'conclusion': 'success', 'run_attempt': 1}
 
@@ -57,7 +61,7 @@ class PublicationTests(unittest.TestCase):
             with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_SHA': SOURCE,
                     'RELEASE_VERSION': '0.1.3', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}), \
                     patch('subprocess.run', side_effect=self.command), patch('time.sleep'):
-                exec(compile(self.program, 'scripts/publish-release.py', 'exec'), {})
+                exec(compile(self.program, 'scripts/publish-release.py', 'exec'), {'__file__': str(self.program_path)})
             return json.loads(Path('verification/publication-verification.json').read_text())
 
     def command(self, args, **kwargs):
@@ -71,8 +75,7 @@ class PublicationTests(unittest.TestCase):
             elif '/contents/security/update-candidate.json?' in endpoint:
                 value = {'content': base64.b64encode(json.dumps(self.pull['candidate']).encode()).decode()}
             elif endpoint.endswith('/pulls/12'):
-                value = {'merged': True, 'merge_commit_sha': SOURCE, 'user': self.author,
-                         'head': {'sha': HEAD, 'ref': self.pr_ref, 'repo': {'full_name': REPO}}}
+                value = self.current_pr()
             elif '/reviews?' in endpoint:
                 value = [self.reviews] if '--paginate' in args else self.reviews
             elif '/collaborators/' in endpoint and endpoint.endswith('/permission'):
@@ -132,6 +135,49 @@ class PublicationTests(unittest.TestCase):
                 self.state['prerelease'], self.state['promoted'] = False, True
             return subprocess.CompletedProcess(args, 0, '', '')
         raise AssertionError('Unexpected executable: '+str(args))
+
+    def current_pr(self):
+        return {'merged': True, 'merge_commit_sha': SOURCE, 'user': self.author,
+                'head': {'sha': HEAD, 'ref': self.pr_ref, 'repo': {'full_name': REPO}},
+                'number': 12, 'merged_by': self.merge_actor, 'merged_at': '2026-11-12T08:00:00Z',
+                'html_url': f'https://github.com/{REPO}/pull/12',
+                'base': {'ref': 'main', 'repo': {'full_name': REPO}}}
+
+    def maintainer_candidate(self):
+        self.policy.update(repository=REPO, release_authorization={
+            'mode': 'maintainer-merge', 'maintainers': [{'id': 1, 'login': 'owner'}]})
+        self.author = dict(self.merge_actor)
+        self.reviews = []
+        self.pull.update(approvals=[], merge_commit_sha=SOURCE, merged_at='2026-11-12T08:00:00Z',
+                         url=f'https://github.com/{REPO}/pull/12')
+        self.pull['maintainer_authorization'] = authorize_merge(
+            REPO, SOURCE, self.current_pr(), json.dumps(self.policy).encode(), [])
+
+    def test_explicit_maintainer_authorization_can_publish_without_fabricated_review(self):
+        self.maintainer_candidate()
+        self.assertEqual(self.run_program()['result'], 'pass')
+        self.assertEqual(self.pull['approvals'], [])
+        self.assertTrue(self.state['promoted'])
+
+    def test_maintainer_cannot_publish_with_changed_authority_or_failed_validation(self):
+        for attack in ('write-only', 'read-only', 'wrong-user', 'wrong-merger',
+                       'wrong-policy', 'failed-build', 'changes-requested', 'automated-branch'):
+            with self.subTest(attack=attack):
+                self.setUp()
+                self.maintainer_candidate()
+                if attack == 'write-only': self.reviewer_permission = 'write'
+                elif attack == 'read-only': self.reviewer_permission = 'read'
+                elif attack == 'wrong-user': self.permission_user['id'] = 99
+                elif attack == 'wrong-merger': self.merge_actor['id'] = 99
+                elif attack == 'wrong-policy': del self.policy['release_authorization']
+                elif attack == 'failed-build': self.validation['conclusion'] = 'failure'
+                elif attack == 'changes-requested':
+                    self.reviews = [dict(self.review, state='CHANGES_REQUESTED')]
+                else: self.pr_ref = self.policy['proposal_branch']
+                with self.assertRaises((AssertionError, MaintenanceError)):
+                    self.run_program()
+                self.assertFalse(self.state['created'])
+                self.assertEqual(self.uploads, [])
 
     def test_reviewed_subject_is_sealed_and_verified_before_stable_promotion(self):
         report = self.run_program()
