@@ -42,5 +42,11 @@
   "maximum_changes": 30,
   "large_artifact_retention_days": 1,
   "paid_ai": false,
-  "automatic_minor_security_updates": true
+  "automatic_minor_security_updates": true,
+  "release_authorization": {
+    "mode": "maintainer-merge",
+    "maintainers": [
+      {"login": "mikenorgate", "id": 2479870}
+    ]
+  }
 }

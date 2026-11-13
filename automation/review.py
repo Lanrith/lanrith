@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 
 from . import evidence, inputs
+from .release_authorization import maintainers
 from .common import (MaintenanceError, api, canonical, contents, digest, document, fetch_json,
                      now, pages, repository, require, sha, timestamp)
 
@@ -21,7 +22,7 @@ class ValidationPending(MaintenanceError):
 
 def policy_document(raw, repo):
     policy = document(raw)
-    require(set(policy) - {'automatic_minor_security_updates'} == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
+    require(set(policy) - {'automatic_minor_security_updates', 'release_authorization'} == {'schema', 'repository', 'mode', 'proposal_branch', 'proposer_login',
         'proposer_app_id', 'proposer_user_id', 'reviewer_app_id', 'required_workflows', 'maximum_validation_age_hours', 'go_branches',
         'node_branches', 'npm_packages', 'component_repositories', 'maximum_changes',
         'large_artifact_retention_days', 'paid_ai'}, 'Maintenance policy schema differs.')
@@ -33,6 +34,7 @@ def policy_document(raw, repo):
     require(policy['mode'] != 'enforce' or type(policy['reviewer_app_id']) is int and
             policy['reviewer_app_id'] > 0 and policy['reviewer_app_id'] != policy['proposer_app_id'],
             'Enforcement needs the independent reviewer App identity.')
+    maintainers(policy)
     return policy
 
 
