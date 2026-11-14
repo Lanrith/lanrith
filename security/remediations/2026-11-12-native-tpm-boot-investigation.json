@@ -1,0 +1,33 @@
+{
+  "approval": "Keep the PR in draft during diagnosis. Do not treat diagnostic success as proof of a runtime correction. After identifying and fixing any underlying issue, require full current-head CI and fresh independent human approval before protected merge. PR62 approval does not cover new bytes.",
+  "base_commit": "9a44f1b51e7df8be438cfc4b8043b68a1207c5f4",
+  "changes": [
+    "Read only the failed TPM service Result and bounded numeric exit/errno properties through existing unprivileged SSH; exclude journal text, status text, credentials and SSH stderr.",
+    "Add a bounded no-new-privileges diagnostic unit only to the disposable signed no-root test overlay before assembly/signing. An OnFailure hook classifies a small tail of the TPM unit journal into fixed public categories; raw text is never emitted or saved. The vendor TPM unit command and success policy remain unchanged.",
+    "Run the mandatory no-root profile first so failures produce evidence before the lengthy A/B scenarios. All existing TPM2, manual and no-root checks remain mandatory and the qualification schema still requires all profiles."
+  ],
+  "created_at": "2026-11-12T08:26:43.505787+00:00",
+  "failure": {
+    "console_sha256": "87d2619c8e888d85736c4ea5d6b3cc37c4b9fca67bc43a456449e631e50fc4fd",
+    "failed_step": "Assemble and qualify the exact package stage on a separate VM",
+    "failed_units": [
+      "systemd-tpm2-setup.service",
+      "systemd-boot-check-no-failures.service",
+      "lanrith-image-completion.service"
+    ],
+    "log_sha256": "aa97b269cd8d8caad4b57cd6a2265a81d35476aac30537d3d6aac08bfdbb8a1c",
+    "no_published_platform": "The last stable platform remains v0.1.19 because native acceptance blocked the new release.",
+    "prior_profiles": "TPM2 and manual profiles completed successfully before the no-root profile failed. Package compilation and vulnerability gates succeeded.",
+    "profile": "rootless-administration",
+    "release_run": 43111580792,
+    "source": "9a44f1b51e7df8be438cfc4b8043b68a1207c5f4",
+    "ssh_query_succeeded": true
+  },
+  "kind": "native-boot-failure-investigation",
+  "paid_ai": false,
+  "protection_bypass": false,
+  "repository": "Lanrith/lanrith",
+  "schema": 1,
+  "security_gates_unchanged": true,
+  "state": "investigation; not an established runtime fix"
+}
