@@ -206,14 +206,16 @@ def identity(value):
     intent.fields(identity, {'directories', 'radius', 'policy'})
     directories = intent.named(identity.get('directories', {}), 16)
     for directory in directories.values():
-        intent.fields(directory, {'enabled', 'url', 'base_dn', 'bind_dn', 'credential', 'ca_file'},
+        intent.fields(directory, {'enabled', 'url', 'addresses', 'base_dn', 'bind_dn', 'credential', 'ca_file'},
                       {'url', 'base_dn', 'bind_dn', 'credential', 'ca_file'})
         enabled(directory)
         url = urlsplit(text(directory['url']))
         require(url.scheme in ('ldap+starttls', 'ldaps') and url.hostname and not url.username and
                 not url.password and not url.query and not url.fragment and url.path in ('', '/'),
                 'Directory requires verified StartTLS or LDAPS without embedded credentials.')
-        integer(url.port or (636 if url.scheme == 'ldaps' else 389), 1, 65535)
+        integer(url.port if url.port is not None else (636 if url.scheme == 'ldaps' else 389), 1, 65535)
+        from .directory_config import endpoint
+        endpoint(directory)
         text(directory['base_dn'])
         text(directory['bind_dn'])
         credential(directory['credential'])
@@ -388,6 +390,16 @@ def validate(value):
 def require_runtime(value, target_facts=None):
     """Keep contracts from being mistaken for admitted runtime implementations."""
     missing = []
+    if value.get('identity', {}).get('policy', {}).get('enabled', False):
+        from . import service_plane
+        # The pinned helper rejects an empty post-NAT source projection. Do
+        # not let validate/render claim that such a profile can be assembled.
+        dynamic_clients = any(not path['addresses'] for path in intent.uplink_nat(value))
+        dynamic_services = any(path['masquerade'] and not path.get('translated_addresses')
+                               for path in service_plane.egress(value))
+        if dynamic_clients or dynamic_services:
+            missing.append('directory policy with dynamic uplink source translation '
+                           '(select static addresses for translated uplink families)')
     if (value.get('routing', {}).get('asymmetric_replies') and
             not value.get('identity', {}).get('policy', {}).get('enabled', False)):
         missing.append('asymmetric replies without the policy guard runtime')

@@ -42,7 +42,7 @@
     "builders/build-inputs.lock": "e07e804c5ff4991197852f379d62b891db1362fcb49eee57fdfd096ad94d1dba",
     "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
     "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
-    "builders/mkosi/Containerfile": "155b3dda6540902f713d5ecb80848a7558ee7e717948ac8cbf96e6517509db5a",
+    "builders/mkosi/Containerfile": "1a5d9b5172c7ae79db77580383fc7b7d735e920d8e24d4c2dddae05e85f5e73d",
     "builders/node-exporter/dependencies.patch": "e2249bb34318882ce42957e319f6d69a941b67c4bd3852e549af724bb0d89806",
     "builders/node-exporter/source.json": "fc9dc2085b8d9deae190a1f4f399b1e76bdf459ca502c5a523a64d6db00a0715",
     "builders/pam/.dockerignore": "56d3db8b7afae73a5d894f26e5da340e9881db0a21edd73ae6815eb19a014f63",

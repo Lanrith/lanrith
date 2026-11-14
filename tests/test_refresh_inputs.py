@@ -61,6 +61,8 @@ class SnapshotSelectionTests(unittest.TestCase):
         ui_patch = (root/'builders/alloy/ui-dependencies.patch').read_text()
         for dependency, vulnerable, fixed in (('@vitest/mocker', '4.1.11', '4.1.12'),
                                               ('undici', '7.29.1', '7.30.1'),
+                                              ('minimatch', '3.1.5', '11.0.1'),
+                                              ('minimatch', '10.2.6', '11.0.1'),
                                               ('vite', '7.3.5', '7.3.7')):
             with self.subTest(dependency=dependency):
                 self.assertIn('"version": "'+fixed+'"', ui_patch)

@@ -100,8 +100,9 @@ class DNS64Tests(unittest.TestCase):
             health = (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text()
             for name in ('nat64', 'nat64-internal', 'dns64-private'):
                 self.assertIn('lanrith-'+name+'.service', health)
+            self.assertTrue((overlay/'usr/lib/lanrith/lanrith/translation_runtime.py').is_file())
             for module in ('nat64_runtime.py', 'nat64_packets.py', 'nat64_allocations.py'):
-                self.assertTrue((overlay/'usr/lib/lanrith/lanrith'/module).is_file())
+                self.assertFalse((overlay/'usr/lib/lanrith/lanrith'/module).is_file())
 
 
 if __name__ == '__main__':

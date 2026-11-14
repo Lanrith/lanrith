@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import archive as handoff, build_inputs, config, evidence, release, trust
+from lanrith import archive as handoff, build_inputs, config, evidence, owner_inputs, release, trust
 from consumer import integration_pins, signing_profile
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -21,8 +21,11 @@ owner, artifacts = args.owner.resolve(), args.artifacts.resolve()
 release.require({p.name for p in artifacts.iterdir()} == {'update.tar.gz', 'factory.tar.gz', 'deployment.json'},
                 'Unexpected signing-job output set.')
 value = config.load(owner/'config.yaml')
+owner_options, owner_records = owner_inputs.load(owner, value)
 selection = trust.lock(owner/'platform.lock')
 deployment = json.loads(release.read(artifacts/'deployment.json', 65536), object_pairs_hook=release.unique)
+release.require(deployment.get('owner_inputs', {}) == owner_records,
+                'Owner build inputs differ from reviewed evidence inputs.')
 integrations = {name: pin[1] for name, pin in integration_pins(owner, value).items()}
 boot = deployment.get('boot_inputs', {})
 release.require(isinstance(boot, dict) and set(boot) <= {
@@ -40,7 +43,7 @@ else:
     release.require(not {'pcr_certificate_sha256', 'pcr_public_key_sha256'} & boot.keys(),
                     'Manual-unlock evidence cannot declare a PCR signer.')
 effective_digest = config.effective_digest(value, integrations, deployment['serial_provisioning_sha256'],
-                                         boot_inputs=build_inputs.digest_fields(boot))
+                                         boot_inputs=build_inputs.digest_fields(boot), **owner_options)
 expected = {'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'effective_configuration_sha256': effective_digest,
             'integration_digests': integrations,
@@ -83,6 +86,7 @@ statement = evidence.predicate(artifacts, repository=expected['repository'], sou
             'effective_configuration_sha256': effective_digest, 'integration_digests': integrations,
             'serial_provisioning_sha256': deployment['serial_provisioning_sha256'],
             'boot_inputs': boot,
+            **({'owner_inputs': owner_records} if owner_records else {}),
             'signing_profile': expected['signing_profile'],
             'protected_signing': expected['signing_profile'] == 'protected'})
 with tempfile.TemporaryDirectory(prefix='lanrith-evidence.', dir='/dev/shm') as temporary:

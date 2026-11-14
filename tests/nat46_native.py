@@ -19,7 +19,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith import config, firewall, service_runtime, translation_runtime
 from test_nat46 import declaration
-from packets import CLIENT, RAW, SERVER, ns, probe, run
+from packets import CLIENT, RAW, SERVER, ipv6_ready, ns, probe, run
 
 
 def udp6(source, destination, sport, dport, marker):
@@ -80,6 +80,7 @@ def main():
     mappings = list(manifest['mappings'].values())
     for entry in mappings[1:]:
         ns('servers-test', 'ip', 'address', 'add', entry['ipv6']+'/64', 'dev', 'eth0', 'nodad')
+    ipv6_ready([(None, 'servers'), ('servers-test', 'eth0')])
     ns('lan-test', 'ip', 'address', 'add', '192.168.10.90/24', 'dev', 'eth0')
     run('sysctl', '-qw', 'net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1',
         'net.ipv4.conf.all.rp_filter=0', 'net.ipv4.conf.default.rp_filter=0')

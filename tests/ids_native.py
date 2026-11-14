@@ -2,17 +2,21 @@
 """Exercise unprivileged, detect-only WAN capture in an offline container."""
 
 import json
+import argparse
+import datetime
 import os
 from pathlib import Path
 import pwd
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import config, firewall, ids
+from lanrith import config, firewall, ids, ids_qualification
+from lanrith.release import canonical, file_record, require
 from packets import SERVER, ns, probe, run
 from test_intent import minimal
 
@@ -36,7 +40,21 @@ s=socket.socket(socket.AF_PACKET,socket.SOCK_RAW);s.bind(('eth0',0));s.send(ethe
 
 
 def main():
-    assert os.geteuid() == 0 and Path('/run/.containerenv').exists()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--base', type=Path)
+    parser.add_argument('--result', type=Path)
+    args = parser.parse_args()
+    require((args.base is None) == (args.result is None), 'IDS result and exact base must be selected together.')
+    project = Path(__file__).resolve().parents[1]
+    sources = ids_qualification.implementation(project)
+    subject = file_record(args.base) if args.base else None
+    binary = file_record(Path('/usr/bin/suricata'))['sha256']
+    base_binary = ids_qualification.base_binary(args.base) if args.base else None
+    require(not subject or base_binary == binary, 'Native detector differs from the exact base executable.')
+    require(not args.result or args.result.is_absolute() and args.result.parent.resolve() == args.result.parent and
+            args.result.parent.is_dir() and not args.result.exists() and not args.result.is_symlink(),
+            'IDS evidence requires a new canonical result path.')
+    assert os.geteuid() == 0 and (Path('/run/.containerenv').exists() or Path('/.dockerenv').exists())
     assert {p.name for p in Path('/sys/class/net').iterdir()} == {'lo'}
     value = minimal()
     value['services'] = {key: {'enabled': False} for key in ('dns', 'ntp', 'dhcp4')}
@@ -45,13 +63,14 @@ def main():
                        'ipv6': 'disabled'}
     value['observability'] = {'ids': {'enabled': True}}
     value = config.normalize(value)
-    for name, text in ids.render(value).items():
+    files = ids.render(value)
+    for name, text in files.items():
         path = Path('/')/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     rule = Path('/usr/share/lanrith/suricata.rules')
     rule.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(Path('/work/mkosi/base/mkosi.extra/usr/share/lanrith/suricata.rules'), rule)
+    shutil.copyfile(project/'mkosi/base/mkosi.extra/usr/share/lanrith/suricata.rules', rule)
     assert all(line.startswith('alert ') for line in rule.read_text().splitlines() if line and not line.startswith('#'))
     assert not any(account.pw_uid == 61010 for account in pwd.getpwall())
     with Path('/etc/passwd').open('a') as stream:
@@ -60,6 +79,9 @@ def main():
         stream.write('lanrith-ids:x:61010:\n')
     Path('/var/log/suricata').mkdir(parents=True, exist_ok=True)
     os.chown('/var/log/suricata', 61010, 61010)
+    Path('/var/log/suricata').chmod(0o750)
+    daemon_command = shlex.split(next(line.removeprefix('ExecStart=') for line in
+        files['usr/lib/systemd/system/lanrith-ids.service'].splitlines() if line.startswith('ExecStart=')))
     processes = []
     with tempfile.TemporaryDirectory(prefix='lanrith-ids.') as temporary:
         work = Path(temporary)
@@ -84,8 +106,9 @@ def main():
                 daemon = subprocess.Popen([
                     'setpriv', '--reuid=61010', '--regid=61010', '--clear-groups',
                     '--inh-caps=+net_raw', '--ambient-caps=+net_raw', '--bounding-set=-all,+net_raw',
-                    'suricata', '--af-packet=wan', '-c', '/etc/suricata/lanrith.yaml', '--init-errors-fatal'
-                ], stdout=log, stderr=subprocess.STDOUT)
+                    '--no-new-privs',
+                    *daemon_command
+                ], stdout=log, stderr=subprocess.STDOUT, cwd='/')
                 processes.append(daemon)
                 deadline = time.monotonic()+15
                 while time.monotonic() < deadline:
@@ -98,6 +121,8 @@ def main():
                 status = dict(line.split(':', 1) for line in Path('/proc', str(daemon.pid), 'status').read_text().splitlines())
                 assert set(status['Uid'].split()) == {'61010'}
                 assert int(status['CapEff'].strip(), 16) == 1 << 13
+                assert int(status['CapBnd'].strip(), 16) == 1 << 13
+                assert status['NoNewPrivs'].strip() == '1'
                 assert len(list(Path('/proc', str(daemon.pid), 'task').iterdir())) <= 32
                 assert int(status['VmRSS'].split()[0])*1024 < 512*1024*1024
                 probe('lan-test', '192.0.2.2', 8888, True)
@@ -134,12 +159,24 @@ def main():
                 process.wait(timeout=10)
             for name in ('lan-test', 'wan-test'):
                 run('ip', 'netns', 'del', name)
-    print(json.dumps({'result': 'pass', 'checks': [
-        'generated Suricata configuration and admitted alert rules pass native parsing',
-        'WAN alert capture runs as the dedicated account with only CAP_NET_RAW',
-        'LAN-only traffic is excluded and no firewall object changes',
-        'ordinary forwarding survives detector operation and shutdown'],
-        'image_boot_qualified': False}))
+    require(sources == ids_qualification.implementation(project) and
+            binary == file_record(Path('/usr/bin/suricata'))['sha256'] and
+            (not subject or file_record(args.base) == subject), 'Native IDS inputs changed during qualification.')
+    report = {'schema': 1, 'test': 'offline-wan-ids', 'result': 'pass',
+        'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'checks': sorted(ids_qualification.CHECKS),
+        'daemon_working_directory': '/',
+        'daemon_command': daemon_command,
+        'detector_uid': 61010, 'no_new_privileges': True,
+        'effective_capabilities': 1 << 13, 'bounding_capabilities': 1 << 13,
+        'binary_sha256': binary, 'base_binary_sha256': base_binary, 'base_binary_match': base_binary == binary,
+        'filesystem_sha256': subject['sha256'] if subject else None,
+        'implementation_sha256': sources, 'source_sha256': sources['tests/ids_native.py'],
+        'external_network': False, 'image_boot_qualified': False}
+    if args.result:
+        with args.result.open('xb') as stream:
+            stream.write(canonical(report))
+    print(json.dumps(report))
 
 
 if __name__ == '__main__':

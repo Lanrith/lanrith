@@ -51,7 +51,7 @@ class Nat46Tests(unittest.TestCase):
         self.assertIn('oifname "nat46"', rules[0])
         self.assertTrue(rules[0].endswith('drop'))
         self.assertEqual(len(rules), 4)
-        text = firewall.render(value)
+        text = firewall.render(value, access_backend='legacy')
         self.assertLess(text.index('jump nat46_output'), text.index('chain output'))
         self.assertLess(text.index('iifname "lr-services" drop'), text.index('jump nat46_output'))
         self.assertIn('@nh,160,32 . tcp sport . tcp dport @n46_0_tcp_forward', text)
@@ -120,7 +120,7 @@ class Nat46Tests(unittest.TestCase):
         raw = declaration()
         value = config.normalize(raw)
         files = nat46.render(value)
-        rendered = config.render(value)
+        rendered = config.render(value, access_backend='legacy')
         for name, content in files.items():
             self.assertEqual(rendered[name], content)
         self.assertEqual(files['etc/tayga-nat46.conf'].count('\nmap '), 6)
@@ -151,6 +151,27 @@ class Nat46Tests(unittest.TestCase):
             with self.assertRaises(ReleaseError):
                 translation_runtime.configure(manifest, 'start')
             command.assert_not_called()
+
+    def test_restart_retires_only_the_selected_components_connections(self):
+        manifest = json.loads(nat46.render(config.normalize(declaration()))['usr/share/lanrith/nat46.json'])
+        for code, diagnostic, allowed in ((0, '', True),
+                (1, 'conntrack v1.4.8 (conntrack-tools): 0 flow entries have been deleted.\n', True),
+                (1, 'permission denied', False), (2, 'invalid arguments', False)):
+            with self.subTest(code=code, diagnostic=diagnostic), \
+                    patch.object(translation_runtime, 'validate'), \
+                    patch.object(translation_runtime.subprocess, 'run',
+                        return_value=SimpleNamespace(returncode=code, stderr=diagnostic)) as run:
+                if not allowed:
+                    with self.assertRaises(ReleaseError):
+                        translation_runtime.reset_connections(manifest)
+                    self.assertEqual(run.call_count, 1)
+                    continue
+                translation_runtime.reset_connections(manifest)
+                arguments = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(arguments, [
+                    ['/usr/sbin/conntrack', '-D', '-f', family, field, manifest[key]]
+                    for family, key in (('ipv4', 'pool'), ('ipv6', 'prefix'))
+                    for field in ('--orig-src', '--orig-dst')])
 
     def test_failed_setup_removes_only_the_interface_it_created(self):
         manifest = json.loads(nat46.render(config.normalize(declaration()))['usr/share/lanrith/nat46.json'])

@@ -16,7 +16,8 @@ from unittest.mock import patch
 
 import yaml
 
-from lanrith import build, build_inputs, config, evidence, local, release
+from lanrith import build, build_inputs, config, evidence, local, owner_inputs, release
+from test_owner_inputs import declaration, write_inputs
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -61,8 +62,14 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
                         'workflow_commit': 'b'*40}
 
     def handoff(self, *, factory_configuration=None, update_configuration=None,
-                factory_root=b'synthetic-root', profile='repository', serial=False, integration=False):
+                factory_root=b'synthetic-root', profile='repository', serial=False, integration=False,
+                sidecars=False):
         value = yaml.safe_load((self.owner/'config.yaml').read_text())
+        if sidecars:
+            value, options = declaration()
+            value['hardware']['machine_id'] = '5'*32
+            value['release'] = {'sequence_floor': 100}
+            write_inputs(self.owner, options)
         serial_hash, integrations = None, {}
         if serial:
             value['administration']['serial'] = {'enabled': True, 'tty': 'ttyS0'}
@@ -87,6 +94,7 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
         (self.owner/'config.yaml').write_text(yaml.safe_dump(value))
         self.value = config.load(self.owner/'config.yaml')
         self.configuration = hashlib.sha256(release.canonical(self.value)).hexdigest()
+        owner_options, self.owner_records = owner_inputs.load(self.owner, self.value)
         # Use the assembly producer's identity, rather than manufacturing a
         # manifest from the evidence command's expected configuration digest.
         base = self.root/'base.tar'
@@ -100,7 +108,7 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
         workspace = self.root/'assembly'
         identity = build.assembly(self.value, base.resolve(), workspace,
             version='1.2.3', sequence=107, integrations=integrations, serial_hash=serial_hash,
-            certificate=self.keys/'boot.crt', private_key=self.keys/'boot.key')
+            certificate=self.keys/'boot.crt', private_key=self.keys/'boot.key', **owner_options)
         self.boot_inputs = build_inputs.record({}, certificate=self.keys/'boot.crt', image_id='lanrith',
                                               sequence=107, tpm_required=True)
         self.effective_configuration = identity['configuration_sha256']
@@ -139,6 +147,8 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
             'evidence_certificate_sha256': release.file_record(self.owner/'trust/evidence.crt')['sha256'],
             **self.context, 'signing_profile': profile, 'deployment_sequence': 107,
             'release': manifests['update'], 'factory': manifests['factory']}
+        if self.owner_records:
+            self.deployment['owner_inputs'] = self.owner_records
         (self.artifacts/'deployment.json').write_bytes(release.canonical(self.deployment))
 
     def environment(self, profile='repository'):
@@ -183,6 +193,7 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
                 receipt = json.loads((private/'admitted.json').read_bytes())
                 self.assertEqual(receipt['effective_configuration_sha256'], self.effective_configuration)
                 self.assertEqual(receipt['serial_provisioning_sha256'], self.serial_digest)
+                self.assertEqual(receipt.get('owner_inputs', {}), self.owner_records)
                 shutil.copytree(self.root/'update', payload)
                 shutil.copytree(self.root/'factory', payload.parent/'factory')
             else:
@@ -231,6 +242,38 @@ class PrivateEvidenceCommandTests(unittest.TestCase):
         self.assertEqual(inputs['effective_configuration_sha256'], self.effective_configuration)
         self.assertEqual(inputs['integration_digests'], self.integration_digests)
         self.assertEqual(inputs['serial_provisioning_sha256'], self.serial_digest)
+
+    def test_hardware_and_allocations_survive_host_and_independent_evidence(self):
+        self.handoff(sidecars=True, integration=True)
+        self.artifacts = self.assemble_handoff()
+        result = self.command()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        statement = evidence.verify(self.artifacts/'provenance.dsse.json', self.artifacts,
+                                   self.owner/'trust/evidence.crt', **self.context)
+        inputs = statement['predicate']['buildDefinition']['externalParameters']['inputs']
+        self.assertEqual(inputs['owner_inputs'], self.owner_records)
+        self.assertEqual(inputs['effective_configuration_sha256'], self.effective_configuration)
+
+    def test_changed_sidecar_is_rejected_before_evidence_signing(self):
+        self.handoff(sidecars=True)
+        path = self.owner/'translation-allocations.json'
+        path.write_bytes(path.read_bytes()+b'\n')
+        result = self.command()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Owner build inputs differ', result.stderr)
+        self.assertFalse((self.artifacts/'provenance.dsse.json').exists())
+
+    def test_changed_sidecar_fails_host_admission_before_private_material(self):
+        self.handoff(sidecars=True)
+        path = self.owner/'hardware-facts.json'
+        path.write_bytes(path.read_bytes()+b'\n')
+        consumer = local.consumer()
+        with patch.object(consumer.tempfile, 'TemporaryDirectory') as private:
+            with self.assertRaisesRegex(release.ReleaseError, 'Owner build inputs changed'):
+                # The existing helper constructs the real admission receipt before
+                # invoking the host signer. No private file may be opened here.
+                self.assemble_handoff()
+            private.assert_not_called()
 
     @unittest.skipUnless(Path('/dev/shm').is_mount(), 'Run in a builder with private tmpfs.')
     def test_host_and_evidence_handoff_share_real_assembly_identity(self):

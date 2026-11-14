@@ -45,6 +45,7 @@ RUN apt-get update \
       reprepro \
       sbsigntool \
       suricata \
+      systemd-journal-remote \
       swtpm \
       shim-signed \
       tayga \
@@ -61,8 +62,8 @@ RUN apt-get update \
 # Keep the tool artifact on its own immutable snapshot: a runtime security
 # snapshot can stop listing mkosi 27. The package checksum still pins its bytes.
 RUN set -eu; for host in snapshot.debian.org snapshot-cloudflare.debian.org; do \
-      if curl --disable --proto '=https' --tlsv1.2 --fail --silent --show-error \
-        --connect-timeout 5 --max-time 20 --retry 2 --retry-max-time 45 --max-filesize 367836 \
+      if curl --disable --proto '=https' --tlsv1.2 --http1.1 --fail --silent --show-error \
+        --connect-timeout 5 --max-time 20 --retry 2 --retry-all-errors --retry-max-time 45 --max-filesize 367836 \
         --output /tmp/mkosi.deb \
         "https://${host}/file/8be9af6ae90e8288b524b7a2ba046901e717ed95/mkosi_27-1_all.deb"; then \
         printf '%s  %s\n' \

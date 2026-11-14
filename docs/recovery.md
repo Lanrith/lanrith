@@ -15,6 +15,12 @@ Owner YAML is read by the builder. Images contain generated JSON and native
 service configuration; they do not load owner YAML at boot or during recovery.
 Signing keys remain on the build controller.
 
+`build-recovery` accepts the same digest-checked `--target-facts` and
+`--retained-allocations` inputs as `build`. Supply them when the selected owner
+profile needs verified device ownership or retained translation identities.
+They affect generated recovery artifacts and are not installed as runtime
+configuration.
+
 For TPM installations, the builder uses direct SHA-256 PCRs 7 and 15 and signed
 PCR 11. It unlocks state in the verified initrd, enrolls the offline recovery
 key during first installation, and extends PCR 15 before switching root. It

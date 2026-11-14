@@ -40,6 +40,15 @@ def declaration():
 
 
 class DiscoveryContractTests(unittest.TestCase):
+    def test_native_translator_observation_matches_the_selected_service_binary(self):
+        files = config.render(declaration(), access_backend='tun')
+        router = json.loads(files['etc/discovery-bridge/router.json'])
+        for name, observation in router['translators'].items():
+            if name not in ('nat64', 'nat46'):
+                continue
+            unit = files['usr/lib/systemd/system/'+observation['unit']]
+            self.assertIn('ExecStart='+observation['binary']+' --nodetach', unit)
+
     def test_render_binds_selected_sources_views_and_publication(self):
         value = config.normalize(declaration())
         files = config.render(value)

@@ -125,3 +125,15 @@ with tempfile.TemporaryDirectory(prefix='lanrith-ownership-native.') as temporar
     unit = output/'usr/lib/systemd/system/lanrith-hardware-ownership.service'
     subprocess.run(['systemd-analyze', 'verify', '--man=no', str(unit)], check=True)
 print('Dormant hardware ownership unit passed native systemd verification without touching hardware.')
+
+# Lease identity is shared by native Kea, retained memfile state and policy
+# admission. Exercise real renewal/restart in another private mount/netns.
+subprocess.run([sys.executable, str(Path(__file__).with_name('dhcp_native.py'))], check=True, timeout=75)
+
+# The generated admission socket must actually implement its lease queries.
+# Its own mount/net namespace keeps the packaged daemon and lease store private.
+subprocess.run([sys.executable, str(Path(__file__).with_name('kea_control_native.py'))], check=True, timeout=90)
+
+# Observe the real private Chrony socket with the service identity, while the
+# host metrics reader retains only CAP_NET_ADMIN and a snapshot read group.
+subprocess.run([sys.executable, str(Path(__file__).with_name('ntp_health_native.py'))], check=True, timeout=45)

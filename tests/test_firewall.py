@@ -36,7 +36,7 @@ class FirewallDefaultsTests(unittest.TestCase):
         self.value['access'] = {'rules': [{'action': 'allow', 'from': 'any', 'to': 'any'}]}
         text = self.firewall()
         forward = text[text.index('chain forward'):text.index('chain output')]
-        self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index('ct state { new, established, related } accept'))
+        self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index('goto tp_access'))
 
     def test_unconfigured_interfaces_cannot_inherit_wildcard_owner_permission(self):
         self.value['access'] = {'rules': [{'action': 'allow', 'from': 'any', 'to': 'any',
@@ -51,7 +51,7 @@ class FirewallDefaultsTests(unittest.TestCase):
         text = self.firewall()
         forward = text[text.index('chain forward'):text.index('chain output')]
         for direction in ('iifname', 'oifname'):
-            self.assertLess(forward.index(direction+' "lan.20" drop'), forward.index('ct state { new, established, related } accept'))
+            self.assertLess(forward.index(direction+' "lan.20" drop'), forward.index('goto tp_access'))
         self.assertNotIn('ip saddr 172.20.20.0/24 oifname "wan" masquerade', text)
 
     def test_dhcp_and_router_advertisements_follow_the_selected_uplink_mode(self):

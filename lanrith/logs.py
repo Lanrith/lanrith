@@ -12,12 +12,13 @@ def active(value):
     return value.get('observability', {}).get('logs', {}).get('enabled', False)
 
 
-def manifest(value):
+def manifest(value, *, observer=None):
     settings = value['observability']['logs']
     target = ip.ip_address(urlsplit(settings['endpoint']).hostname)
     source = next(address for address in intent.service_addresses(value, 'logs')
                   if ip.ip_address(address).version == target.version)
     return {
+        **({'observer': observer} if observer is not None else {}),
         'schema_version': 1,
         'endpoint': settings['endpoint'],
         'target': str(target),
@@ -28,13 +29,18 @@ def manifest(value):
     }
 
 
-def configuration(value):
+def configuration(value, *, observer=None):
     policy = manifest(value)
     quote = json.dumps
-    return '''// Generated from admitted intent. No source configuration or secret is read at runtime.
+    content = '''// Generated from admitted intent. No source configuration or secret is read at runtime.
 // Journal bodies never become labels, and redaction runs before the persistent queue.
 loki.relabel "router_journal" {
   forward_to = []
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "alloy\\\\.service"
+    action        = "drop"
+  }
   rule {
     source_labels = ["__journal__systemd_unit"]
     target_label  = "unit"
@@ -109,7 +115,7 @@ otelcol.processor.groupbyattrs "router" {
 }
 
 otelcol.storage.file "router" {
-  directory             = "/var/lib/lanrith/alloy/queue"
+  directory             = "/var/lib/lanrith-alloy/queue"
   directory_permissions = "0700"
   fsync                  = true
   compaction {
@@ -137,7 +143,7 @@ otelcol.exporter.otlphttp "router" {
     timeout  = "15s"
     tls {
       server_name = SERVER_NAME
-      min_version = "TLS1.2"
+      min_version = "1.2"
     }
   }
   retry_on_failure {
@@ -163,12 +169,47 @@ otelcol.exporter.otlphttp "router" {
         'USERNAME', quote(policy['username'])).replace(
         'ENDPOINT', quote(policy['endpoint'])).replace(
         'SERVER_NAME', quote(policy['tls_server_name']))
+    if observer is not None:
+        content = content.replace('forward_to = [otelcol.receiver.loki.router.receiver]',
+            'forward_to = [otelcol.receiver.loki.router.receiver, loki.process.router_observations.receiver]')
+        # Local readers get service metadata, never a journal body. The remote
+        # branch retains its redacted message and independent persistent queue.
+        content += '\n'+local_configuration()
+    return content
 
 
-def render(value):
+def local_configuration():
+    return '''// Optional local observations. No credential, raw body or dynamic filename.
+loki.process "router_observations" {
+  forward_to = [otelcol.receiver.loki.router_observations.receiver]
+  stage.template {
+    source   = "withheld_body"
+    template = "journal message withheld"
+  }
+  stage.output { source = "withheld_body" }
+}
+
+otelcol.receiver.loki "router_observations" {
+  output { logs = [otelcol.exporter.file.router_observations.input] }
+}
+
+otelcol.exporter.file "router_observations" {
+  path           = "/run/lanrith-log-observations/events.jsonl"
+  format         = "json"
+  flush_interval = "1s"
+  rotation {
+    max_megabytes = 1
+    max_backups   = 2
+    max_days      = 1
+  }
+}
+'''
+
+
+def render(value, *, observer=None):
     if not active(value):
         return {}
-    policy = manifest(value)
+    policy = manifest(value, observer=observer)
     # Resolving the target to exactly one declared attachment is both a
     # validation gate and the source of the firewall's outgoing interface.
     service_plane.destination_network(value, ip.ip_address(policy['target']))
@@ -176,26 +217,32 @@ def render(value):
     unit = (
         '[Unit]\nDescription=Redact and export the router journal\n'
         'Requires=lanrith-services.service\nAfter=lanrith-services.service systemd-journald.service\n'
-        'BindsTo=lanrith-services.service nftables.service\n\n[Service]\nType=simple\n'
+        'BindsTo=lanrith-services.service nftables.service\n\n[Service]\nType=notify\nNotifyAccess=main\n'
         'User=alloy\nGroup=alloy\nSupplementaryGroups=systemd-journal\n'
         'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'
         'LoadCredential='+credential+':'+bindings.credential_path(value, credential)+'\n'
         'ExecStartPre=+/usr/lib/lanrith/logs-runtime stage\n'
-        'ExecStart=/usr/bin/alloy run --stability.level=public-preview --disable-reporting '
-        '--server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/lanrith/alloy/state '
-        '/etc/alloy/config.alloy\n'
+        'ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\nExecReload=\n'
+        'EnvironmentFile=\nWorkingDirectory=/var/lib/lanrith-alloy\n'
+        'TimeoutStartSec=35s\nTimeoutStopSec=20s\nWatchdogSec=30s\n'
         'StateDirectory=lanrith/alloy\nStateDirectoryMode=0750\n'
+        'BindPaths=/var/lib/lanrith/alloy:/var/lib/lanrith-alloy\n'
         'RuntimeDirectory=lanrith-logs\nRuntimeDirectoryMode=0750\nUMask=0027\n'
-        'ReadWritePaths=/var/lib/lanrith/alloy /run/lanrith-logs\n'
-        'IPAddressDeny=any\nIPAddressAllow='+policy['target']+'\n'
+        'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs\n'
+        'IPAddressDeny=any\nIPAddressAllow='+policy['target']+'\nIPAddressAllow=127.0.0.1/32\n'
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nNoNewPrivileges=yes\n'
         'PrivateTmp=yes\nPrivateDevices=yes\nProtectHome=yes\nProtectSystem=strict\n'
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
         'Environment=GOMEMLIMIT=128MiB\nMemoryMax=512M\nMemorySwapMax=0\nTasksMax=64\nLimitNOFILE=1024\n'
         'Restart=on-failure\nRestartSec=10s\n')
+    if observer is not None:
+        unit = unit.replace('RuntimeDirectory=lanrith-logs\n',
+            'RuntimeDirectory=lanrith-logs\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=50\n').replace(
+            'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs\n',
+            'ReadWritePaths=/var/lib/lanrith-alloy /run/lanrith-logs -/run/lanrith-log-observations\n')
     return {
         'usr/share/lanrith/logs.json': canonical(policy).decode(),
-        'etc/alloy/config.alloy': configuration(value),
+        'etc/alloy/config.alloy': configuration(value, observer=observer),
         'etc/systemd/system/alloy.service.d/60-lanrith.conf': unit,
         'usr/lib/systemd/system/lanrith-telemetry-heartbeat.service': (
             '[Unit]\nDescription=Emit the remote telemetry liveness identity\n'

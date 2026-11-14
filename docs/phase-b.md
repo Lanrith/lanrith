@@ -86,6 +86,15 @@ NAT64 lets selected IPv6 clients reach IPv4 destinations. Its public and private
 source pools remain distinct, and retained dynamic source identities are bound
 to their source, destination, interface, protocol, port and policy epochs.
 
+The root supervisor publishes a four-second readiness witness containing the
+child PID, kernel start ticks, boot-clock timestamp, configuration digest and
+executable device/inode. A bounded worker checks the executable after dropping
+to the translator UID; the worker cannot be traced by that UID. The policy
+helper independently checks the live process and image-owned ELF while retaining
+only `CAP_NET_ADMIN`. Failed probes, stale witnesses and executable changes deny
+activation. This contract uses generated runtime files and requires no owner
+YAML on the router.
+
 NAT46 lets selected IPv4 clients reach only the configured IPv6 mappings. Each
 mapping has a name, one IPv4 alias and one IPv6 destination. DNS records can
 reference that name and return the alias for A and the target for AAAA. An

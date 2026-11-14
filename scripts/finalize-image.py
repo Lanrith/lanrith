@@ -27,6 +27,22 @@ def enabled_socket_units(root):
     return result
 
 
+def remove_obsolete_helpers(root):
+    """Old bases can retain unused Bind entrypoints with a missing TSIG module.
+
+    Authoritative DNS now uses the compiled DNS runtime and systemd credentials.
+    Remove only these retired files, including when assembling on an older base.
+    """
+    for name in ('bind-runtime', 'bind_runtime.py'):
+        path = root/'usr/lib/lanrith'/name
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            if not path.is_file():
+                raise ValueError('Obsolete runtime path is not a regular file.')
+            path.unlink()
+
+
 def finalize_policy(root):
     """Compile and consume the policy baseline inside an isolated netns."""
     source = root/'usr/lib/lanrith-build/policy-baseline.json'
@@ -44,19 +60,28 @@ def finalize_policy(root):
         raise ValueError('Policy profile scratch path already exists.')
     scratch.mkdir(mode=0o700)
     program = r'''
-import pathlib, subprocess
+import json, pathlib, subprocess
 root = pathlib.Path('/run/lanrith-policy-build')
-# Loading and listing are separate operations in this same disposable network namespace.
+backend = pathlib.Path('/usr/lib/lanrith-build/policy-backend')
+selected = backend.read_text().strip()
+if selected != 'tun':
+    raise ValueError('Image finalization requires the supported TUN backend.')
+for interface in json.loads(pathlib.Path('/usr/lib/lanrith-build/policy-interfaces.json').read_text()):
+    subprocess.run(['/usr/sbin/ip', 'link', 'add', 'dev', interface, 'type', 'dummy'], check=True)
+extra = ['-guards', '/usr/lib/lanrith-build/policy-egress.nft']
+# Loading and listing share this disposable namespace; numeric identifiers keep
+# the immutable program pin independent of the builder's account database.
 subprocess.run(['/usr/sbin/nft', '-f', '/etc/nftables.conf'],
     check=True, stdin=subprocess.DEVNULL, capture_output=True)
-listing = subprocess.run(['/usr/sbin/nft', '-j', 'list', 'ruleset'],
+subprocess.run(['/usr/sbin/nft', '-f', '/usr/lib/lanrith-build/policy-egress.nft'], check=True)
+listing = subprocess.run(['/usr/sbin/nft', '-j', '-n', 'list', 'ruleset'],
     check=True, stdin=subprocess.DEVNULL, capture_output=True).stdout
 (root/'ruleset.json').write_bytes(listing)
 (root/'output').mkdir(mode=0o700)
-subprocess.run(['/usr/bin/router-policy-profile',
+subprocess.run(['/usr/bin/router-policy-profile', '-backend', selected,
     '-baseline', '/usr/lib/lanrith-build/policy-baseline.json',
     '-ruleset', '/run/lanrith-policy-build/ruleset.json',
-    '-output-directory', '/run/lanrith-policy-build/output'],
+    '-output-directory', '/run/lanrith-policy-build/output']+extra,
     check=True, stdin=subprocess.DEVNULL)
 '''
     result = subprocess.run(['unshare', '--net', '--fork', '--', 'chroot', str(root),
@@ -95,6 +120,17 @@ subprocess.run(['/usr/bin/router-policy-profile',
         raise ValueError('Policy profile metadata destination already exists.')
     os.replace(output/'router-profile-metadata.json', public)
     public.chmod(0o444)
+    # Independent readers consume the image's compiled native objects. Never
+    # give them the delegation model or let them learn a baseline at runtime.
+    observed = root/'usr/share/lanrith/policy-program.json'
+    if observed.exists() or observed.is_symlink():
+        raise ValueError('Native policy observation destination already exists.')
+    listing = json.loads((scratch/'ruleset.json').read_bytes())
+    observed.write_text(json.dumps({'schema_version': 1, 'backend': 'tun',
+        'program_sha256': metadata['floor_sha256'],
+        'objects': [row for row in listing['nftables'] if 'metainfo' not in row]},
+        sort_keys=True, separators=(',', ':'))+'\n')
+    observed.chmod(0o444)
     shutil.rmtree(scratch)
     shutil.rmtree(root/'usr/lib/lanrith-build')
 
@@ -102,6 +138,7 @@ root = Path(os.environ['BUILDROOT']).resolve()
 root.chmod(0o755)
 # Assembly embeds the build-owned boundary function in this script. mkosi
 # remounts a finalize script as /work/finalize, without its siblings.
+remove_obsolete_helpers(root)
 finalize_policy(root)
 check(root)
 administration = json.loads((root/'usr/share/lanrith/administration.json').read_text())
