@@ -195,7 +195,11 @@ while True:time.sleep(1)
             expected = {(family, hook, protocol) for family in (4, 6) for hook in ('input', 'forward')
                         for protocol in ('udp', 'tcp', 'icmp' if family == 4 else 'icmpv6')}
             return value if {(row['family'], row['hook'], row['protocol']) for row in value} >= expected else None
-        actual = wait(observed_matrix)
+        try:
+            actual = wait(observed_matrix)
+        except AssertionError:
+            print('Observed NFLOG matrix:', sorted({(row['family'], row['hook'], row['protocol']) for row in rows()}), file=sys.stderr)
+            raise
         receiver.send_signal(signal.SIGSTOP)
         udp('192.0.2.1', 54321, count=1000)
         udp('192.0.2.1', 23456, allowed=True)
@@ -209,7 +213,8 @@ while True:time.sleep(1)
         udp('192.0.2.1', 23456, allowed=True)
         received = json.loads((root/'server.json').read_text())
         assert set(received) == {23456} and len(received) >= 4
-        nft = json.loads(run('nft', '-j', 'list', 'chain', 'inet', 'lanrith', 'forward').stdout)
+        default_chain = 'tp_access' if ' chain tp_access {' in baseline.splitlines() else 'forward'
+        nft = json.loads(run('nft', '-j', 'list', 'chain', 'inet', 'lanrith', default_chain).stdout)
         default = nft['nftables'][-1]['rule']
         counter = next(item['counter'] for item in default['expr'] if 'counter' in item)
         assert counter['packets'] >= 1100

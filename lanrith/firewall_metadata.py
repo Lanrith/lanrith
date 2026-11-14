@@ -236,10 +236,21 @@ def instrument(text):
         start = lines.index(declaration)
         end = next((index for index in range(start+1, len(lines)) if lines[index] == ' }'), None)
         require(end is not None and not any(line.startswith(' chain ') for line in lines[start+1:end]))
+        explicit_drop = hook == 'forward' and ' chain tp_access {' in lines
+        if explicit_drop:
+            # TUN enforcement terminates forwarding in the ordered access chain.
+            # Observe only its final fallback, after all guards and owner rules.
+            require(lines[start+1:end].count('  goto tp_access') == 1)
+            require(lines.count(' chain tp_access {') == 1)
+            start = lines.index(' chain tp_access {')
+            end = next((index for index in range(start+1, len(lines)) if lines[index] == ' }'), None)
+            require(end is not None and not any(line.startswith(' chain ') for line in lines[start+1:end]))
+            require(lines[end-1] == '  drop')
+            end -= 1
         prefix = 'LN_D1_'+digest[:24]+'_'+code
         revision = hashlib.sha256((digest+':'+hook+':default-drop').encode()).hexdigest()
         prefixes[prefix] = {'hook': hook, 'id': 'native-default-drop:'+revision[:24], 'revision': revision}
-        lines[end:end] = ['  limit rate 8/second burst 16 packets log prefix "'+prefix+'" group '+str(GROUP)+
+        lines[end:end+int(explicit_drop)] = ['  limit rate 8/second burst 16 packets log prefix "'+prefix+'" group '+str(GROUP)+
                           ' snaplen '+str(SNAPLEN)+' queue-threshold 1', '  counter drop']
     return '\n'.join(lines)+'\n', {'schema': 1, 'native_firewall_sha256': digest, 'group': GROUP, 'prefixes': prefixes,
         'coverage': 'Rate-limited host input/forward default-deny only; no earlier guard, explicit-rule, policy-agent, translator, output or service-namespace coverage.'}

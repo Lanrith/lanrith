@@ -120,19 +120,42 @@ class FirewallMetadataTests(unittest.TestCase):
             with self.subTest(length=len(data)), self.assertRaises(ValueError):wire.decode(data, (0, 0), PREFIXES)
 
     def test_generated_rules_have_stable_identity_and_unconditional_drop_after_sampling(self):
+        value = minimal()
+        value['access'] = {'default': 'deny', 'rules': [
+            {'action': 'deny', 'from': 'home', 'to': 'uplink', 'protocol': 'udp', 'ports': [54321]},
+            {'action': 'allow', 'from': 'home', 'to': 'uplink', 'protocol': 'udp', 'ports': [23456]}]}
+        for backend in ('tun', 'legacy'):
+            with self.subTest(backend=backend):
+                original = config.render(value, access_backend=backend)['etc/nftables.conf']
+                result, manifest = wire.instrument(original)
+                self.assertEqual(wire.instrument(original), (result, manifest))
+                restored, chain, observed = [], None, []
+                for index, line in enumerate(result.splitlines()):
+                    if line.startswith(' chain '):
+                        chain = line.split()[1]
+                    if 'LN_D1_' in line:
+                        observed.append(chain)
+                        self.assertIn('limit rate 8/second burst 16 packets log ', line)
+                        self.assertNotIn('drop', line)
+                        self.assertEqual(result.splitlines()[index+1], '  counter drop')
+                    elif line == '  counter drop':
+                        if chain == 'tp_access':
+                            restored.append('  drop')
+                    else:
+                        restored.append(line)
+                self.assertEqual('\n'.join(restored)+'\n', original)
+                self.assertEqual(set(observed), {'input', 'tp_access' if backend == 'tun' else 'forward'})
+                self.assertEqual(len(manifest['prefixes']), 2)
+                with self.assertRaises(ValueError):wire.instrument(result)
+
+    def test_tun_observation_requires_the_generated_final_default_drop(self):
         original = config.render(minimal())['etc/nftables.conf']
-        result, manifest = wire.instrument(original)
-        self.assertEqual(wire.instrument(original), (result, manifest))
-        additions = [line for line in result.splitlines() if 'LN_D1_' in line or line == '  counter drop']
-        self.assertEqual(len(additions), 4)
-        self.assertEqual('\n'.join(line for line in result.splitlines() if line not in additions)+'\n', original)
-        self.assertEqual(len(manifest['prefixes']), 2)
-        for index, line in enumerate(result.splitlines()):
-            if 'LN_D1_' in line:
-                self.assertIn('limit rate 8/second burst 16 packets log ', line)
-                self.assertNotIn('drop', line)
-                self.assertEqual(result.splitlines()[index+1], '  counter drop')
-        with self.assertRaises(ValueError):wire.instrument(result)
+        start = original.index(' chain tp_access {')
+        end = original.index('\n }', start)
+        for text in (original.replace('  goto tp_access\n', ''),
+                     original.replace(' chain tp_access {', ' chain tp_access {\n chain tp_access {'),
+                     original[:end-7]+'  accept'+original[end:]):
+            with self.subTest(text=text[start:end]), self.assertRaises(ValueError):wire.instrument(text)
 
     def test_replaced_or_ambiguous_tables_are_rejected(self):
         original = config.render(minimal())['etc/nftables.conf']
