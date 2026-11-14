@@ -39,7 +39,7 @@
     "builders/alloy/source.json": "ff4aa2a655c9f6f14c1af0320922bb1a55dec6d362bcbaf83bbc621f109a40bc",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
-    "builders/build-inputs.lock": "e343b549aa5c70f898c6ae24e258bb73da2323bfb38677e84f4412c3cb84caeb",
+    "builders/build-inputs.lock": "e07e804c5ff4991197852f379d62b891db1362fcb49eee57fdfd096ad94d1dba",
     "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
     "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
     "builders/mkosi/Containerfile": "155b3dda6540902f713d5ecb80848a7558ee7e717948ac8cbf96e6517509db5a",
@@ -62,10 +62,10 @@
     "builders/vpp/Containerfile": "3897684ce4bee00fc2d1e7792e8e3a1fa2115aa5e0a42d39223ba05edffe3040"
   },
   "debian_release_sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-  "debian_snapshot": "20261113T190000Z",
+  "debian_snapshot": "20261114T060000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "d4b5f524419331eac252d9c3d1c0ea338db21965f00cc4ada0056b62cc518e76",
-  "security_snapshot": "20261113T190000Z"
+  "security_release_sha256": "b931568e0ff82f6bbbb4d01d0a4a1f1257727133de6a39a99324c01198780b47",
+  "security_snapshot": "20261114T060000Z"
 }
