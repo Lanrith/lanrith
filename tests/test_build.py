@@ -13,6 +13,23 @@ from lanrith.release import ReleaseError
 
 
 class AssemblyTests(unittest.TestCase):
+    def test_discovery_unmasks_its_required_socket_only_when_selected(self):
+        from test_discovery import declaration
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                base = root/'base.tar'
+                base.write_bytes(b'synthetic-test-input')
+                value = declaration()
+                value['services']['discovery']['enabled'] = enabled
+                build.assembly(value, base, root/'work', version='0.1.0', sequence=9)
+                units = root/'work/mkosi.extra/etc/systemd/system'
+                for name in ('avahi-daemon.socket', 'avahi-daemon.service'):
+                    link = units/name
+                    self.assertEqual(link.is_symlink(), enabled)
+                    if enabled:
+                        self.assertEqual(link.readlink(), Path('/usr/lib/systemd/system')/name)
+
     def test_core_confinement_is_carried_into_assembly_from_any_admitted_base(self):
         project = Path(__file__).resolve().parents[1]
         value = config.load(project/'examples/minimal.yaml')

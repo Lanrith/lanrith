@@ -391,6 +391,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         path.symlink_to('/usr/lib/systemd/system/' + unit)
     auxiliaries = ({'lanrith-policy-helper-requests.socket', 'lanrith-policy-helper-status.socket'}
                    if value.get('identity', {}).get('policy', {}).get('enabled') else set())
+    if value['services'].get('discovery', {}).get('enabled'):
+        auxiliaries.add('avahi-daemon.socket')
     for unit in sorted(set(required) | auxiliaries | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
                                        'lanrith-health.service', 'lanrith-observation.service',
                                        'lanrith-ssh-host-key.service'}):

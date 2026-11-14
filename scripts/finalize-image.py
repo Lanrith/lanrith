@@ -5,6 +5,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -43,6 +44,19 @@ def remove_obsolete_helpers(root):
             path.unlink()
 
 
+def policy_compiler_dependencies(root):
+    """Allow Debian's versioned interpreter link within the image's bin directory."""
+    for relative in ('usr/bin/router-policy-profile', 'usr/sbin/nft', 'usr/bin/python3'):
+        path = root/relative
+        if relative == 'usr/bin/python3' and path.is_symlink():
+            target = path.readlink()
+            if not re.fullmatch(r'python3\.[0-9]+', target.as_posix()):
+                raise ValueError('Policy profile interpreter link is unsafe.')
+            path = path.parent/target
+        if not path.is_file() or path.is_symlink():
+            raise ValueError('Policy profile compiler dependency is unavailable: '+relative)
+
+
 def finalize_policy(root):
     """Compile and consume the policy baseline inside an isolated netns."""
     source = root/'usr/lib/lanrith-build/policy-baseline.json'
@@ -51,10 +65,7 @@ def finalize_policy(root):
     info = source.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
         raise ValueError('Build-only policy compiler input has unsafe metadata.')
-    for relative in ('usr/bin/router-policy-profile', 'usr/sbin/nft', 'usr/bin/python3'):
-        path = root/relative
-        if not path.is_file() or path.is_symlink():
-            raise ValueError('Policy profile compiler dependency is unavailable.')
+    policy_compiler_dependencies(root)
     scratch = root/'run/lanrith-policy-build'
     if scratch.exists() or scratch.is_symlink():
         raise ValueError('Policy profile scratch path already exists.')
@@ -71,18 +82,20 @@ for interface in json.loads(pathlib.Path('/usr/lib/lanrith-build/policy-interfac
 extra = ['-guards', '/usr/lib/lanrith-build/policy-egress.nft']
 # Loading and listing share this disposable namespace; numeric identifiers keep
 # the immutable program pin independent of the builder's account database.
+# The outer process already supplies /dev/null as fd 0. The unfinished image
+# has no mounted /dev; inherit that descriptor instead of opening it in chroot.
 subprocess.run(['/usr/sbin/nft', '-f', '/etc/nftables.conf'],
-    check=True, stdin=subprocess.DEVNULL, capture_output=True)
+    check=True, stdin=0, capture_output=True)
 subprocess.run(['/usr/sbin/nft', '-f', '/usr/lib/lanrith-build/policy-egress.nft'], check=True)
 listing = subprocess.run(['/usr/sbin/nft', '-j', '-n', 'list', 'ruleset'],
-    check=True, stdin=subprocess.DEVNULL, capture_output=True).stdout
+    check=True, stdin=0, capture_output=True).stdout
 (root/'ruleset.json').write_bytes(listing)
 (root/'output').mkdir(mode=0o700)
 subprocess.run(['/usr/bin/router-policy-profile', '-backend', selected,
     '-baseline', '/usr/lib/lanrith-build/policy-baseline.json',
     '-ruleset', '/run/lanrith-policy-build/ruleset.json',
     '-output-directory', '/run/lanrith-policy-build/output']+extra,
-    check=True, stdin=subprocess.DEVNULL)
+    check=True, stdin=0)
 '''
     result = subprocess.run(['unshare', '--net', '--fork', '--', 'chroot', str(root),
                              '/usr/bin/python3', '-I', '-S', '-c', program],
