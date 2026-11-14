@@ -289,6 +289,11 @@ def main():
     # No production key or owner configuration enters the public build.
     run('docker', 'run', '--rm', '--network', 'none', '--privileged',
         '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
+        '-v', str(args.output)+':/output', builder, 'python3', '/source/tests/policy_image.py',
+        '--base', '/output/lanrith-base.tar.gz', '--initrd-base', '/output/lanrith-initrd-base.tar.gz',
+        '--work', '/work/policy-image-qualification')
+    run('docker', 'run', '--rm', '--network', 'none', '--privileged',
+        '-v', str(PROJECT)+':/source:ro', '-v', str(args.work)+':/work',
         '-v', str(args.output)+':/output', builder, 'python3', '/source/tests/vm.py',
         '--base', '/output/lanrith-base.tar.gz', '--initrd-base', '/output/lanrith-initrd-base.tar.gz',
         '--work', '/work/vm-qualification', '--result', '/output/native-qualification.json')
