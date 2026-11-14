@@ -14,6 +14,7 @@ import yaml
 from .release import canonical, require, ReleaseError
 from . import access as access_rules
 from . import fancontrol_config
+from . import dhcp4 as dhcp4_config
 from . import firewall, hardware_config as hardware_policy, intent, integrations, service_plane, routing, authoritative, nat46, nat64, translation, ids, metrics, bindings, runtime_plan, radius, logs, discovery
 
 
@@ -60,7 +61,7 @@ def load(path):
 
 
 def effective_digest(value, integrations, serial_provisioning_sha256=None, *, target_facts=None,
-                     retained_allocations=None, boot_inputs=None):
+                     retained_allocations=None, boot_inputs=None, access_backend='tun'):
     """Bind normalized intent, admitted integrations and selected serial material."""
     value = normalize(value)
     require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
@@ -73,6 +74,9 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None, *, ta
             'Effective serial provisioning differs from configuration.')
     inputs = {'configuration': value, 'integrations': integrations,
               'serial_provisioning_sha256': serial_provisioning_sha256}
+    require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
+    if access_backend != 'legacy':
+        inputs['access_backend'] = access_backend
     if target_facts is not None:
         inputs['hardware_ownership'] = hardware_policy.ownership_manifest(value, target_facts)
     if retained_allocations is not None:
@@ -365,7 +369,8 @@ def normalize(value):
     return value
 
 
-def render(value, *, target_facts=None, retained_allocations=None):
+def render(value, *, target_facts=None, retained_allocations=None, access_backend="tun"):
+    require(access_backend in ("legacy", "tun"), "Unknown build access backend.")
     value = normalize(value)
     integrations.require_runtime(value, target_facts)
     user = value['administration']['username']
@@ -460,42 +465,48 @@ def render(value, *, target_facts=None, retained_allocations=None):
         files[f'etc/systemd/network/25-{parent}-trunk.network'] = (
             f'[Match]\nName={parent}\n\n[Network]\nLinkLocalAddressing=no\n' +
             ''.join(f'VLAN={vlan}\n' for vlan in vlans))
-    files['etc/nftables.conf'] = firewall.render(value)
+    from . import directory_config
+    files['etc/hosts'] += directory_config.hosts(value)
+    files['etc/nftables.conf'] = firewall.render(value, access_backend=access_backend, retained_allocations=retained_allocations)
     if value['services'].get('dhcp4', {}).get('enabled'):
-        scopes = []
-        for key, network in networks.items():
-            if 'dhcp4' not in network:
-                continue
-            address = next(ipaddress.ip_interface(a) for a in network['addresses'] if ':' not in a)
-            scopes.append({'id': len(scopes) + 1, 'subnet': str(address.network), 'interface': network['name'],
-                           'pools': [{'pool': pool} for pool in network['dhcp4']['pools']],
-                           'reservations': [{('hw-address' if k == 'mac' else 'ip-address' if k == 'address' else k): v
-                                             for k, v in entry.items()} for entry in network['dhcp4'].get('reservations', [])],
-                           'option-data': [{'name': 'routers', 'data': str(address.ip)}] +
-                                          ([{'name': 'domain-name-servers', 'data': intent.service_addresses(value, 'dns')[0]}] if network.get('dns') else []) +
-                                          ([{'name': 'ntp-servers', 'data': intent.service_addresses(value, 'ntp')[0]}] if network.get('ntp') else []) +
-                                          ([{'name': 'domain-name', 'data': value['services']['dns']['domain']}]
-                                           if network.get('dns') and value['services']['dns'].get('domain') else [])})
+        scopes = dhcp4_config.scopes(value)
         dhcp4 = {
             'interfaces-config': {'interfaces': [scope['interface'] for scope in scopes]},
+            # Kea's automatic CPU-sized pool can exceed the fixed service task
+            # ceiling on large hosts. Bound workers and queued packets instead
+            # of depending on the build machine or increasing that ceiling.
+            'multi-threading': {'enable-multi-threading': True, 'thread-pool-size': 2,
+                                'packet-queue-size': 64},
             'lease-database': {'type': 'memfile', 'persist': True, 'name': '/var/lib/kea/kea-leases4.csv'},
             'valid-lifetime': 3600, 'subnet4': scopes}
         if value.get('identity', {}).get('radius', {}).get('enabled', False):
             dhcp4['control-socket'] = {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
+            # The qualified x86-64 Kea package supplies the commands used by
+            # the bounded admission collector. A socket alone cannot serve them.
+            dhcp4['hooks-libraries'] = [{'library': '/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so'}]
+            files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'] = (
+                '[Service]\nExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n'
+                'TimeoutStartSec=20s\n')
         files['etc/kea/kea-dhcp4.conf'] = json.dumps({'Dhcp4': dhcp4}, indent=2) + '\n'
     files.update(service_plane.render(value))
     files.update(authoritative.render(value))
     files.update(routing.render(value))
-    files.update(nat46.render(value))
-    files.update(nat64.render(value, retained_allocations))
+    if access_backend == 'tun':
+        files.update(translation.render_native(value, retained_allocations))
+    else:
+        files.update(nat46.render(value))
+        files.update(nat64.render(value, retained_allocations))
     files.update(ids.render(value))
     files.update(metrics.render(value))
+    files.update(directory_config.render(value))
     files.update(radius.render(value))
     files.update(logs.render(value))
-    files.update(discovery.render(value, retained_allocations))
+    files.update(discovery.render(value, retained_allocations, access_backend=access_backend))
     from . import snmp
     files.update(snmp.render(value))
     files.update(bindings.render(value))
+    from . import credential_config
+    files.update(credential_config.render(value))
     files.update(hardware_policy.ownership_files(value, target_facts))
     files.update(fancontrol_config.render(value))
     if value.get('identity', {}).get('policy', {}).get('enabled', False):
@@ -504,30 +515,41 @@ def render(value, *, target_facts=None, retained_allocations=None):
         # consumes and removes it after producing the pinned runtime profile.
         files['usr/lib/lanrith-build/policy-baseline.json'] = canonical(
             policy_agent.baseline(value, retained_allocations)).decode()
-        files.update(policy_agent.render(value))
+        files.update(policy_agent.render(value, access_backend=access_backend))
+        if access_backend == 'tun':
+            from . import tun_policy
+            files['usr/lib/lanrith-build/policy-backend'] = 'tun\n'
+            files['usr/lib/lanrith-build/policy-egress.nft'] = tun_policy.identity_egress(value)
+            files['usr/lib/lanrith-build/policy-interfaces.json'] = canonical(tun_policy.Compiler(value).physical).decode()
     for key in value['administration']['networks']:
         files['etc/ssh/sshd_config.d/00-lanrith.conf'] += ''.join(
             'ListenAddress '+str(ipaddress.ip_interface(a).ip)+'\n' for a in networks[key]['addresses'])
-    files.update(runtime_plan.render(value, target_facts=target_facts))
+    files.update(runtime_plan.render(value, target_facts=target_facts, access_backend=access_backend))
     files['usr/share/lanrith/configuration.sha256'] = rendered_digest(
-        value, target_facts, retained_allocations=retained_allocations) + '\n'
+        value, target_facts, retained_allocations=retained_allocations, access_backend=access_backend) + '\n'
     return files
 
 
-def rendered_digest(value, target_facts=None, *, retained_allocations=None):
+def rendered_digest(value, target_facts=None, *, retained_allocations=None, access_backend='tun'):
+    require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
     inputs = value if target_facts is None else {'configuration': value,
              'hardware_ownership': hardware_policy.ownership_manifest(value, target_facts)}
     if retained_allocations is not None:
         if target_facts is None:
             inputs = {'configuration': value}
         inputs['translation_allocations'] = translation.allocate(value, retained_allocations)
+    if access_backend != 'legacy':
+        if inputs is value:
+            inputs = {'configuration': value}
+        inputs['access_backend'] = access_backend
     return hashlib.sha256(canonical(inputs)).hexdigest()
 
 
-def write(value, directory, *, target_facts=None, retained_allocations=None):
+def write(value, directory, *, target_facts=None, retained_allocations=None, access_backend='tun'):
     require(not directory.exists() and not directory.is_symlink(), 'Output directory must not exist.')
     value = normalize(value)
-    files = render(value, target_facts=target_facts, retained_allocations=retained_allocations)
+    files = render(value, target_facts=target_facts, retained_allocations=retained_allocations,
+                   access_backend=access_backend)
     directory.mkdir(mode=0o700)
     for name, text in files.items():
         path = directory / name
@@ -537,4 +559,5 @@ def write(value, directory, *, target_facts=None, retained_allocations=None):
         path.chmod(0o600 if private_policy else 0o440 if name.startswith('etc/sudoers.d/') else 0o644)
         if private_policy:
             path.parent.chmod(0o700)
-    return rendered_digest(value, target_facts, retained_allocations=retained_allocations)
+    return rendered_digest(value, target_facts, retained_allocations=retained_allocations,
+                           access_backend=access_backend)

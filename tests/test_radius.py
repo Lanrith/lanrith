@@ -54,6 +54,19 @@ class RadiusContractTests(unittest.TestCase):
         self.assertIn('dport 1813 accept', files['etc/lanrith/services.nft'])
         self.assertEqual(json.loads(files['etc/kea/kea-dhcp4.conf'])['Dhcp4']['control-socket'],
                          {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'})
+        self.assertEqual(json.loads(files['etc/kea/kea-dhcp4.conf'])['Dhcp4']['hooks-libraries'],
+                         [{'library': '/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so'}])
+        self.assertIn('kea_runtime.py $MAINPID\n', files[
+            'etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'])
+
+    def test_disabled_radius_removes_its_kea_control_dependency(self):
+        value = declaration()
+        value['identity']['radius'] = {'enabled': False}
+        files = config.render(config.normalize(value))
+        native = json.loads(files['etc/kea/kea-dhcp4.conf'])['Dhcp4']
+        self.assertNotIn('control-socket', native)
+        self.assertNotIn('hooks-libraries', native)
+        self.assertNotIn('etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf', files)
 
     def test_policy_binding_projection_is_exact_and_not_source_intent(self):
         value = config.normalize(declaration())

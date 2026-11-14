@@ -8,7 +8,7 @@ import hashlib
 import ipaddress as ip
 from urllib.parse import urlsplit
 
-from . import access, bindings, integrations, intent, routing, translation, service_plane
+from . import access, bindings, dhcp4, integrations, intent, routing, translation, service_plane
 from .release import canonical, require
 
 
@@ -63,10 +63,79 @@ def asymmetric_replies(value):
     return result
 
 
+def nat64_egress(value):
+    """Describe existing translator source NAT without granting access.
+
+    Addresses are the actual configured output-interface addresses, including
+    additional attachment gateways. An empty WAN list requires a qualified
+    runtime address producer; no address is guessed from its subnet.
+    """
+    components = [entry for entry in intent.translations(value).values()
+                  if entry['component'] == 'nat64']
+    if not components:
+        return []
+    uplink = value['uplink']
+    outputs = []
+    for network in sorted(value['networks'].values(), key=lambda entry: entry['name']):
+        if not network.get('forwarding', True):
+            continue
+        targets = [ip.ip_interface(address).network for address in network['addresses']
+                   if ip.ip_interface(address).version == 4]
+        targets += [ip.ip_network(prefix) for prefix in
+                    network.get('routed_prefixes', []) + network.get('additional_subnets', [])
+                    if ip.ip_network(prefix).version == 4]
+        if not targets:
+            continue
+        addresses = sorted({ip.ip_interface(address).ip for address in intent.gateway_addresses(network)
+                            if ip.ip_interface(address).version == 4})
+        require(addresses, 'NAT64 egress needs a configured IPv4 attachment address.')
+        outputs.append({'destination_interface': network['name'],
+                        'destinations': [str(prefix) for prefix in sorted(set(targets),
+                                         key=lambda prefix: (int(prefix.network_address), prefix.prefixlen))],
+                        'addresses': [str(address) for address in addresses]})
+    if uplink.get('ipv4', 'dhcp') != 'disabled':
+        outputs.append({
+            'destination_interface': value['hardware']['interfaces'][uplink['interface']]['name'],
+            'destinations': ['0.0.0.0/0'],
+            'addresses': [str(address) for address in sorted({
+                ip.ip_interface(address).ip for address in uplink.get('addresses', [])
+                if ip.ip_interface(address).version == 4})],
+        })
+    return [{'interface': component['interface'], **output}
+            for component in sorted(components, key=lambda entry: entry['interface'])
+            for output in outputs]
+
+
 def baseline(value, retained_allocations=None):
     """Keep ordered owner intent separate from short-lived delegated grants."""
     policy = value.get('identity', {}).get('policy', {})
     require(policy.get('enabled', False), 'Policy helper contract requires an enabled identity policy.')
+    return _baseline(value, retained_allocations)
+
+
+def bounded_baseline(value, accounts, retained_allocations=None):
+    """Construct the candidate paired backend input independently of directory.
+
+    The installed backend selection is unchanged. The build caller supplies the
+    effective admitted image registry after account overlays; nothing reads the
+    owner configuration or account registry at runtime for this contract.
+    """
+    result = _baseline(value, retained_allocations)
+    scopes = dhcp4.host_scopes(value, accounts)
+    egress = nat64_egress(value)
+    if scopes:
+        result['network_model']['host_dhcp4'] = scopes
+    if egress:
+        result['network_model']['nat64_egress'] = egress
+    if scopes or egress:
+        result['generation'] = 'pending'
+        result['generation'] = hashlib.sha256(canonical(result)).hexdigest()
+    return result
+
+
+def _baseline(value, retained_allocations):
+    policy = value.get('identity', {}).get('policy', {})
+    managed = policy.get('networks', []) if policy.get('enabled', False) else []
     zones = []
     router = []
     management = []
@@ -126,7 +195,7 @@ def baseline(value, retained_allocations=None):
                   for name, entry in n46['mappings'].items()] if n46 else [],
         'nat46_pools': [n46['pool']] if n46 else [],
         'lease_seconds': 90, 'refresh_seconds': 30, 'maximum_devices': 4096, 'maximum_tuples': 16384,
-        'network_model': {'schema_version': 1, 'managed_networks': policy['networks'],
+        'network_model': {'schema_version': 1, 'managed_networks': managed,
                           'uplink_interface': value['hardware']['interfaces'][value['uplink']['interface']]['name'],
                           'rules': rules, 'core_services': core_services(value),
                           'core_egress': service_plane.egress(value),
@@ -137,13 +206,13 @@ def baseline(value, retained_allocations=None):
     }
     if n46:
         result['network_model']['nat46_prefix'] = n46['prefix']
-    require(all(zone['networks'] for zone in zones) and all(p in {n['role'] for n in zones} for p in policy['networks']),
+    require(all(zone['networks'] for zone in zones) and all(p in {n['role'] for n in zones} for p in managed),
             'Policy helper needs an addressed ordinary network for each managed boundary.')
     result['generation'] = hashlib.sha256(canonical(result)).hexdigest()
     return result
 
 
-def runtime_contract(value):
+def runtime_contract(value, *, access_backend="tun"):
     """Project only the immutable runtime inputs needed by the policy owner."""
     identity = value.get('identity', {})
     policy = identity.get('policy', {})
@@ -169,9 +238,7 @@ def runtime_contract(value):
         admission = value['networks'][admission_key]
         ipv4 = next(ip.ip_interface(address).network for address in admission['addresses']
                     if ip.ip_interface(address).version == 4)
-        subnet_id = next(index for index, (key, _) in enumerate(
-            ((key, network) for key, network in value['networks'].items() if 'dhcp4' in network), 1)
-                         if key == admission_key)
+        subnet_id = intent.dhcp4_ids(value)[admission_key]
         attachment = value['hardware']['interfaces'][admission['interface']]['name']
         collector = {
             'radius_user': 'freerad',
@@ -186,7 +253,7 @@ def runtime_contract(value):
             'interface': admission['name'],
             'parent': attachment,
         }
-    return {
+    contract = {
         'schema_version': 1,
         'profile_directory': '/etc/router-policy-agent/profile',
         'profile_metadata': '/usr/share/lanrith/policy-profile-metadata.json',
@@ -209,13 +276,22 @@ def runtime_contract(value):
         'translation_manifests': translations,
     }
 
+    require(access_backend in ('legacy', 'tun'), 'Unknown policy compiler.')
+    if access_backend == 'tun':
+        from . import tun_policy
+        contract['backend'] = 'tun'
+        contract['guard_interfaces'] = tun_policy.Compiler(value).physical
+    return contract
 
-def render(value):
+
+def render(value, *, observer=None, access_backend="tun"):
     """Emit private runtime policy and complete public service ownership."""
     policy = value.get('identity', {}).get('policy', {})
     if not policy.get('enabled', False):
         return {}
-    contract = runtime_contract(value)
+    contract = runtime_contract(value, access_backend=access_backend)
+    if observer is not None:
+        contract['observer'] = observer
     reference = contract['directory']['credential_name']
     credential = bindings.credential_path(value, reference)
     translators = []
@@ -264,6 +340,9 @@ def render(value):
         'RestrictAddressFamilies='+binding_families+'\n'
         'RestrictNamespaces=yes\nRestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
         'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n')
+    helper_start = ('/usr/lib/lanrith/policy-runtime serve' if observer is not None else
+                    '/usr/bin/router-policy-helper -config-directory /run/lanrith-policy/config '
+                    '-binding-directory /run/lanrith-policy/bindings')
     helper = (
         '[Unit]\nDescription=Enforce image-bounded directory policy\n'
         'Wants=lanrith-policy-reader.service\n'
@@ -271,19 +350,21 @@ def render(value):
         'lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket\n'
         'After=lanrith-policy-bootstrap.service lanrith-policy-bindings.service '
         'lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket\n\n'
-        '[Service]\nType=exec\nEnvironment=GOMAXPROCS=2 GOMEMLIMIT=400MiB\n'
-        'ExecStart=/usr/bin/router-policy-helper -config-directory /run/lanrith-policy/config '
-        '-binding-directory /run/lanrith-policy/bindings\n'
+        '[Service]\nType=notify\nNotifyAccess=main\nTimeoutStartSec=100s\n'
+        'Environment=GOMAXPROCS=2 GOMEMLIMIT=400MiB\n'
+        'ExecStart='+helper_start+'\n'
         'ExecStopPost=-/usr/bin/router-policy-recover -config-directory /run/lanrith-policy/config -timeout 5s\n'
         'Sockets=lanrith-policy-helper-requests.socket lanrith-policy-helper-status.socket\n'
         'Restart=on-failure\nRestartSec=2s\nTimeoutStopSec=10s\nUser=root\nGroup=root\nUMask=0077\n'
         'NoNewPrivileges=yes\nCapabilityBoundingSet=CAP_NET_ADMIN\nProtectSystem=strict\nProtectHome=yes\n'
         'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
         'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'
-        'ReadWritePaths=/run/lanrith-policy /var/lib/lanrith/policy-agent\n'
+        'ReadWritePaths=/run/lanrith-policy /var/lib/lanrith/policy-agent'+
+        (' -/run/lanrith-policy-observations' if observer is not None else '')+'\n'
         'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\nRestrictRealtime=yes\n'
         'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=512M\nMemorySwapMax=0\n'
-        'TasksMax=64\nLimitNOFILE=4096\n')
+        'TasksMax=64\nLimitNOFILE=4096\n'+
+        (f'SupplementaryGroups={observer["gid"]}\n' if observer is not None else ''))
     reader = (
         '[Unit]\nDescription=Read fresh directory policy over verified TLS\n'
         'Requires=lanrith-policy-helper.service\nAfter=lanrith-policy-helper.service systemd-networkd.service\n\n'
@@ -296,6 +377,7 @@ def render(value):
         'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=256M\nMemorySwapMax=0\n'
         'TasksMax=64\nLimitNOFILE=1024\n')
     return {
+        **({'etc/xtables/connlabel.conf': '127 lanrith-identity\n'} if access_backend == 'tun' else {}),
         'etc/router-policy-agent/runtime/runtime.json': canonical(contract).decode(),
         # nft sends the complete immutable schema as one atomic transaction and
         # the helper inspects the complete listing. Bound both directions to the

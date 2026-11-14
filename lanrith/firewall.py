@@ -2,7 +2,8 @@
 
 import ipaddress
 
-from . import access, intent, service_plane, routing, nat46, nat64, metrics, snmp, discovery
+from . import access, intent, service_plane, routing, nat46, nat64, metrics, snmp, discovery, extension_network, tun_policy
+from .release import require
 
 
 ERRORS6 = 'destination-unreachable, packet-too-big, time-exceeded, parameter-problem'
@@ -12,6 +13,7 @@ POLICY_FORWARD_MARKS = (
     '0xd1000000', '0xd2000000', '0xd3000000', '0xd4000000', '0xd5000000', '0xd6000000',
     '0xf1000000', '0xf2000000', '0xf3000000', '0xf4000000', '0xf5000000', '0xf6000000',
 )
+NAT64_TARGET_MARKS = ('0xd7000000', '0xd8000000', '0xd9000000', '0xda000000')
 
 
 def sysctls():
@@ -46,7 +48,11 @@ def values(items):
     return '{ '+', '.join(dict.fromkeys(str(item) for item in items))+' }'
 
 
-def render(value):
+def render(value, *, extension_rules=None, access_backend='tun', retained_allocations=None):
+    # The default and all deployed builds use client-facing TUN enforcement.
+    # Explicit legacy rendering remains available for migration comparisons.
+    require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
+    tun = access_backend == 'tun'
     networks, interfaces, uplink = value['networks'], value['hardware']['interfaces'], value['uplink']
     wan = interfaces[uplink['interface']]['name']
     dhcp = uplink.get('ipv4', 'dhcp') == 'dhcp'
@@ -59,10 +65,11 @@ def render(value):
     if service_plane.attached(value):
         ipv6_names.append(plane['host_link'])
     ipv6_set = values('"'+name+'"' for name in ipv6_names)
-    translator_chains = [] if policy_managed else nat46.chains(value) + nat64.chains(value)
+    translator_chains = (tun_policy.definitions(value, retained_allocations) if tun else
+                         [] if policy_managed else nat46.chains(value) + nat64.chains(value))
     # The policy agent's NAT64 zone hook is fixed at -300. The immutable source
     # boundary must run first, with an unambiguous priority, in managed mode.
-    source_priority = -310 if policy_managed else -300
+    source_priority = -310 if policy_managed and not tun else -300
     lines = ['#!/usr/sbin/nft -f', 'flush ruleset', 'table inet lanrith {',
              *translator_chains,
              f' chain source_guard {{ type filter hook prerouting priority {source_priority}; policy accept;',
@@ -131,7 +138,8 @@ def render(value):
             lines.append(f'  iifname "{wan}" {spelling} saddr {values(owned)} drop')
     lines += [' }', ' chain input { type filter hook input priority filter; policy drop;',
               '  iifname "lo" accept',
-              *[f'  iifname "{item["interface"]}" drop' for item in nat64.components(value)],
+              *[f'  iifname "{name}" drop' for name in
+                (intent.translations(value) if tun else [item['interface'] for item in nat64.components(value)])],
               '  ct state invalid drop', *snmp.input_rules(value), '  ct state established,related accept']
     if ipv6_names:
         lines.append(f'  iifname {ipv6_set} meta l4proto ipv6-icmp icmpv6 type {{ {ERRORS6} }} accept')
@@ -145,6 +153,7 @@ def render(value):
                      'icmpv6 type nd-router-advert icmpv6 code 0 accept')
     lines += metrics.backend_rule(value) + discovery.firewall_rules(value, 'input')
     lines += routing.control_rules(value, 'input')
+    lines += extension_network.input_rules(extension_rules)
     for key, network in networks.items():
         name = network['name']
         for family, spelling in ((4, 'ip'), (6, 'ip6')):
@@ -172,17 +181,24 @@ def render(value):
     for network in networks.values():
         if not network.get('forwarding', True):
             lines += [f'  iifname "{network["name"]}" drop', f'  oifname "{network["name"]}" drop']
+    if tun and value.get('routing', {}).get('asymmetric_replies'):
+        lines.append('  jump tp_asymmetric')
     lines.append('  ct state invalid,untracked drop')
     lines += core_forward(value, plane)
     translators = list(intent.translations(value))
     if len(translators) > 1:
         names = values('"'+name+'"' for name in translators)
         lines.append(f'  iifname {names} oifname {names} drop')
-    if policy_managed:
+    if tun:
+        lines += tun_policy.forward(value)
+    elif policy_managed:
         # These marks are produced only after the helper's early checks. Its
         # later confirmation and physical-egress hooks still revalidate the
         # exact tuple, epoch, source ownership, and translated geometry.
-        lines.append('  meta mark & 0xff000000 '+values(POLICY_FORWARD_MARKS)+' accept')
+        marks = POLICY_FORWARD_MARKS
+        if 'nat64' in translators:
+            marks += NAT64_TARGET_MARKS
+        lines.append('  meta mark & 0xff000000 '+values(marks)+' accept')
     else:
         lines += nat46.forward(value) + nat64.forward(value)
         if 'rules' in value['access'] or 'default' in value['access']:
@@ -195,9 +211,11 @@ def render(value):
             ports = values(sorted(set(rule['ports'])))
             lines.append(f'  iifname "{networks[rule["from"]]["name"]}" oifname "{networks[rule["to"]]["name"]}" '
                          f'{rule["protocol"]} dport {ports} accept')
-    translation_errors = [] if policy_managed else nat46.local_errors(value) + nat64.local_errors(value)
+    translation_errors = [] if tun or policy_managed else nat46.local_errors(value) + nat64.local_errors(value)
     lines += [' }', ' chain output { type filter hook output priority filter; policy drop;',
-              '  oifname "lo" accept', *translation_errors, '  ct state invalid drop',
+              '  oifname "lo" accept',
+              *(['  jump extension_output'] if extension_rules and any(extension_rules.values()) else []),
+              *translation_errors, '  ct state invalid drop',
               *snmp.output_rules(value), '  ct state established,related accept']
     declared = values('"'+name+'"' for name in [network['name'] for network in networks.values()]+[wan])
     lines.append(f'  oifname {declared} icmp type {{ destination-unreachable, time-exceeded, parameter-problem }} accept')
@@ -211,6 +229,8 @@ def render(value):
         lines.append(f'  oifname "{wan}" ip6 hoplimit 255 icmpv6 type nd-router-solicit icmpv6 code 0 accept')
     lines += routing.control_rules(value, 'output')
     lines += discovery.firewall_rules(value, 'output')
+    from .directory_config import output_rules as directory_output
+    lines += directory_output(value)
     for network in networks.values():
         if network.get('ra'):
             lines.append(f'  oifname "{network["name"]}" ip6 saddr fe80::/10 ip6 hoplimit 255 '
@@ -218,7 +238,7 @@ def render(value):
         if 'dhcp4' in network:
             lines.append(f'  oifname "{network["name"]}" ip saddr {values(address.ip for address in addresses(network, 4))} '
                          f'ip daddr {values(["255.255.255.255", *prefixes(network, 4)])} udp sport 67 udp dport 68 accept')
-    lines += [' }', '}', 'table ip lanrith_nat {',
+    lines += [' }', *extension_network.output_chain(extension_rules), '}', 'table ip lanrith_nat {',
               ' chain postrouting { type nat hook postrouting priority srcnat; policy accept;']
     if plane['endpoints'] and uplink.get('ipv4', 'dhcp') != 'disabled':
         sources = [a for addresses in plane['endpoints'].values() for a in addresses if ':' not in a]

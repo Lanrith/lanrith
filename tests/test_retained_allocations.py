@@ -10,7 +10,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 import yaml
 
-from lanrith import build, cli, config
+from lanrith import build, cli, config, tun_policy
 from lanrith.release import ReleaseError
 from test_intent import minimal
 
@@ -34,7 +34,11 @@ class RetainedAllocationTests(unittest.TestCase):
         self.assertEqual(manifest['source_allocations']['active'],
                          {'fd42:1234:5678:10::84': '10.255.223.132'})
         self.assertIn('map 10.255.223.133 fd42:1234:5678:10::85', files['etc/tayga-nat64-internal.conf'])
-        self.assertEqual(files['etc/nftables.conf'], config.render(value)['etc/nftables.conf'])
+        # Retained aliases change guarded transit data, never the access clauses.
+        normalized = config.normalize(value)
+        self.assertEqual(tun_policy.compile(normalized, retained)['rules'],
+                         tun_policy.compile(normalized)['rules'])
+        self.assertNotIn('10.255.223.133 } ct mark', files['etc/nftables.conf'])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             base = root/'base.tar'

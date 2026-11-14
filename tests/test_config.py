@@ -38,7 +38,9 @@ class ConfigTests(unittest.TestCase):
         value = config.load(ROOT / 'examples/segmented.yaml')
         value['access']['rules'] += [{'action': 'allow', 'from': 'home', 'to': 'guest', 'protocol': 'tcp', 'ports': [443]}]
         firewall = config.render(value)['etc/nftables.conf']
-        self.assertIn('iifname "lan.10" oifname "lan.20" meta l4proto tcp tcp dport { 443 }', firewall)
+        self.assertIn('"lan.10" . 0.0.0.0/0', firewall)
+        self.assertIn('"lan.20" . 0.0.0.0/0', firewall)
+        self.assertIn('meta l4proto tcp tcp dport { 443 } goto tp_inherit', firewall)
         self.assertNotIn('tcp dport { 80', firewall)
 
     def test_duplicate_yaml_unknown_fields_and_recursive_yaml_are_rejected(self):

@@ -223,6 +223,7 @@ def trigger(digest, installed_path=INSTALLED):
 def complete(installed_path=INSTALLED, *, deadline_seconds=180):
     """Accept a healthy boot, or reboot a failed candidate to its old default."""
     from . import runtime
+    from .credential_operation import wait_ready
 
     value = policy(installed_path)
     require(type(deadline_seconds) is int and 30 <= deadline_seconds <= 600, 'Invalid readiness deadline.')
@@ -236,8 +237,12 @@ def complete(installed_path=INSTALLED, *, deadline_seconds=180):
             # Preserve the old root-only manual staging interface. Only an
             # operator trigger authorizes automatic completion of later images.
             return
+        # The provisioning socket uses a separate lock and remains usable
+        # while this observer waits. Its failure never suppresses fallback.
+        provisioned = (False if candidate and record['error'] == 'admission-or-staging-failed'
+                       else wait_ready(value))
         deadline = time.monotonic()+deadline_seconds
-        while not (candidate and record['error'] == 'admission-or-staging-failed'):
+        while provisioned:
             try:
                 # accept() rechecks health and blessings and verifies the durable
                 # boot default. Merely reaching multi-user is never acceptance.

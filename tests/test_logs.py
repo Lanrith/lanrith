@@ -42,6 +42,12 @@ class LogsContractTests(unittest.TestCase):
         self.assertIn('LoadCredential=log_ingest:/var/lib/lanrith/credentials/log_ingest', unit)
         self.assertIn('NetworkNamespacePath=/run/netns/lanrith-services', unit)
         self.assertIn('ExecStartPre=+/usr/lib/lanrith/logs-runtime stage', unit)
+        self.assertIn('ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\n', unit)
+        self.assertIn('Type=notify\nNotifyAccess=main\n', unit)
+        self.assertIn('WatchdogSec=30s\n', unit)
+        self.assertIn('StateDirectory=lanrith/alloy\n', unit)
+        self.assertIn('BindPaths=/var/lib/lanrith/alloy:/var/lib/lanrith-alloy\n', unit)
+        self.assertIn('WorkingDirectory=/var/lib/lanrith-alloy\n', unit)
         heartbeat = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.service']
         timer = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer']
         self.assertIn('User=alloy\n', heartbeat)
@@ -54,6 +60,8 @@ class LogsContractTests(unittest.TestCase):
         self.assertIn('loki.process "router_redaction"', alloy)
         self.assertLess(alloy.index('loki.process "router_redaction"'), alloy.index('otelcol.storage.file "router"'))
         self.assertIn('queue_size        = 67108864', alloy)
+        self.assertIn('min_version = "1.2"', alloy)
+        self.assertIn('regex         = "alloy\\\\.service"\n    action        = "drop"', alloy)
         self.assertNotIn('password = "', alloy)
         self.assertFalse(any(path.endswith(('.yaml', '.yml')) for path in files))
 
@@ -66,6 +74,8 @@ class LogsContractTests(unittest.TestCase):
             'masquerade': False, 'destination_interface': 'lan.1',
         })
         self.assertIn('tcp dport 443 accept', files['etc/lanrith/services.nft'])
+        self.assertIn('meta skuid "alloy" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp dport 12345 accept',
+                      files['etc/lanrith/services.nft'])
         self.assertIn('oifname "lan.1"', files['etc/nftables.conf'])
         plane = json.loads(files['usr/share/lanrith/service-plane.json'])
         self.assertIn({'to': 'fd42:1234:5678:10::31/128', 'via': 'fd42:1234:5678:fe02::1',
@@ -91,6 +101,7 @@ class LogsContractTests(unittest.TestCase):
         self.assertNotIn('usr/share/lanrith/logs.json', files)
         self.assertNotIn('etc/alloy/config.alloy', files)
         self.assertNotIn('usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer', files)
+        self.assertNotIn('12345', files['etc/lanrith/services.nft'])
         for endpoint in ('https://logs.example.test/otlp',
                          'https://[fd42:1234:5678:99::31]/otlp',
                          'https://[fd42:1234:5678:10::31]:8443/otlp'):

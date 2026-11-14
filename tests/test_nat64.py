@@ -50,7 +50,7 @@ class Nat64Tests(unittest.TestCase):
 
     def test_first_match_is_terminal_and_old_proofs_do_not_admit_an_original_packet(self):
         value = config.normalize(declaration())
-        text = firewall.render(value)
+        text = firewall.render(value, access_backend='legacy')
         self.assertIn('goto n64_first_a0', text)
         self.assertNotIn('_eligible', text)
         self.assertNotIn('meta mark', text)

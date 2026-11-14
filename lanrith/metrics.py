@@ -64,15 +64,56 @@ def manifest(value):
             'source': intent.service_addresses(value, 'metrics')[0]}
 
 
+def router_manifest(value):
+    from .runtime_plan import required_units
+    return {'schema': 1, 'units': required_units(value),
+            'interfaces': sorted({item['name'] for item in value['hardware']['interfaces'].values()
+                                  if item.get('owner') != 'vpp'} |
+                                 {item['name'] for item in value['networks'].values() if 'namespace' not in item}),
+            'clients': [{'network': name, 'interface': item['name']} for name, item in value['networks'].items()
+                        if item.get('forwarding', True) and 'namespace' not in item],
+            'ntp': value['services']['ntp']['enabled'],
+            'logs': value.get('observability', {}).get('logs', {}).get('enabled', False),
+            'directory': value.get('identity', {}).get('policy', {}).get('enabled', False)}
+
+
 def render(value):
     if not active(value):
         return {}
     settings = manifest(value)
     sources(value)
+    groups = []
+    if value.get('observability', {}).get('logs', {}).get('enabled'):
+        groups.append('alloy')
+    if value.get('identity', {}).get('policy', {}).get('enabled'):
+        groups.append('lanrith-directory-health')
+    if value['services']['ntp']['enabled']:
+        groups.append('_chrony')
     return {
+        **(ntp_observer() if value['services']['ntp']['enabled'] else {}),
         'usr/share/lanrith/metrics.json': canonical(settings).decode(),
+        'usr/share/lanrith/router-metrics.json': canonical(router_manifest(value)).decode(),
         'usr/lib/sysusers.d/80-lanrith-metrics.conf': 'u lanrith-metrics - "Metrics proxy" /\n',
-        'usr/lib/tmpfiles.d/80-lanrith-metrics.conf': 'd /var/lib/node_exporter/textfile_collector 0755 prometheus prometheus -\n',
+        'usr/lib/tmpfiles.d/80-lanrith-metrics.conf': 'd /var/lib/node_exporter/textfile_collector 0755 root root -\n',
+        'usr/lib/systemd/system/lanrith-router-metrics.service': (
+            '[Unit]\nDescription=Collect bounded router health in the host namespace\n'
+            'Requires=var.mount\nAfter=var.mount nftables.service systemd-networkd.service\n'
+            '[Service]\nType=oneshot\nUser=root\nGroup=root\nUMask=0022\n'
+            + ('SupplementaryGroups='+' '.join(groups)+'\n' if groups else '') +
+            'ExecStart=/usr/lib/lanrith/router-metrics\n'
+            'ExecStopPost=/usr/lib/lanrith/router-metrics --on-stop\n'
+            'TimeoutStartSec=25s\nTimeoutStopSec=2s\nKillMode=control-group\n'
+            'CapabilityBoundingSet=CAP_NET_ADMIN\nNoNewPrivileges=yes\n'
+            'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
+            'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            'ReadWritePaths=/var/lib/node_exporter/textfile_collector\n'
+            'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\n'
+            'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
+            'MemoryMax=64M\nMemorySwapMax=0\nTasksMax=16\nLimitNOFILE=128\n'),
+        'usr/lib/systemd/system/lanrith-router-metrics.timer': (
+            '[Unit]\nDescription=Refresh bounded router health\n\n'
+            '[Timer]\nOnBootSec=15s\nOnUnitActiveSec=30s\nRandomizedDelaySec=5s\nAccuracySec=1s\n'
+            'Unit=lanrith-router-metrics.service\n\n[Install]\nWantedBy=timers.target\n'),
         'usr/lib/systemd/system/prometheus-node-exporter.service': (
             '[Unit]\nDescription=Collect host network and system metrics\n'
             'PartOf=lanrith-metrics.service\nRequires=lanrith-services.service nftables.service\n'
@@ -100,6 +141,34 @@ def render(value):
             'MemoryMax=64M\nTasksMax=8\nLimitNOFILE=128\n'
             'Restart=on-failure\nRestartSec=2s\n'
             '[Install]\nWantedBy=multi-user.target\n'),
+    }
+
+
+def ntp_observer():
+    return {
+        'usr/lib/systemd/system/lanrith-ntp-health.service': (
+            '[Unit]\nDescription=Observe Chrony without exposing its control socket\n'
+            'Requires=lanrith-services.service\nBindsTo=lanrith-services.service\n'
+            'After=lanrith-services.service chrony.service\n'
+            '[Service]\nType=oneshot\nUser=_chrony\nGroup=_chrony\n'
+            'NetworkNamespacePath=/run/netns/lanrith-services\n'
+            'ExecStart=/usr/lib/lanrith/ntp-health\n'
+            'RuntimeDirectory=lanrith-ntp-health\nRuntimeDirectoryMode=0750\n'
+            'RuntimeDirectoryPreserve=yes\nUMask=0027\nTimeoutStartSec=5s\nTimeoutStopSec=2s\n'
+            'NoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nProtectHome=yes\n'
+            'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
+            'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            # chronyc creates its reply socket beside the daemon socket. Only
+            # the existing service identity may write this private directory.
+            'ReadWritePaths=/run/lanrith-ntp-health -/run/chrony\n'
+            'InaccessiblePaths=-/run/router-policy-reader -/run/router-policy-ipc -/var/lib/lanrith\n'
+            'RestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\n'
+            'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
+            'MemoryMax=64M\nMemorySwapMax=0\nTasksMax=8\nLimitNOFILE=64\n'),
+        'usr/lib/systemd/system/lanrith-ntp-health.timer': (
+            '[Unit]\nDescription=Refresh isolated NTP observations\n'
+            '[Timer]\nOnBootSec=10s\nOnUnitActiveSec=30s\nRandomizedDelaySec=5s\nAccuracySec=1s\n'
+            'Unit=lanrith-ntp-health.service\n[Install]\nWantedBy=timers.target\n'),
     }
 
 

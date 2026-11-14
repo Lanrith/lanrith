@@ -111,11 +111,34 @@ def configure(manifest, operation):
         raise
 
 
+def reset_connections(manifest):
+    """Retire only this component's two connection families during restart.
+
+    Native TAYGA allocation state is untouched. Both original tuple directions
+    are covered, so callbacks and SNAT replies cannot retain an earlier process's
+    connection state. No global conntrack flush or allocation observation occurs.
+    """
+    validate(manifest)
+    for prefix in (manifest['pool'], manifest['prefix']):
+        family = 'ipv4' if ip.ip_network(prefix).version == 4 else 'ipv6'
+        for field in ('--orig-src', '--orig-dst'):
+            result = subprocess.run(['/usr/sbin/conntrack', '-D', '-f', family, field, prefix],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=2,
+                env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
+            empty = (result.returncode == 1 and
+                     result.stderr.strip().endswith(': 0 flow entries have been deleted.'))
+            require(result.returncode == 0 or empty, 'Translator connection retirement failed.')
+
+
 def main():
-    require(len(sys.argv) in (2, 3) and sys.argv[1] in ('start', 'stop'), 'Expected start or stop.')
+    require(len(sys.argv) in (2, 3) and sys.argv[1] in ('start', 'stop', 'reset'), 'Expected start, stop or reset.')
     name = sys.argv[2] if len(sys.argv) == 3 else 'nat46'
     require(name in ('nat46', 'nat64', 'nat64-internal'), 'Unknown translator.')
-    configure(json.loads(read(Path('/usr/share/lanrith', name+'.json'), 1024*1024)), sys.argv[1])
+    manifest = json.loads(read(Path('/usr/share/lanrith', name+'.json'), 1024*1024))
+    if sys.argv[1] == 'reset':
+        reset_connections(manifest)
+    else:
+        configure(manifest, sys.argv[1])
 
 
 if __name__ == '__main__':

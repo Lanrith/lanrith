@@ -80,7 +80,7 @@ def main(arguments=None):
     try:
         target_facts = None
         retained_allocations = None
-        if args.command in ('validate', 'render', 'build'):
+        if args.command in ('validate', 'render', 'build', 'build-recovery'):
             release.require((args.hardware_facts is None) == (args.hardware_facts_sha256 is None),
                             'Hardware facts require an explicit reviewed digest.')
             if args.hardware_facts is not None:

@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lanrith import config, firewall, nat46, nat64, nat64_allocations, nat64_packets, nat64_runtime, translation, translation_runtime
 from lanrith.release import ReleaseError
-from packets import RAW, SERVER, ns, probe, run
+from packets import RAW, SERVER, ipv6_ready, ns, probe, run
 from test_intent import minimal
 
 
@@ -172,6 +172,8 @@ def main():
             while not all((root/(name+'.ready')).exists() for name in ('wan', 'servers')) and time.monotonic() < deadline:
                 time.sleep(.1)
             assert all((root/(name+'.ready')).exists() for name in ('wan', 'servers'))
+            ipv6_ready([(namespace, interface) for name in ('lan', 'guest', 'wan', 'servers')
+                        for namespace, interface in ((None, name), (name+'-test', 'eth0'))])
             if combined:
                 for entry in other[0]['mappings'].values():
                     for protocol in ('tcp', 'udp'):
@@ -233,8 +235,10 @@ raise AssertionError('Expected a correlated NAT64 port error')
                 runtime = Path('/run/lanrith-'+manifest['interface'])
                 observation = json.loads((runtime/'status.json').read_bytes())
                 self_digest = hashlib.sha256((runtime/'tayga.conf').read_bytes()).hexdigest()
-                assert set(observation) == {'pid', 'start_ticks', 'monotonic', 'configuration_sha256'}
+                assert set(observation) == {'pid', 'start_ticks', 'monotonic', 'configuration_sha256',
+                                            'executable_device', 'executable_inode'}
                 assert observation['configuration_sha256'] == self_digest
+                assert 0 <= float(Path('/proc/uptime').read_text().split()[0])-observation['monotonic'] < 4
             checks.append('the allocator owns retained state; both translator children have no effective capabilities and verified readiness')
             before = [nat64_allocations.load(manifest, Path(manifest['state_directory'])) for manifest in manifests]
             for index, manifest in enumerate(manifests):

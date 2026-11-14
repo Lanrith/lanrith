@@ -1,0 +1,112 @@
+{
+  "advisory": {
+    "affected_range_reported": "<11.0.1",
+    "cve": "CVE-2026-118764",
+    "id": "GHSA-g3hv-75wg-m249",
+    "patched": "11.0.1",
+    "source": "https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249",
+    "upstream_fix": "https://github.com/isaacs/minimatch/commit/77a0f5c"
+  },
+  "alloy_source": {
+    "commit": "95e12cf8961fabc9db6858f7e79bde5c814a07a0",
+    "version": "1.20.1"
+  },
+  "audit_gate_changed": false,
+  "automatic_approval_enabled": false,
+  "base_image_qualified": false,
+  "complete_package_qualified": false,
+  "correction": "Pin every minimatch instance to 11.0.1, regenerate the integrity-bound lock and bump Alloy package revision to lanrith5.",
+  "created_at": "2026-10-31T05:06:45.609468+00:00",
+  "direct_dependencies_scripts_engines_unchanged": true,
+  "install_scripts_enabled": false,
+  "new_transitive_dependency": {
+    "name": "@isaacs/nonrecursive-glob-match",
+    "reason": "Required by minimatch 11; no further production dependencies; upstream legal notice retained",
+    "version": "1.0.3"
+  },
+  "package_version": "1.20.1-1+lanrith5",
+  "problem": "The complete npm audit rejected minimatch 3.1.5 and 10.2.6 in the pinned UI build graph.",
+  "qualification": {
+    "complete_worker_javascript_inventory": "pass",
+    "eslint": "pass",
+    "locked_modules": 376,
+    "log_sha256": {
+      "baseline-tests": "754bd15c6f8a28ee80e1373b495f882f513b2208e1c73ae85e5d9a1d086e4b05",
+      "build": "90ffc8e06446411e17a154b622d5027d5321a1a1a000552198461e2e774b3325",
+      "css-qualified-tests-current": "0c2f8752fe9c1083f84c9c558b1cbd0a258d596f21e8a1d0f6917ea2aa7edc3a",
+      "dependency-resolve-reviewed": "ab73a7f9c59c39b5af8021726222c971a0ff2fa560131772477d82e3f78d6ddb",
+      "lint": "fada64cbc66e645697943c393d466e7df147e45ad8d406c44b9c3b5bf505362f",
+      "tests": "0703301c5d19330bf68d41ec5c853b2a9cbcbf745856d48a38f5ed2826059a2e"
+    },
+    "notices_sha256": "e34b6fde08bfe2ec77cd016425153c1e9cb67c83ca2ffe6988ec366330f5dd33",
+    "npm_audit": {
+      "critical": 0,
+      "high": 0,
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "total": 0
+    },
+    "npm_audit_sha256": "69d221b6cd5f46d2b2382bc9d53e31a94ccef613d22c1c289606a2491e9d6b2f",
+    "production_ui_build": "pass",
+    "temporary_test_config": "import { mergeConfig, type UserConfig } from 'vite';\nimport { defineConfig } from 'vitest/config';\n\nimport upstream from './vite.config';\n\n// Keep the pinned upstream cases and deadlines; process dependency CSS with Vite.\nexport default defineConfig((environment): UserConfig =>\n  mergeConfig(upstream(environment), {\n    test: {\n      server: {\n        deps: {\n          inline: ['@grafana/alloy-pipeline-graph', '@xyflow/react'],\n        },\n      },\n    },\n  }),\n);\n",
+    "temporary_test_config_sha256": "37b4fbd670aa42c2f857da21a18f91e91a688b911b742941cc1b405e0aecc721",
+    "temporary_test_config_strict_types": "pass",
+    "test_environment_note": "The prior lock reproduces the CSS loader failure. A temporary configuration merges the pinned upstream configuration and inlines the dependency CSS import chain documented by Vitest.",
+    "test_environment_reference": "https://vitest.dev/guide/environment",
+    "ui_lock_sha256": "eb293eaf3ac29285c3b969f0f68e01cac8881d217920206ebd5f491ea0571d2d",
+    "ui_package_sha256": "e91275de30ed66a003b6efd9a919fc105de49d5b8bc2d3e681d39004f6aec1d2",
+    "upstream_ui_cases": {
+      "passed": 18,
+      "ran": 18,
+      "skipped": 0,
+      "timeout_changed": false
+    }
+  },
+  "release_admitted": false,
+  "required_followup": [
+    "Review the manual major/transitive graph change and new legal notices.",
+    "Run fresh complete package and native filesystem qualification on the committed head.",
+    "Retain all vulnerability, source, signature and independent release-admission gates."
+  ],
+  "resolver_exception_basis": "Explicit security-fixed source resolution for the two reviewed names; no global age, registry or install-script change. Ordinary npm ci with the original project policy succeeds without an age exception.",
+  "resolver_only_age_exceptions": [
+    "minimatch",
+    "@isaacs/nonrecursive-glob-match"
+  ],
+  "reviewed_changed_packages": [
+    {
+      "license": "BlueOak-1.0.0",
+      "name": "minimatch",
+      "registry_integrity_matches": true,
+      "version": "11.0.1"
+    },
+    {
+      "license": "BlueOak-1.0.0",
+      "name": "@isaacs/nonrecursive-glob-match",
+      "registry_integrity_matches": true,
+      "version": "1.0.3"
+    },
+    {
+      "license": "MIT",
+      "name": "brace-expansion",
+      "registry_integrity_matches": true,
+      "version": "5.0.12"
+    },
+    {
+      "license": "MIT",
+      "name": "balanced-match",
+      "registry_integrity_matches": true,
+      "version": "4.0.4"
+    }
+  ],
+  "schema": 1,
+  "scope": "Alloy UI dependency source remediation; complete Alloy/base qualification remains pending",
+  "source_parent_commit": "bb13a34bedfd0278ebcbee79328980318f8bc516",
+  "toolchain": {
+    "image": "docker.io/library/node@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a",
+    "node": "24.22.1",
+    "npm": "11.19.1"
+  },
+  "upstream_npmrc_unchanged": true
+}

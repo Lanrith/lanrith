@@ -15,7 +15,7 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import build, config, service_runtime
+from lanrith import build, config, service_runtime, tun_policy
 from test_intent import minimal
 
 
@@ -144,6 +144,7 @@ else:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gua', action='store_true')
+    parser.add_argument('--access-backend', choices=('legacy', 'tun'), default='legacy')
     args = parser.parse_args()
     assert os.geteuid() == 0
     assert {item['ifname'] for item in json.loads(run('ip', '-j', 'link').stdout)} == {'lo'}, \
@@ -162,7 +163,7 @@ def main():
     value['hardware']['interfaces']['guest'] = {'match': {'mac': '02:00:00:00:02:01'}}
     value['networks']['guest'] = {'interface': 'guest', 'ipv4': '172.20.0.0/24', 'dns': False, 'ntp': False}
     value = config.normalize(value)
-    files = config.render(value)
+    files = config.render(value, access_backend=args.access_backend)
     processes = []
     checks = []
     with tempfile.TemporaryDirectory(prefix='phase-b-native.') as temporary:
@@ -174,7 +175,7 @@ def main():
             path.write_text(text)
         base = root/'base.tar'
         base.write_bytes(b'synthetic-assembly-input')
-        build.assembly(value, base, root/'assembly', version='0.1.0', sequence=9)
+        build.assembly(value, base, root/'assembly', version='0.1.0', sequence=9, access_backend=args.access_backend)
         compiled = root/'assembly/mkosi.extra'
         Path('/etc/lanrith').mkdir(exist_ok=True)
         Path('/etc/lanrith/services.nft').write_text(files['etc/lanrith/services.nft'])
@@ -202,6 +203,10 @@ def main():
         assert run('sysctl', '-n', 'net.ipv6.conf.all.forwarding').stdout.strip() == '1'
         run('nft', '--check', '-f', str(root/'etc/nftables.conf'))
         run('nft', '-f', str(root/'etc/nftables.conf'))
+        if args.access_backend == 'tun':
+            guards = root/'identity-egress.nft'
+            guards.write_text(tun_policy.identity_egress(value))
+            run('nft', '-f', str(guards))
         plane = json.loads(files['usr/share/lanrith/service-plane.json'])
         started = False
         try:
@@ -355,7 +360,8 @@ assert len(response)>=48 and response[0]&7==4
                 process.communicate(timeout=5)
             if started:
                 service_runtime.stop(plane)
-    print(json.dumps({'result': 'pass', 'checks': checks, 'image_boot_qualified': False}, indent=2))
+    print(json.dumps({'result': 'pass', 'checks': checks, 'access_backend': args.access_backend,
+                     'image_boot_qualified': False}, indent=2))
 
 
 if __name__ == '__main__':
