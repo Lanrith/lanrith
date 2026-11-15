@@ -243,6 +243,15 @@ offline before boot acceptance. Serial login is disabled unless enabled with a
 private provisioning hash and a selected console. Kernel and journal output
 must not disclose secrets on that console.
 
+Factory prompts are available on the monitor and the serial ports selected by
+`hardware.boot.console`, `hardware.boot.recovery_console`, or enabled
+`administration.serial`. Serial provisioning uses 115200 8N1 unless
+`hardware.boot.console` supplies a baud rate for that port. A build with monitor
+boot output and serial recovery therefore supports installation through either.
+The builder records these devices in the signed runtime manifest; no owner YAML
+is needed on the installed system. Selecting a console for initial key enrollment
+does not change the configured authenticated recovery menu or enable serial login.
+
 `administration.root_access` defaults to `enabled` for schema-1 compatibility.
 Set it to `disabled` to build an image with no human UID-0 login or elevation
 path. The administrator can still use key-authenticated SSH for unprivileged

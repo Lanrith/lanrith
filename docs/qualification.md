@@ -210,6 +210,15 @@ serial transcripts and test credentials are not release artifacts. Adding
 this runner does not establish a passing result: the actual candidate must
 complete it before production admission can be enabled.
 
+`tests/test_factory_console.py` uses real pseudo-terminals to check both input
+choices, ownership through destructive confirmation, absent devices, stale input,
+disconnects and private-output isolation. `tests/qualify_factory_consoles_vm.py`
+adds a diskless, network-disabled QEMU drill with actual Linux VGA/keyboard and
+UART drivers. It selects each console, checks that choices appear on both, and
+confirms that synthetic private material appears only on the selected console.
+That drill tests console behavior; the signed factory profiles above still
+qualify media verification, encryption and storage writes.
+
 The root boundary and its residual risk are defined in `security-model.md`.
 Native qualification's `unprivileged-control-boundary` check exercises the
 administrator without a forwarded credential and all installed non-root

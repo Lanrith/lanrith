@@ -72,6 +72,9 @@ def main():
         with tempfile.TemporaryDirectory(prefix='lanrith-media.') as temporary:
             definition=Path(temporary)/'90-media.conf'
             size=sum(a['size'] for a in manifest['artifacts'])+128*1024*1024
+            # repart rounds minimum sizes up and maximum sizes down. Give both
+            # bounds the same aligned value even when signed files end mid-block.
+            size=((size+1024*1024-1)//(1024*1024))*(1024*1024)
             definition.write_text('[Partition]\nType=linux-generic\nLabel=lanrith-factory-media\nFormat=ext4\n'
                                   f'SizeMinBytes={size}\nSizeMaxBytes={size}\nCopyFiles={root}:/release\n')
             run('systemd-repart','--definitions='+temporary,'--empty=allow','--dry-run=no','--seed=random',target)

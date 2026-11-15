@@ -207,6 +207,18 @@ disk and mounted/in-use devices, and requires the full stable target identity
 in the destructive confirmation. It reads the copied image back before
 power-off. Never substitute an ordinary raw writer for those checks.
 
+The installer displays disk choices, confirmation prompts and progress on the
+connected monitor and configured serial consoles. Either keyboard can select a
+disk. The console that submits the first answer owns the remaining prompts;
+the other consoles display status but cannot confirm erasure. Disconnecting the
+active console stops the operation instead of moving its confirmation elsewhere.
+An unavailable serial port does not prevent installation through the monitor.
+
+First-boot recovery-key enrollment also offers both consoles. Press Enter on
+the console where you will record the key. Recovery keys and encryption
+passphrases use only that console and are never copied to the other screen or
+the journal. Disable recording on the chosen console before continuing.
+
 Slot and encrypted state provisioning must finish before the initrd switches
 to the installed root. A candidate failure attempts authenticated fallback;
 if that cannot pass, the initrd holds for serial or independent media recovery.

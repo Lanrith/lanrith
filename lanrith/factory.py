@@ -16,6 +16,7 @@ import tempfile
 
 from .release import canonical, file_record, read, require, verify, ReleaseError
 from .update import GUIDS, command, geometry, root_disk
+from .factory_console import Consoles, require_physical_input
 
 
 VAR_GUID = '4d21b016-b534-45c2-a9fb-5c16e091fd2d'
@@ -68,7 +69,7 @@ def eligible(value, boot_disk, minimum):
     return True
 
 
-def target(installed, boot_disk):
+def target(installed, boot_disk, console):
     devices = json.loads(command(['lsblk', '--json', '--bytes', '--paths', '--output',
                                  'NAME,TYPE,SIZE,RO,LOG-SEC,MOUNTPOINTS,MODEL,SERIAL']))['blockdevices']
     allowed = {device['name']: device for device in devices if eligible(device, boot_disk, minimum_size(installed))}
@@ -80,15 +81,16 @@ def target(installed, boot_disk):
     selected = installed['storage'].get('target')
     if not selected:
         require(identities, 'No eligible stable disk identity is available.')
-        print('Eligible disk identities (all contents on the selected disk will be erased):')
+        console.write('Eligible disk identities (all contents on the selected disk will be erased):\n')
         for identity in identities:
             device = allowed[identities[identity]]
-            print(identity, device.get('model') or '', device['size'])
-        selected = input('Enter the complete /dev/disk/by-id identity: ').strip()
+            console.write(f'{identity} {device.get("model") or ""} {device["size"]} bytes\n')
+        selected = console.input('Enter the complete /dev/disk/by-id identity: ')
     require(selected in identities, 'The selected disk is not eligible for factory installation.')
     device = identities[selected]
     confirmation = 'ERASE-AND-INSTALL '+selected
-    require(input('Type '+confirmation+' to continue: ').strip() == confirmation,
+    console.write('Selected disk: '+selected+'. All its contents will be erased.\n')
+    require(console.input('Type '+confirmation+' to continue: ') == confirmation,
             'Destructive installation was not explicitly confirmed.')
     # Resolve and inspect again after operator input; never trust a stale selection.
     require(str(Path(selected).resolve()) == device, 'Selected disk identity changed.')
@@ -197,12 +199,18 @@ def initialize(installed, *, root='/'):
 
 
 def recovery(installed, *, root='/'):
+    require(os.geteuid() == 0, 'Recovery enrollment requires root.')
+    with Consoles(installed) as console:
+        console.write('An offline state recovery key must be recorded before startup can finish.\n')
+        console.private(lambda: enroll_recovery(installed, root=root))
+
+
+def enroll_recovery(installed, *, root='/'):
     if 'tpm_policy' in installed:
         from .early_unlock import in_initrd
         in_initrd()
         require(root == '/sysroot', 'Measured recovery enrollment requires the verified initrd root.')
-    require(os.geteuid() == 0 and os.ttyname(sys.stdin.fileno()) ==
-            '/dev/'+installed['boot']['recovery_console'], 'Recovery requires the selected physical console.')
+    require_physical_input(installed)
     device, tokens = initialize(installed, root=root)
     marker = Path(root)/installed['state_directory'].lstrip('/')/'recovery-key-enrolled'
     require(not marker.exists(), 'Recovery enrollment is already complete.')
@@ -227,7 +235,20 @@ def recovery(installed, *, root='/'):
         os.close(descriptor)
 
 
-def repartition(installed, disk, *, installed_root):
+def manual_repartition(installed, disk, arguments):
+    require_physical_input(installed)
+    first = getpass.getpass('State encryption passphrase (at least 24 characters): ')
+    require(len(first) >= 24 and first == getpass.getpass('Repeat state encryption passphrase: '),
+            'State encryption passphrases differ or are too short.')
+    with tempfile.TemporaryDirectory(prefix='lanrith-state.', dir='/run') as secret:
+        key = Path(secret)/'key'
+        key.write_text(first)
+        key.chmod(0o600)
+        del first
+        command([*arguments, '--key-file='+str(key), disk], timeout=600)
+
+
+def repartition(installed, disk, *, installed_root, console=None):
     """Create bounded slots/state only on the explicitly observed or selected disk."""
     definitions = '/sysroot/usr/lib/repart.d'
     arguments = ['systemd-repart', '--definitions='+definitions, '--empty=refuse', '--dry-run=no', '--offline=no',
@@ -235,17 +256,12 @@ def repartition(installed, disk, *, installed_root):
     if installed_root:
         arguments.append('--root=/sysroot')
     if installed['boot'].get('tpm', 'required') == 'disabled':
-        require(os.ttyname(sys.stdin.fileno()) == '/dev/'+installed['boot']['recovery_console'],
-                'Manual state encryption requires the selected physical console.')
-        first = getpass.getpass('State encryption passphrase (at least 24 characters): ')
-        require(len(first) >= 24 and first == getpass.getpass('Repeat state encryption passphrase: '),
-                'State encryption passphrases differ or are too short.')
-        with tempfile.TemporaryDirectory(prefix='lanrith-state.', dir='/run') as secret:
-            key = Path(secret)/'key'
-            key.write_text(first)
-            key.chmod(0o600)
-            del first
-            command([*arguments, '--key-file='+str(key), disk], timeout=600)
+        if console is None:
+            with Consoles(installed) as selected:
+                selected.private(lambda: manual_repartition(installed, disk, arguments),
+                                 prompt='Press Enter on this console to set the state encryption passphrase: ')
+        else:
+            console.private(lambda: manual_repartition(installed, disk, arguments))
     else:
         policy = installed.get('tpm_policy')
         if policy is None:
@@ -315,8 +331,14 @@ def provision():
             from .early_unlock import unlock
             unlock(installed, device)
         return
+    with Consoles(installed) as console:
+        install_media(installed, disk, active, media, console)
+
+
+def install_media(installed, disk, active, media, console):
     require(len(media) == 1 and media[0].get('pkname') == disk,
             'Factory payload must be on the single verified boot disk.')
+    console.write('Lanrith factory installer. Verifying the signed USB payload; no target disk has been changed.\n')
     with tempfile.TemporaryDirectory(prefix='lanrith-media.', dir='/run') as temporary:
         mount = Path(temporary)
         command(['mount', '-o', 'ro,noload,nodev,nosuid,noexec', media[0]['name'], str(mount)])
@@ -340,16 +362,18 @@ def provision():
                 require(any(row['number'] in active and row['type'].lower() == GUIDS[role] and row['uuid'] == partuuid
                             for row in rows), 'Media verified-root identity differs from the booted root.')
             raw = payload/next(item['name'] for item in manifest['artifacts'] if item['role'] == 'disk')
-            chosen = target(installed, disk)
+            chosen = target(installed, disk, console)
+            console.write('Writing the verified image to '+chosen+'. Do not remove power.\n')
             command(['dd', 'if='+str(raw), 'of='+chosen, 'bs=4M', 'conv=fsync', 'status=progress'], timeout=1800)
+            console.write('Image written. Reading back the target disk...\n')
             command(['cmp', '--bytes='+str(raw.stat().st_size), str(raw), chosen], timeout=1800)
             command(['sfdisk', '--relocate', 'gpt-bak-std', chosen])
             if installed['boot'].get('tpm', 'required') == 'disabled':
-                repartition(installed, chosen, installed_root=False)
+                repartition(installed, chosen, installed_root=False, console=console)
         finally:
             command(['umount', str(mount)])
     command(['sync'])
-    print('Installation read-back passed. Remove the factory medium after power-off.', flush=True)
+    console.write('Installation read-back passed. Remove the factory medium after power-off.\n')
     # The installer holds initrd-switch-root while awaiting confirmation. Ask
     # the manager to terminate processes and unmount filesystems directly,
     # without waiting for that unfinished initrd boot transaction to complete.

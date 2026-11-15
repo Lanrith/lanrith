@@ -121,6 +121,9 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                  'boot': value['hardware']['boot'], 'watchdog': value['hardware']['watchdog'],
                  'active_labels': {role: f'l_{sequence}_{role.replace("-", "_")}' for role in release.ROLES['update']
                                    if role != 'uki'}}
+    from .factory_console import allowed, specifications
+    installed['factory_consoles'] = specifications(value['hardware']['boot'], value['administration']['serial'])
+    allowed(installed)
     credential_manifest = overlay/'usr/share/lanrith/credentials.json'
     installed['credential_catalog_sha256'] = (hashlib.sha256(credential_manifest.read_bytes()).hexdigest()
                                                if credential_manifest.is_file() else None)
@@ -151,7 +154,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                         f'{value["administration"]["username"]} -\n')
     library = overlay / 'usr/lib/lanrith/lanrith'
     library.mkdir(parents=True)
-    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'hardware.py',
+    for module in ('__init__.py', 'release.py', 'update.py', 'runtime.py', 'factory.py', 'factory_console.py', 'hardware.py',
                    'service_runtime.py', 'routing_runtime.py', 'dns_runtime.py',
                    'dns_observations_runtime.py', 'dns_metadata.py', 'observation_spool.py',
                    'firewall_observations_runtime.py', 'firewall_metadata.py',
@@ -352,7 +355,6 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         path = overlay/'usr/lib/repart.d'/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    recovery_console = value['hardware']['boot']['recovery_console']
     (units/'lanrith-slot-initialization.service').write_text(
         '[Unit]\nDescription=Verify the installed A/B slot geometry\nRequires=var.mount\n'
         'After=systemd-repart.service var.mount\nBefore=lanrith-recovery-key.service\n'
@@ -363,8 +365,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         'After=var.mount lanrith-slot-initialization.service\nBefore=multi-user.target\n'
         'ConditionPathExists=!/var/lib/lanrith/recovery-key-enrolled\n'
         '\n[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-runtime recovery\n'
-        f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
-        'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n'
+        'StandardInput=null\nStandardOutput=journal+console\nStandardError=journal+console\n'
+        'TimeoutStartSec=infinity\n'
         '\n[Install]\nRequiredBy=multi-user.target\n')
     # The standard boot check runs after multi-user.target. Pull acceptance in
     # through the observer without ordering multi-user after its own completion
@@ -375,8 +377,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         path = units/'multi-user.target.requires'/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.symlink_to('/usr/lib/systemd/system/'+name)
-    if recovery_console != 'tty0':
-        dropin = wants/('serial-getty@'+recovery_console+'.service.d/10-recovery-gate.conf')
+    for console in installed['factory_consoles']:
+        tty = console['tty']
+        getty = 'getty@' if tty == 'tty1' else 'serial-getty@'
+        dropin = wants/(getty+tty+'.service.d/10-recovery-gate.conf')
         dropin.parent.mkdir(parents=True, exist_ok=True)
         dropin.write_text('[Unit]\nAfter=lanrith-recovery-key.service\n'
                           'ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n')
@@ -491,8 +495,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         'Conflicts=shutdown.target\n'
         'OnFailure=lanrith-initrd-failure.service\nOnFailureJobMode=isolate\n'
         '\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/lanrith-factory provision\n'
-        f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{recovery_console}\n'
-        'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=300s\n')
+        'StandardInput=null\nStandardOutput=journal+console\nStandardError=journal+console\n'
+        'TimeoutStartSec=300s\n')
     (initrd_units/'lanrith-initrd-failure.service').write_text(
         '[Unit]\nDescription=Return a failed candidate to its accepted default\nDefaultDependencies=no\nAllowIsolate=yes\n'
         'OnFailure=emergency.target\nOnFailureJobMode=isolate\n'
