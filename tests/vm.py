@@ -931,6 +931,7 @@ def boot(guest, *, manual=False, first=False, root_access=True):
         guest.serial.sendall(answer.encode()+b'\r')
     if manual:
         if first:
+            expect(rb'Press Enter on this console to set the state encryption passphrase: ', '')
             expect(rb'State encryption passphrase .*: ', PASSPHRASE)
             expect(rb'Repeat state encryption passphrase: ', PASSPHRASE)
         else:
@@ -942,8 +943,12 @@ def boot(guest, *, manual=False, first=False, root_access=True):
             for _ in range(8):
                 event = guest.expect_any([rb'Type RECOVERY-KEY-STORED[^\r\n]*: ',
                     rb'Please enter (?:current )?(?:passphrase|password)[^\r\n]*: ?',
-                    rb'(?:You are in|Entering) emergency mode'])
+                    rb'(?:You are in|Entering) emergency mode',
+                    rb'Press Enter on this console to record the offline recovery key: '])
                 release.require(event != 2, 'Installed initrd entered emergency mode: '+guest.last_diagnostic)
+                if event == 3:
+                    guest.serial.sendall(b'\r')
+                    continue
                 if event == 0:
                     guest.serial.sendall(b'RECOVERY-KEY-STORED\r')
                     break
@@ -951,6 +956,7 @@ def boot(guest, *, manual=False, first=False, root_access=True):
             else:
                 raise release.ReleaseError('Manual state boot repeated too many unlock prompts.')
         else:
+            expect(rb'Press Enter on this console to record the offline recovery key: ', '')
             expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
     guest.ready(root_access=root_access)
 
@@ -1059,12 +1065,13 @@ def provisioning_failure(value, base, initrd, work, secret):
     try:
         guest.start()
         event = guest.expect_any([rb'(?:You are in|Entering) emergency mode',
-                                 rb'Type RECOVERY-KEY-STORED[^\r\n]*: '])
+                                 rb'Press Enter on this console to record the offline recovery key: '])
         if event == 1:
             # Measured images enroll recovery in the verified initrd before
             # closing PCR 15. Complete that ceremony, then inject the post-start
             # failure and prove that it still cannot switch to the root system.
-            guest.serial.sendall(b'RECOVERY-KEY-STORED\r')
+            guest.serial.sendall(b'\r')
+            guest.expect(rb'Type RECOVERY-KEY-STORED[^\r\n]*: ', 'RECOVERY-KEY-STORED')
             guest.expect(rb'(?:You are in|Entering) emergency mode')
         # A failed target alone previously let the distribution's switch-root
         # service proceed. Observe beyond normal root startup, including sshd,
@@ -1340,6 +1347,15 @@ def main():
         'filesystem_sha256': release.file_record(base)['sha256'], 'initrd_sha256': release.file_record(initrd)['sha256'],
         'source_sha256': release.file_record(Path(__file__))['sha256']}
     try:
+        from qualify_factory_consoles_vm import prepare as prepare_consoles, run_profile as console_profile
+        with tempfile.TemporaryDirectory(prefix='console-drill-', dir=work) as directory:
+            console_work = Path(directory)
+            prepare_consoles(base, initrd, console_work)
+            report['factory_consoles'] = {
+                'implementation_sha256': release.file_record(PROJECT/'lanrith/factory_console.py')['sha256'],
+                'test_sha256': release.file_record(PROJECT/'tests/qualify_factory_consoles_vm.py')['sha256'],
+                'profiles': [console_profile(console_work, owner) for owner in ('serial', 'monitor')]}
+        print('Native VM: monitor and serial provisioning consoles passed.', flush=True)
         with ExitStack() as resources:
             secret = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix='lanrith-vm-authority.', dir='/dev/shm')))
             run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',

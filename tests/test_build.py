@@ -232,6 +232,30 @@ class AssemblyTests(unittest.TestCase):
             with self.assertRaises(ReleaseError):
                 build.assembly(value, base, workspace, version='0.1.0', sequence=10)
 
+    def test_monitor_boot_with_serial_recovery_provisions_on_both_without_a_tty_start_dependency(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        value['hardware']['boot'] = {'console': 'tty0', 'recovery_console': 'ttyS2'}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            workspace = root/'work'
+            build.assembly(value, base, workspace, version='0.1.0', sequence=9)
+            overlay = workspace/'mkosi.extra'
+            installed = json.loads((overlay/'usr/share/lanrith/installed.json').read_text())
+            self.assertEqual(installed['factory_consoles'],
+                             [{'tty': 'tty1', 'baud': None}, {'tty': 'ttyS2', 'baud': 115200}])
+            for tree, name in ((overlay, 'lanrith-recovery-key.service'),
+                               (workspace/'mkosi.images/initrd/mkosi.extra', 'lanrith-factory.service')):
+                unit = (tree/'usr/lib/systemd/system'/name).read_text()
+                self.assertIn('StandardInput=null\n', unit)
+                self.assertNotIn('TTYPath=', unit)
+                self.assertTrue((tree/'usr/lib/lanrith/lanrith/factory_console.py').is_file())
+            for getty in ('getty@tty1', 'serial-getty@ttyS2'):
+                text = (overlay/'etc/systemd/system'/(getty+'.service.d/10-recovery-gate.conf')).read_text()
+                self.assertIn('After=lanrith-recovery-key.service\n', text)
+                self.assertIn('ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n', text)
+
     def test_missing_declared_integrations_fail_before_mkosi(self):
         value = config.load(Path(__file__).resolve().parents[1] / 'examples/minimal.yaml')
         value['extensions'] = ['policy']

@@ -75,6 +75,9 @@ class QualificationTests(unittest.TestCase):
         directory.mkdir()
         (project/'tests').mkdir(parents=True)
         (project/'tests/vm.py').write_text('synthetic unit-test source')
+        (project/'lanrith').mkdir()
+        (project/'lanrith/factory_console.py').write_text('synthetic console implementation')
+        (project/'tests/qualify_factory_consoles_vm.py').write_text('synthetic console test')
         for name in ('lanrith-base.tar.gz', 'lanrith-initrd-base.tar.gz', 'inventory.json', 'inputs.json',
                      'tools.tar.gz', 'sbom.spdx.json'):
             (directory/name).write_bytes(b'synthetic unit-test subject: '+name.encode())
@@ -83,6 +86,11 @@ class QualificationTests(unittest.TestCase):
             'filesystem_sha256': release.file_record(directory/'lanrith-base.tar.gz')['sha256'],
             'initrd_sha256': release.file_record(directory/'lanrith-initrd-base.tar.gz')['sha256'],
             'source_sha256': release.file_record(project/'tests/vm.py')['sha256'],
+            'factory_consoles': {
+                'implementation_sha256': release.file_record(project/'lanrith/factory_console.py')['sha256'],
+                'test_sha256': release.file_record(project/'tests/qualify_factory_consoles_vm.py')['sha256'],
+                'profiles': [{'owner': owner, 'result': 'pass', 'choices_visible_on_monitor_and_serial': True,
+                              'private_output_on_selected_console_only': True} for owner in ('serial', 'monitor')]},
             'profiles': [{'profile': name, 'result': 'pass', 'checks': sorted(checks)}
                          for name, checks in qualification.CHECKS.items()]}
         (directory/'native-qualification.json').write_bytes(release.canonical(native))
@@ -266,6 +274,25 @@ class QualificationTests(unittest.TestCase):
             (project/'.github/workflows/build-base.yml').write_text('unreviewed signing authority change')
             with self.assertRaises(release.ReleaseError):
                 qualification.qualify(directory, project, {}, now=now)
+
+    def test_monitor_serial_and_secret_isolation_evidence_is_required_for_the_exact_source(self):
+        for alteration in ('missing', 'serial-only', 'duplicate-console', 'public-secret', 'implementation', 'test'):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, native = self.fixture(Path(temporary))
+                consoles = native['factory_consoles']
+                if alteration == 'missing':
+                    del native['factory_consoles']
+                elif alteration == 'serial-only':
+                    consoles['profiles'].pop()
+                elif alteration == 'duplicate-console':
+                    consoles['profiles'][1] = consoles['profiles'][0]
+                elif alteration == 'public-secret':
+                    consoles['profiles'][0]['private_output_on_selected_console_only'] = False
+                else:
+                    consoles['implementation_sha256' if alteration == 'implementation' else 'test_sha256'] = '0'*64
+                (directory/'native-qualification.json').write_bytes(release.canonical(native))
+                with self.assertRaisesRegex(release.ReleaseError, 'monitor and serial'):
+                    qualification.qualify(directory, project, {}, now=now)
 
     def test_missing_stale_altered_and_wrong_subject_log_results_are_rejected(self):
         for alteration in ('missing', 'binary', 'test-source', 'runtime-source', 'missing-check', 'stale',

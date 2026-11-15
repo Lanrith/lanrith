@@ -97,6 +97,14 @@ def qualify(directory, project, environment, *, now=None):
                 'Native qualification describes a different filesystem.')
     require(native.get('source_sha256') == file_record(project/'tests/vm.py')['sha256'],
             'Native qualification used a different test implementation.')
+    consoles = native.get('factory_consoles')
+    require(isinstance(consoles, dict) and
+            consoles.get('implementation_sha256') == file_record(project/'lanrith/factory_console.py')['sha256'] and
+            consoles.get('test_sha256') == file_record(project/'tests/qualify_factory_consoles_vm.py')['sha256'] and
+            consoles.get('profiles') == [
+                {'owner': owner, 'result': 'pass', 'choices_visible_on_monitor_and_serial': True,
+                 'private_output_on_selected_console_only': True} for owner in ('serial', 'monitor')],
+            'Native qualification lacks matching monitor and serial provisioning checks.')
     stamp = datetime.datetime.fromisoformat(native['assessed_at'])
     require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
             'Native qualification is stale or future-dated.')
