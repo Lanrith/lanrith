@@ -31,8 +31,14 @@ def receive(fd, marker, timeout=3):
 @contextmanager
 def terminals(count=2):
     pairs = [pty.openpty() for _ in range(count)]
+    native_select = select.select
+    def bounded_select(readers, writers, errors, timeout=3):
+        return native_select(readers, writers, errors, timeout)
     try:
-        yield pairs, [{'tty': os.ttyname(slave).removeprefix('/dev/'), 'baud': None} for _, slave in pairs]
+        # A failed assertion must not leave an input worker waiting forever
+        # while ThreadPoolExecutor closes. Production remains bounded by its unit.
+        with patch.object(factory_console.select, 'select', side_effect=bounded_select):
+            yield pairs, [{'tty': os.ttyname(slave).removeprefix('/dev/'), 'baud': None} for _, slave in pairs]
     finally:
         for pair in pairs:
             for fd in pair:
