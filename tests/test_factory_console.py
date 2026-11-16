@@ -14,8 +14,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from lanrith import factory_console
+from lanrith import factory, factory_console
 from lanrith.release import ReleaseError
+from test_factory import target_fixture
 
 
 def receive(fd, marker, timeout=3):
@@ -85,6 +86,28 @@ class FactoryConsoleTests(unittest.TestCase):
                 self.assertFalse(future.done())
                 os.write(masters[selected], b'ERASE-AND-INSTALL synthetic\n')
                 self.assertEqual(future.result(3), 'ERASE-AND-INSTALL synthetic')
+
+    def test_delayed_serial_lf_cannot_abort_or_confirm_the_selected_disk(self):
+        with terminals() as (pairs, specs), patch.object(factory_console, 'allowed', return_value=specs), \
+                factory_console.Consoles({}) as console, ThreadPoolExecutor(1) as pool, \
+                target_fixture() as (installed, identity, _, command, _, _):
+            monitor, serial = (pair[0] for pair in pairs)
+            future = pool.submit(factory.target, installed, '/dev/boot-disk', console)
+            receive(serial, b'Enter the complete /dev/disk/by-id identity: ')
+            os.write(serial, identity.encode()+b'\r')
+            receive(serial, b' to continue: ')
+            # SSH/serial transport may deliver the LF after the next prompt.
+            os.write(serial, b'\n')
+            receive(serial, b' to continue: ')
+            self.assertFalse(future.done())
+            self.assertEqual(command.call_count, 1)
+            os.write(monitor, ('ERASE-AND-INSTALL '+identity+'\n').encode())
+            with self.assertRaises(TimeoutError):
+                future.result(timeout=0.05)
+            self.assertEqual(command.call_count, 1)
+            os.write(serial, ('ERASE-AND-INSTALL '+identity+'\r').encode())
+            self.assertEqual(future.result(3), '/dev/synthetic-disk')
+            self.assertEqual(command.call_count, 2)
 
     def test_missing_serial_or_monitor_does_not_hide_the_remaining_prompt(self):
         for position in (0, 1):

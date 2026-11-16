@@ -214,6 +214,12 @@ the other consoles display status but cannot confirm erasure. Disconnecting the
 active console stops the operation instead of moving its confirmation elsewhere.
 An unavailable serial port does not prevent installation through the monitor.
 
+Paste each answer only after its prompt appears. The erase confirmation must
+include `ERASE-AND-INSTALL` followed by the complete selected disk path, with
+matching case. An empty or mismatched answer displays the prompt again; after
+three failed attempts installation stops. Type `CANCEL` to stop immediately.
+No disk write occurs until the exact confirmation and final disk checks pass.
+
 First-boot recovery-key enrollment also offers both consoles. Press Enter on
 the console where you will record the key. Recovery keys and encryption
 passphrases use only that console and are never copied to the other screen or

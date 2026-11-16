@@ -90,8 +90,16 @@ def target(installed, boot_disk, console):
     device = identities[selected]
     confirmation = 'ERASE-AND-INSTALL '+selected
     console.write('Selected disk: '+selected+'. All its contents will be erased.\n')
-    require(console.input('Type '+confirmation+' to continue: ') == confirmation,
-            'Destructive installation was not explicitly confirmed.')
+    console.write('Enter the full line exactly as shown, including the disk path. Type CANCEL to stop.\n')
+    for attempt in range(3):
+        answer = console.input('Type '+confirmation+' to continue: ')
+        if answer == confirmation:
+            break
+        require(answer != 'CANCEL', 'Installation cancelled; nothing was written.')
+        if attempt < 2:
+            console.write('Confirmation did not match. Nothing was written. Try again or type CANCEL.\n')
+    else:
+        raise ReleaseError('Destructive installation was not explicitly confirmed.')
     # Resolve and inspect again after operator input; never trust a stale selection.
     require(str(Path(selected).resolve()) == device, 'Selected disk identity changed.')
     current = json.loads(command(['lsblk', '--json', '--bytes', '--paths', '--output',
