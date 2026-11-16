@@ -28,7 +28,7 @@ from lanrith import config, logs, logs_runtime
 from test_intent import minimal
 
 
-CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
+CHECKS = {'unauthenticated-verified-https', 'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
           'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
           'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
           'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
@@ -138,6 +138,74 @@ def local_records():
     return records
 
 
+def unauthenticated_delivery(binary):
+    """An enabled exporter sends over verified TLS with no password or auth header."""
+    with tempfile.TemporaryDirectory(prefix='logs-no-auth.') as directory:
+        root = Path(directory)
+        (root/'journal').mkdir()
+        append_journal(root, 1, 'LANRITH_NO_AUTH_SYNTHETIC_RECORD')
+        run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+            '-subj', '/CN=logs.example.test', '-addext', 'subjectAltName=DNS:logs.example.test',
+            '-keyout', str(root/'collector.key'), '-out', str(root/'collector.crt'))
+        received = queue.Queue()
+
+        class Collector(BaseHTTPRequestHandler):
+            def do_POST(self):
+                size = int(self.headers.get('Content-Length', '0'))
+                assert 0 < size <= 2*1024*1024
+                data = self.rfile.read(size)
+                if self.headers.get('Content-Encoding') == 'gzip':
+                    data = gzip.decompress(data)
+                received.put((self.headers.get('Authorization'), self.path, data))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/x-protobuf')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        server = HTTPServer(('127.0.0.1', 0), Collector)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(root/'collector.crt', root/'collector.key')
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        value = minimal()
+        value['observability'] = {'logs': {'enabled': True,
+            'endpoint': 'https://192.168.10.31/otlp', 'tls_server_name': 'logs.example.test'}}
+        content = logs.configuration(config.normalize(value)).replace(
+            'https://192.168.10.31/otlp', 'https://127.0.0.1:'+str(server.server_port)+'/otlp').replace(
+            '/var/log/journal', str(root/'journal')).replace('/var/lib/lanrith-alloy/queue', str(root/'queue'))
+        assert 'router_password' not in content and 'otelcol.auth.' not in content
+        (root/'config.alloy').write_text(content)
+        environment = {key: val for key, val in os.environ.items() if key != 'CREDENTIALS_DIRECTORY'}
+        environment.update(SSL_CERT_FILE=str(root/'collector.crt'), GOMAXPROCS='2', GOMEMLIMIT='128MiB')
+        process = None
+        try:
+            with (root/'alloy.log').open('wb') as output:
+                process = subprocess.Popen([str(binary), 'run', '--disable-reporting',
+                    '--stability.level=public-preview', '--server.http.listen-addr=127.0.0.1:12345',
+                    '--storage.path='+str(root/'state'), str(root/'config.alloy')],
+                    env=environment, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+            auth, path, data = received.get(timeout=40)
+            assert auth is None and path == '/otlp/v1/logs'
+            assert b'LANRITH_NO_AUTH_SYNTHETIC_RECORD' in data and SECRET not in data
+            assert process.poll() is None
+            until(lambda: logs_runtime.pipeline_healthy(metrics(), minimum_components=7), seconds=10)
+        except BaseException:
+            print((root/'alloy.log').read_text(errors='replace')[-8192:], file=sys.stderr)
+            raise
+        finally:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill(); process.wait(timeout=5)
+            server.shutdown(); server.server_close(); worker.join(timeout=5)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--alloy', type=Path, default=Path('/usr/bin/alloy'))
@@ -150,6 +218,7 @@ def main():
     assert digest == args.alloy_sha256, 'Reviewed Alloy binary differs.'
     run('ip', 'link', 'set', 'lo', 'up')
     run('ip', 'address', 'add', '192.0.2.31/32', 'dev', 'lo')
+    unauthenticated_delivery(args.alloy)
     processes = []
     server = worker = None
     with tempfile.TemporaryDirectory(prefix='logs-native.') as directory:

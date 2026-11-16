@@ -35,6 +35,8 @@ def path(value):
 
 def credential_path(value, reference):
     snmp = value.get('observability', {}).get('snmp', {})
+    if 'credentials' in value:
+        return '/usr/lib/lanrith/credentials/core/'+reference+('/snmpd.conf' if snmp.get('credential') == reference else '')
     default = '/var/lib/lanrith/snmp/snmpd.conf' if snmp.get('credential') == reference else '/var/lib/lanrith/credentials/'+reference
     return value.get('runtime', {}).get('credentials', {}).get(
         reference, default)
@@ -48,6 +50,8 @@ def credential_header(value, reference):
 def validate(value):
     settings = value.get('runtime', {})
     intent.fields(settings, {'credentials', 'credential_headers', 'service_identities', 'trust'})
+    require('credentials' not in value or not settings.get('credentials'),
+            'Image credentials cannot also select mutable runtime credential paths.')
     references = credential_references(value)
     credentials = intent.named(settings.get('credentials', {}), 256)
     require(credentials.keys() <= references, 'Runtime binding references an undeclared credential.')

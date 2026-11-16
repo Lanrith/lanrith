@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import admission, archive as handoff, config, evidence, extensions, owner_inputs, release, trust
+from lanrith import admission, archive as handoff, config, credential_image, evidence, extensions, owner_inputs, release, trust
 
 
 def run(*argv, **kwargs):
@@ -186,6 +186,13 @@ def assemble(owner, bundle, request, output):
             (private/'recovery.hash').chmod(0o600)
             boot_options['recovery_hash'] = private/'recovery.hash'
         value = config.load(owner/'config.yaml')
+        credentials = credential_image.resolve(value, integration_pins(owner, value))
+        credential_digest = credential_image.digest(credentials)
+        if credentials:
+            with (private/'credentials.json').open('xb') as stream:
+                (private/'credentials.json').chmod(0o600)
+                stream.write(credential_image.encode(credentials))
+        del credentials
         floor = value.get('release', {}).get('sequence_floor', 0)
         serial_digest = None
         if value['administration']['serial']['enabled']:
@@ -218,11 +225,13 @@ def assemble(owner, bundle, request, output):
             image_id=value.get('release', {}).get('image_id', 'lanrith'), sequence=sequence,
             tpm_required=value['hardware']['boot'].get('tpm', 'required') == 'required')
         effective_digest = config.effective_digest(value, actual['integration_digests'], serial_digest,
-                                                  boot_inputs=build_inputs.digest_fields(boot_record), **owner_options)
+                                                  boot_inputs=build_inputs.digest_fields(boot_record),
+                                                  credential_digest=credential_digest, **owner_options)
         (private/'admitted.json').write_bytes(release.canonical({'platform_lock_sha256':
             release.file_record(owner/'platform.lock')['sha256'], 'workflow_commit': actual['workflow_commit'],
             'configuration_sha256': actual['configuration_sha256'], 'files': selection['files'],
             'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
+            'credential_digest': credential_digest,
             'integration_digests': actual['integration_digests'], 'assessment_sha256': receipt['assessment_sha256'],
             **({'owner_inputs': owner_records} if owner_records else {}),
             'boot_inputs': boot_record}))
@@ -250,6 +259,7 @@ def assemble(owner, bundle, request, output):
                 archive.add(path,arcname=path.name)
         (output/'deployment.json').write_bytes(release.canonical({**actual,
             'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
+            'credential_digest': credential_digest,
             'boot_inputs': boot_record,
             'deployment_sequence': sequence, 'release': verified, 'factory': verified_factory}))
 

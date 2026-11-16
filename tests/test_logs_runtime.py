@@ -60,6 +60,30 @@ class LogSupervisorTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertFalse(runtime.pipeline_healthy(value))
 
+    def test_credential_free_graph_requires_all_seven_components(self):
+        self.assertTrue(runtime.pipeline_healthy(metrics(7), minimum_components=7))
+        self.assertFalse(runtime.pipeline_healthy(metrics(6), minimum_components=7))
+        self.assertFalse(runtime.pipeline_healthy(metrics(7, exited=1), minimum_components=7))
+        self.assertFalse(runtime.pipeline_healthy(metrics(7)))
+
+    def test_credential_free_staging_does_not_read_or_write_a_secret(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/'password').write_bytes(b'obsolete-synthetic-password')
+            with mock.patch.object(runtime, 'load', return_value={'authentication': 'none'}), \
+                    mock.patch.object(runtime, 'RUNTIME', root), \
+                    mock.patch.object(runtime.os, 'getuid', return_value=0), \
+                    mock.patch.object(runtime.os, 'geteuid', return_value=0), \
+                    mock.patch.object(runtime.os, 'chown'), \
+                    mock.patch.object(runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=2001)), \
+                    mock.patch.object(runtime.grp, 'getgrnam', return_value=SimpleNamespace(gr_gid=2001)), \
+                    mock.patch.object(runtime, 'credential') as read, \
+                    mock.patch.object(runtime, 'write') as write:
+                runtime.stage()
+                read.assert_not_called()
+                write.assert_not_called()
+                self.assertFalse((root/'password').exists())
+
     def test_exited_component_prevents_readiness_and_is_reaped(self):
         child = mock.Mock()
         child.poll.return_value = None
@@ -193,7 +217,7 @@ class LogSupervisorTests(unittest.TestCase):
                 mock.patch.object(runtime.uuid, 'uuid4', return_value=SimpleNamespace(hex='a'*32)):
             with self.assertRaisesRegex(runtime.LogsRuntimeError, 'exporter exited'):
                 runtime.supervise(local=True)
-            health.assert_called_once_with(local=True)
+            health.assert_called_once_with(local=True, minimum_components=12)
             self.assertEqual(output.call_args_list, [mock.call(state, runtime.OBSERVATION),
                                                     mock.call({**state, 'producer_epoch': 'a'*32}, runtime.LOCAL/'health.json')])
             self.assertEqual(notify.call_args_list, [mock.call('READY=1'), mock.call('WATCHDOG=1')])

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lanrith import boot_health, build, config, nat64_runtime, translation_runtime
+from lanrith import boot_health, build, config, credential_image, nat64_runtime, translation_runtime
 from lanrith.release import ReleaseError
 from test_extension_network import manifest
 from test_extension_observations import settings
@@ -35,6 +35,8 @@ class TunAssemblyTests(unittest.TestCase):
                     entry = tarfile.TarInfo(name)
                     entry.size = len(data)
                     archive.addfile(entry, io.BytesIO(data))
+            from test_credential_image import fixture as credentials_fixture
+            value = credentials_fixture(root, value)
             build.assembly(value, base, root/'image', version='0.1.0', sequence=9,
                 integrations={'example-observer': (extension, pin)},
                 retained_allocations=retained)
@@ -59,7 +61,9 @@ class TunAssemblyTests(unittest.TestCase):
             health = json.loads((output/'usr/share/lanrith/health.json').read_text())
             self.assertIs(health['native_translation'], True)
             expected = config.effective_digest(value, {'example-observer': pin},
-                retained_allocations=retained, access_backend='tun')
+                retained_allocations=retained, access_backend='tun',
+                credential_digest=credential_image.digest(credential_image.resolve(
+                    config.normalize(value), {'example-observer': (extension, pin)})))
             self.assertEqual(installed['configuration_sha256'], expected)
             self.assertEqual((output/'usr/share/lanrith/configuration.sha256').read_text().strip(), expected)
 

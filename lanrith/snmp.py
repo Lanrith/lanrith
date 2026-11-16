@@ -32,7 +32,7 @@ def validate(value):
     require(re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,31}', settings['username']), 'Invalid SNMPv3 username.')
     path = bindings.path(bindings.credential_path(value, settings['credential']))
     root = PurePosixPath(path).parent
-    require(path.startswith('/var/lib/') and PurePosixPath(path).name == 'snmpd.conf' and
+    require((path.startswith('/var/lib/') or path == '/usr/lib/lanrith/credentials/core/'+settings['credential']+'/snmpd.conf') and PurePosixPath(path).name == 'snmpd.conf' and
             root != PurePosixPath('/var/lib') and not root.is_relative_to('/var/lib/snmp'),
             'SNMP credentials require a private state directory separate from the persistent engine.')
     require(all(PurePosixPath(bindings.credential_path(value, other)).parent != root
@@ -45,7 +45,8 @@ def manifest(value):
     settings = value['observability']['snmp']
     return {'schema': 1, 'server': listener(value), 'username': settings['username'],
             'credential_header': bindings.credential_header(value, settings['credential']),
-            'state_directory': str(PurePosixPath(bindings.credential_path(value, settings['credential'])).parent)}
+            'state_directory': str(PurePosixPath(bindings.credential_path(value, settings['credential'])).parent),
+            **({'credential_delivery': 'image'} if 'credentials' in value else {})}
 
 
 def client_rules(value, *, ingress=False):
@@ -98,7 +99,7 @@ def render(value):
     validate(value)
     policy = manifest(value)
     admitted = sorted({a for item in sources(value) for a in item['addresses']} | {policy['server']+'/128', '::1/128'})
-    configuration = ('# Generated SNMPv3 read-only host agent. Credentials remain in encrypted state.\n'
+    configuration = ('# Generated SNMPv3 read-only host agent. Credentials are supplied by the image credential binding.\n'
                      f'agentAddress udp6:[{policy["server"]}]:161\n'
                      'sysLocation router-service-plane\nsysContact network-monitoring\n')
     for oid in ('.1.3.6.1.2.1.1', '.1.3.6.1.2.1.2', '.1.3.6.1.2.1.31',
@@ -106,6 +107,7 @@ def render(value):
         configuration += 'view lanrith included '+oid+'\n'
     configuration += f'rouser {policy["username"]} priv -V lanrith\n'
     state = policy['state_directory']
+    immutable = 'credentials' in value
     unit = ('[Unit]\nDescription=Scoped authenticated and encrypted host SNMP\n'
             'Requires=lanrith-services.service nftables.service\n'
             'After=lanrith-services.service nftables.service\n'
@@ -120,11 +122,11 @@ def render(value):
             'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\n'
             'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK\n'
             'IPAddressDeny=any\n'+''.join('IPAddressAllow='+a+'\n' for a in admitted)+
-            f'ReadWritePaths=/var/lib/snmp {state} /run/lanrith-snmp\n'
+            f'ReadWritePaths=/var/lib/snmp {"" if immutable else state} /run/lanrith-snmp\n'
             'MemoryMax=128M\nTasksMax=8\nLimitNOFILE=1024\n'
             'Restart=on-failure\nRestartSec=2s\n[Install]\nWantedBy=multi-user.target\n')
     return {'etc/snmp/snmpd.conf': configuration,
             'etc/lanrith/integrations/snmp-runtime-policy.json': canonical(policy).decode(),
             'usr/lib/systemd/system/snmpd.service': unit,
             'usr/lib/tmpfiles.d/80-lanrith-snmp.conf': (
-                f'd {state} 0700 root root -\nd /run/lanrith-snmp 0700 root root -\n')}
+                ('' if immutable else f'd {state} 0700 root root -\n')+'d /run/lanrith-snmp 0700 root root -\n')}

@@ -164,7 +164,7 @@ def overlay(configuration, selected, destination, base_files=None, *, access_bac
     require(extension_observations.resolve(configuration, observations, service='firewall') is None or
             'etc/nftables.conf' not in replaced, 'Firewall observations require the compiled core ruleset.')
     credential_catalogs = extension_credential_config.install(credentials, destination,
-        configuration.get('administration', {}).get('username', 'admin'))
+        configuration.get('administration', {}).get('username', 'admin'), image='credentials' in configuration)
     plan = extension_network.resolve(configuration, declarations)
     if any(plan.values()):
         require('etc/nftables.conf' not in replaced,

@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import uuid
 
-from . import admission, archive, config, extensions, owner_inputs, release, trust
+from . import admission, archive, config, credential_image, extensions, owner_inputs, release, trust
 
 
 @contextmanager
@@ -69,6 +69,7 @@ def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
                     'Deployment sequence must exceed the configured floor.')
     release.require(value['hardware'].get('machine_id'), 'Initialize the permanent owner machine identity first.')
     pins = consumer().integration_pins(owner, value)
+    credential_digest = credential_image.digest(credential_image.resolve(value, pins))
     names = {'config.yaml', 'platform.lock', 'trust/boot.crt'}
     names.update(owner_records)
     release.public_key(owner/'trust/boot.crt')
@@ -96,6 +97,7 @@ def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
             'compiler_source_commit': selection['source_commit'],
             'builder': selection['builder']+'@sha256:'+selection['builder_digest'],
             'serial_provisioning_sha256': serial_digest,
+            'credential_digest': credential_digest,
             'assessment_sha256': release.file_record(platform/'security-assessment.json')['sha256']
                 if (platform/'security-assessment.json').exists() else None}
     from . import build_inputs
@@ -105,7 +107,8 @@ def inputs(owner, platform, sequence, serial_hash=None, boot_options=None):
     if boot_options is not None or build_inputs.digest_fields(boot_record):
         result['boot_inputs'] = boot_record
     result['effective_configuration_sha256'] = config.effective_digest(value, integration_digests,
-        serial_digest, boot_inputs=build_inputs.digest_fields(boot_record), **owner_options)
+        serial_digest, boot_inputs=build_inputs.digest_fields(boot_record),
+        credential_digest=credential_digest, **owner_options)
     if owner_records:
         result['owner_inputs'] = owner_records
     return result
@@ -168,6 +171,16 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
                     'Owner snapshot differs from preflight.')
     name = 'lanrith-local-'+uuid.uuid4().hex
     with signing_space(engine, name) as private:
+        selected = config.load(snapshot/'config.yaml')
+        secrets = credential_image.resolve(selected, consumer().integration_pins(snapshot, selected))
+        release.require(credential_image.digest(secrets) == actual.get('credential_digest'),
+                        'Build credentials changed after preflight.')
+        if secrets:
+            bundle = private/'credentials.json'
+            with bundle.open('xb') as stream:
+                bundle.chmod(0o600)
+                stream.write(credential_image.encode(secrets))
+        del secrets
         private_copy(key, private/'boot.key', 65536)
         # The public certificate is separately bound to the reviewed owner trust.
         data = release.read(certificate, 65536)
@@ -192,6 +205,7 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
             'configuration_sha256': actual['configuration_sha256'], 'files': actual['platform_files'],
             'effective_configuration_sha256': actual['effective_configuration_sha256'],
             'serial_provisioning_sha256': actual['serial_provisioning_sha256'],
+            'credential_digest': actual.get('credential_digest'),
             'integration_digests': actual['integration_digests'], 'assessment_sha256': actual['assessment_sha256'],
             **({'owner_inputs': actual['owner_inputs']} if 'owner_inputs' in actual else {}),
             **({'boot_inputs': actual['boot_inputs']} if 'boot_inputs' in actual else {})}))

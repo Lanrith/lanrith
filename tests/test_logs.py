@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from lanrith import config, logs_runtime, policy_agent
+from lanrith import build, config, credential_config, credential_image, logs_runtime, policy_agent
 from lanrith.release import ReleaseError
 from test_policy_agent import declaration as policy_declaration
 
@@ -35,6 +36,7 @@ class LogsContractTests(unittest.TestCase):
             'target': 'fd42:1234:5678:10::31',
             'source': 'fd42:1234:5678:fe02::60',
             'tls_server_name': 'logs.example.test',
+            'authentication': 'basic',
             'username': 'synthetic-router',
             'credential_name': 'log_ingest',
         })
@@ -89,6 +91,11 @@ class LogsContractTests(unittest.TestCase):
             path.chmod(0o600)
             self.assertEqual(logs_runtime.load(path, owner=os.getuid())['credential_name'], 'log_ingest')
             document = json.loads(path.read_text())
+            for changed in ({**document, 'authentication': 'none'},
+                            {key: item for key, item in document.items() if key != 'credential_name'}):
+                path.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    logs_runtime.load(path, owner=os.getuid())
             document['configuration'] = 'owner.yaml'
             path.write_text(json.dumps(document))
             with self.assertRaises(ValueError):
@@ -109,6 +116,53 @@ class LogsContractTests(unittest.TestCase):
             value['observability']['logs']['endpoint'] = endpoint
             with self.subTest(endpoint=endpoint), self.assertRaises(ReleaseError):
                 config.render(config.normalize(value))
+
+    def test_enabled_logging_without_client_authentication_needs_no_secret(self):
+        from test_intent import minimal
+        for explicit in (False, True):
+            value = minimal()
+            value['observability'] = {'logs': {
+                'enabled': True, 'endpoint': 'https://192.168.10.31/otlp',
+                'tls_server_name': 'logs.example.test'}}
+            if explicit:
+                value['observability']['logs']['authentication'] = 'none'
+            with self.subTest(explicit=explicit), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                base = root/'base.tar'; base.write_bytes(b'synthetic')
+                with patch.object(credential_image, 'private_read') as read:
+                    build.assembly(value, base, root/'image', version='0.1.0', sequence=1)
+                    read.assert_not_called()
+                tree = root/'image/mkosi.extra'
+                policy = logs_runtime.load(tree/'usr/share/lanrith/logs.json', owner=os.getuid())
+                self.assertEqual(policy['authentication'], 'none')
+                self.assertNotIn('credential_name', policy)
+                self.assertNotIn('username', policy)
+                alloy = (tree/'etc/alloy/config.alloy').read_text()
+                self.assertNotIn('otelcol.auth.basic', alloy)
+                self.assertNotIn('local.file', alloy)
+                self.assertIn('endpoint = "https://192.168.10.31/otlp"', alloy)
+                self.assertIn('min_version = "1.2"', alloy)
+                unit = (tree/'etc/systemd/system/alloy.service.d/60-lanrith.conf').read_text()
+                self.assertNotIn('LoadCredential=', unit)
+                self.assertFalse((tree/'usr/lib/systemd/system/lanrith-credential-ready.service').exists())
+                self.assertIn('alloy.service', json.loads((tree/'usr/share/lanrith/health.json').read_bytes())['units'])
+
+    def test_partial_or_conflicting_authentication_never_falls_back_to_none(self):
+        for authentication, omitted in (('basic', ('username',)), ('basic', ('credential',)),
+                                         ('basic', ('username', 'credential')), ('none', ()),
+                                         ('unknown', ())):
+            value = declaration()
+            settings = value['observability']['logs']
+            settings['authentication'] = authentication
+            for field in omitted:
+                settings.pop(field)
+            with self.subTest(authentication=authentication, omitted=omitted), self.assertRaises(ValueError):
+                config.normalize(value)
+        for omitted in ('username', 'credential'):
+            value = declaration()
+            value['observability']['logs'].pop(omitted)
+            with self.subTest(omitted=omitted), self.assertRaises(ValueError):
+                config.normalize(value)
 
 
 if __name__ == '__main__':

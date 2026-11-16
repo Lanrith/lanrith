@@ -18,7 +18,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
              integrations=None, serial_hash=None, initrd_base=None,
              fallback_release=None, fallback_disk_by_id=None, fallback_esp_uuid=None,
              pcr_key=None, pcr_certificate=None, recovery_hash=None,
-             target_facts=None, retained_allocations=None, access_backend='tun'):
+             target_facts=None, retained_allocations=None, access_backend='tun', credentials=None):
     for path in (base, destination, certificate, private_key, initrd_base, fallback_release,
                  pcr_key, pcr_certificate, recovery_hash, serial_hash):
         require(path is None or isinstance(path, Path) and path.is_absolute() and
@@ -32,6 +32,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             'Invalid image release identity.')
     require(access_backend == 'tun', 'Image assembly requires the supported TUN policy backend.')
     value = config.normalize(value)
+    from . import credential_image
+    credentials = (credential_image.resolve(value, integrations or {}) if credentials is None else
+                   credential_image.validate(value, integrations or {}, credentials))
+    credential_digest = credential_image.digest(credentials)
     # Fail before creating a workspace if hardware evidence or runtime support
     # is missing. Configuration and facts are independently bound in the digest.
     config.render(value, target_facts=target_facts, retained_allocations=retained_allocations,
@@ -92,6 +96,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                                      access_backend=access_backend, retained_allocations=retained_allocations)
     extensions.account_overlay(accounts, integration['identities'], overlay, value['administration']['username'])
     bindings.verify_accounts(value, accounts, overlay)
+    credential_image.install(overlay, value, credentials, integration['credential_catalogs'])
     # The effective intent includes every admitted integration, even when it adds no network fields.
     boot_inputs = {}
     if public is not None:
@@ -103,7 +108,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     digest = config.effective_digest(value, integration['digests'],
         release.file_record(serial_hash)['sha256'] if serial_hash else None,
         target_facts=target_facts, retained_allocations=retained_allocations, boot_inputs=boot_inputs,
-        access_backend=access_backend)
+        access_backend=access_backend, credential_digest=credential_digest)
     (overlay / 'usr/share/lanrith/configuration.sha256').write_text(digest + '\n')
     image_id = value.get('release', {}).get('image_id', 'lanrith')
     installed = {'schema': 1, 'layout': 'ab-verity-v1', 'image_id': image_id, 'machine_id': machine_id,
@@ -124,6 +129,7 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
     from .factory_console import allowed, specifications
     installed['factory_consoles'] = specifications(value['hardware']['boot'], value['administration']['serial'])
     allowed(installed)
+    installed['credential_delivery'] = 'image'
     credential_manifest = overlay/'usr/share/lanrith/credentials.json'
     installed['credential_catalog_sha256'] = (hashlib.sha256(credential_manifest.read_bytes()).hexdigest()
                                                if credential_manifest.is_file() else None)
@@ -302,10 +308,10 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         activation = units/target/unit
         activation.parent.mkdir(parents=True, exist_ok=True)
         activation.symlink_to('../'+unit)
-    if installed['credential_catalog_sha256'] is not None:
+    if installed.get('credential_delivery') != 'image' and installed['credential_catalog_sha256'] is not None:
         activation = units/'sockets.target.wants/lanrith-credentials.socket'
         activation.symlink_to('../lanrith-credentials.socket')
-    for extension in installed['extension_credential_catalogs']:
+    for extension in (() if installed.get('credential_delivery') == 'image' else installed['extension_credential_catalogs']):
         unit = 'lanrith-extension-credential-'+extension+'.socket'
         (units/'sockets.target.wants'/unit).symlink_to('../'+unit)
     (units / 'lanrith-health.service').write_text(

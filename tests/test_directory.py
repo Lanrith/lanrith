@@ -201,7 +201,8 @@ class DirectoryTests(unittest.TestCase):
             root = Path(temporary)
             base = root/'base.tar'
             base.write_bytes(b'synthetic assembly input')
-            build.assembly(fixture(), base, root/'image', version='0.1.0', sequence=9)
+            from test_credential_image import fixture as credentials_fixture
+            build.assembly(credentials_fixture(root, fixture()), base, root/'image', version='0.1.0', sequence=9)
             overlay = root/'image/mkosi.extra'
             self.assertTrue((overlay/'usr/lib/lanrith/directory-health').is_file())
             self.assertTrue((overlay/'usr/lib/lanrith/lanrith/directory_runtime.py').is_file())

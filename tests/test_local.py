@@ -19,6 +19,38 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 class LocalBuildTests(unittest.TestCase):
+    def test_preflight_binds_secret_changes_without_putting_values_in_the_request(self):
+        from test_credential_image import fixture
+        selection = {'files': {'tools.tar.gz': 'a'*64}, 'manifest_sha256': 'b'*64,
+                     'source_commit': 'c'*40, 'builder': 'example.invalid/builder', 'builder_digest': 'd'*64}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            owner, platform = root/'owner', root/'platform'
+            (owner/'trust').mkdir(parents=True); platform.mkdir()
+            value = fixture(root)
+            (owner/'config.yaml').write_text(yaml.safe_dump(value))
+            (owner/'platform.lock').write_text('{}\n')
+            (owner/'trust/boot.crt').write_text('synthetic certificate\n')
+            with patch.object(local.trust, 'lock', return_value=selection), \
+                    patch.object(local.release, 'public_key', return_value=b'synthetic-public-key'), \
+                    patch.object(local, 'consumer', return_value=SimpleNamespace(integration_pins=lambda *_: {})):
+                first = local.inputs(owner, platform, 1)
+                (root/'ingest').write_bytes(b'rotated-private-test-value\n')
+                second = local.inputs(owner, platform, 1)
+                (root/'ingest').unlink()
+                with self.assertRaises(ValueError):
+                    local.inputs(owner, platform, 1)
+                value['observability']['logs']['enabled'] = False
+                (owner/'config.yaml').write_text(yaml.safe_dump(value))
+                disabled = local.inputs(owner, platform, 1)
+                # Neither a missing nor a changed inactive input enters preflight.
+                (root/'ingest').write_bytes(b'unused-private-test-value\n')
+                self.assertEqual(disabled, local.inputs(owner, platform, 1))
+            self.assertEqual(first['configuration_sha256'], second['configuration_sha256'])
+            self.assertNotEqual(first['credential_digest'], second['credential_digest'])
+            self.assertNotEqual(first['effective_configuration_sha256'], second['effective_configuration_sha256'])
+            self.assertNotIn(b'rotated-private-test-value', release.canonical(second))
+
     def test_consumer_enumerates_assessment_releases_across_pages(self):
         import subprocess
         module = local.consumer()

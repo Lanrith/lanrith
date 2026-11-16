@@ -55,7 +55,8 @@ def descriptor(extension, item):
     require(isinstance(item, dict) and set(item) == {'reference', 'path', 'format', 'parameters'} and
             item.get('format') == 'json' and isinstance(item.get('parameters'), dict) and
             set(item['parameters']) == {'consumers'}, 'Extension credential descriptor differs.')
-    require(item['path'] == secret_path(extension, item['reference']) and
+    require(item['path'] in (secret_path(extension, item['reference']),
+                             '/usr/lib/lanrith/credentials/extensions/'+extension+'/'+reference(item['reference'])) and
             item['parameters']['consumers'] == consumers(item['parameters']['consumers']),
             'Extension credential custody differs.')
     return item

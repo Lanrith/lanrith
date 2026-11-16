@@ -11,7 +11,7 @@ COMPILER = {'config', 'intent', 'build', 'cli', 'runtime_plan', 'hardware_config
             'integrations', 'access', 'firewall', 'service_plane', 'authoritative', 'routing',
             'translation', 'nat46', 'nat64', 'ids', 'metrics', 'policy_agent', 'tun_policy', 'discovery',
             'logs', 'radius', 'fancontrol_config', 'boot_policy', 'build_inputs', 'owner_inputs',
-            'recovery_build', 'recovery_failure_build', 'state_formats', 'directory_config', 'credential_config'}
+            'recovery_build', 'recovery_failure_build', 'state_formats', 'directory_config', 'credential_config', 'credential_image'}
 
 
 RETIRED = {'nat64_runtime', 'nat64_packets', 'nat64_allocations'}
