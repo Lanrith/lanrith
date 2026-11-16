@@ -1124,6 +1124,10 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
             event = guest.expect_any([rb'Type ERASE-AND-INSTALL .* to continue: ',
                                      rb'(?:You are in|Entering) emergency mode'])
             release.require(event == 0, 'Factory initrd entered emergency mode: '+guest.last_diagnostic)
+            for invalid in (b'', b'ERASE-AND-INSTALL /dev/disk/by-id/wrong-qa-disk'):
+                guest.serial.sendall(invalid+b'\r')
+                guest.expect(rb'Confirmation did not match\. Nothing was written\.')
+                guest.expect(rb'Type ERASE-AND-INSTALL .* to continue: ')
             print('Native VM: confirmed the disposable installation target.',flush=True)
             guest.serial.sendall(b'ERASE-AND-INSTALL /dev/disk/by-id/virtio-lanrith-qa-disk\r')
             guest.expect(rb'Installation read-back passed')

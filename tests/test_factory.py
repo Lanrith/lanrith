@@ -1,16 +1,78 @@
 """Destructive target eligibility fails closed for unsafe disk conditions."""
 
 import copy
+from contextlib import contextmanager
+from pathlib import Path
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 from lanrith import factory
 from lanrith.factory import eligible
 from lanrith.release import ReleaseError
 from lanrith.update import GUIDS
 
 
+@contextmanager
+def target_fixture(answers=None):
+    identity = '/dev/disk/by-id/virtio-synthetic-disk'
+    disk = {'name': '/dev/synthetic-disk', 'type': 'disk', 'ro': False,
+            'log-sec': 512, 'size': 128*1024**3, 'mountpoints': [None]}
+    link = MagicMock(spec=Path)
+    link.__str__.return_value = identity
+    link.name = 'virtio-synthetic-disk'
+    link.is_symlink.return_value = True
+    link.resolve.return_value = Path(disk['name'])
+    directory = Mock()
+    directory.glob.return_value = [link]
+    def path(value):
+        if value == identity:
+            return link
+        return directory if value == '/dev/disk/by-id' else Path(value)
+    installed = {'storage': {'esp_mib': 1024, 'root_mib': 4096, 'state_mib': 65536}}
+    console = Mock()
+    console.input.side_effect = answers
+    with patch.object(factory, 'Path', side_effect=path), \
+            patch.object(factory, 'command', return_value=json.dumps({'blockdevices': [disk]})) as command:
+        yield installed, identity, console, command, link, disk
+
+
 class FactorySelectionTests(unittest.TestCase):
+    def test_confirmation_retries_require_the_exact_phrase_and_selected_identity(self):
+        for wrong in ('', 'ERASE-AND-INSTALL', 'erase-and-install /dev/disk/by-id/virtio-synthetic-disk',
+                      'ERASE-AND-INSTALL /dev/disk/by-id/a-different-disk'):
+            with self.subTest(wrong=wrong), target_fixture() as (installed, identity, console, command, _, _):
+                console.input.side_effect = [identity, wrong, 'ERASE-AND-INSTALL '+identity]
+                self.assertEqual(factory.target(installed, '/dev/boot-disk', console), '/dev/synthetic-disk')
+                self.assertEqual(console.input.call_count, 3)
+                self.assertEqual(command.call_count, 2)
+                self.assertTrue(all(call.args[0][0] == 'lsblk' for call in command.call_args_list))
+                self.assertTrue(any('Confirmation did not match' in call.args[0]
+                                    for call in console.write.call_args_list))
+
+    def test_confirmation_attempts_are_bounded_and_cancel_never_returns_a_disk(self):
+        for answers in (['', 'wrong', 'ERASE-AND-INSTALL'], ['CANCEL']):
+            with self.subTest(answers=answers), target_fixture() as (installed, identity, console, command, _, _):
+                console.input.side_effect = [identity, *answers]
+                with self.assertRaises(ReleaseError):
+                    factory.target(installed, '/dev/boot-disk', console)
+                self.assertEqual(command.call_count, 1)
+                self.assertEqual(console.input.call_count, len(answers)+1)
+
+    def test_correct_confirmation_still_rechecks_identity_and_disk_eligibility(self):
+        for change in ('identity', 'mounted'):
+            with self.subTest(change=change), target_fixture() as (installed, identity, console, command, link, disk):
+                console.input.side_effect = [identity, 'wrong', 'ERASE-AND-INSTALL '+identity]
+                if change == 'identity':
+                    link.resolve.side_effect = [Path(disk['name']), Path('/dev/changed-disk')]
+                else:
+                    command.side_effect = [json.dumps({'blockdevices': [disk]}),
+                        json.dumps({'blockdevices': [{**disk, 'mountpoints': ['/in-use']}]})]
+                message = 'identity changed' if change == 'identity' else 'became ineligible'
+                with self.assertRaisesRegex(ReleaseError, message):
+                    factory.target(installed, '/dev/boot-disk', console)
+                self.assertEqual(console.input.call_count, 3)
+                self.assertTrue(all(call.args[0][0] == 'lsblk' for call in command.call_args_list))
+
     def test_unbound_or_different_tpm_policy_is_rejected_even_with_a_valid_token(self):
         valid = {'type': 'systemd-tpm2', 'tpm2-pcrs': [7]}
         self.assertEqual(factory.enrollment_tokens({'tokens': {'0': valid}}, tpm_required=True), ['systemd-tpm2'])
