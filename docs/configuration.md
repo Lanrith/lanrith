@@ -36,7 +36,7 @@ owner file before reordering existing networks or changing a persisted layout.
 Disabled scopes reserve no ID. IDs are compiled into native configuration and
 bounded runtime contracts; owner YAML remains build-only.
 
-Selecting RADIUS admission also configures Kea's private Unix control socket
+Selecting RADIUS directory admission also configures Kea's private Unix control socket
 and the packaged lease-command hook used by its bounded admission collector.
 Before startup completes, an unprivileged post-start check verifies the main
 daemon's UID/PID and service group, then removes execute/other access with mode
@@ -307,10 +307,10 @@ An optional `credentials` list declares protected secret slots for an extension:
 
 Each consumer must be a literal `.service` file in that extension's inventory.
 Template units and core service replacements are rejected. Lanrith derives the
-root-only path `/var/lib/lanrith/extension-credentials/EXTENSION/NAME`, generates
+root-only path `/usr/lib/lanrith/credentials/extensions/EXTENSION/NAME`, generates
 `LoadCredential=NAME:PATH` for the declared readers, and binds the reader set into
-the catalog digest. Values enter through the operator channel after installation;
-they are absent from the manifest, image and build provenance.
+the catalog digest. Build-time `credentials` entries supply the values. The manifest and provenance
+contain no values; the private image contains root-only credential files.
 
 The supported value format is a UTF-8 JSON object, at most 64 KiB, with unique
 keys, finite numbers, at most 4,096 nodes and nesting depth 16. An extension can
@@ -319,14 +319,13 @@ application-specific schema and authentication material before using them.
 The shared runtime never executes supplied JSON or accepts caller-selected file
 paths, unit names or commands.
 
-Optional extensions provision after the current core boot is accepted. Their
-missing credentials leave core readiness independent. An extension implementing
-a selected core feature, or declaring mandatory `health_units`, needs committed
-credentials before boot acceptance. Disabled feature providers emit no credential
-catalogs, sockets or reader bindings. Each active extension has separate protected
-transaction history and a separate operator socket. See
-[credential provisioning](operations.md#extension-credential-provisioning) for
-the stage, verification and commit sequence.
+All active extension slots require build-time sources, including optional
+extensions. An extension implementing a selected core feature, or declaring
+mandatory `health_units`, must pass health checks before boot acceptance.
+Disabled feature providers emit no credential catalogs or reader bindings.
+There are no runtime provisioning sockets or credential transaction histories
+for image credentials. See [credential provisioning](operations.md#extension-credential-provisioning).
+
 
 An optional `network` object declares host listeners and managed-service clients.
 Both refer to users in the extension's `identities.users` list. For example:
@@ -541,19 +540,66 @@ preserves core accounts, rejects duplicate names/IDs and checks the final native
 registry. Account and sysusers files cannot be supplied as an ordinary overlay.
 Review any ownership conversion of existing state separately.
 
-Private migration inputs may supply an optional `runtime` object. Its
-`credentials` map binds declared credential names to canonical files beneath
-`/var/lib` or `/var/cache`. DNS, routing, directory policy, RADIUS and logging
-stage selected inputs through `LoadCredential`. SNMP uses its managed activation
-helper. Assembly does not read or copy credential values. The default path is
-`/var/lib/lanrith/credentials/<name>`, except the SNMP input at
-`/var/lib/lanrith/snmp/snmpd.conf`.
+The build-time `credentials` map is optional. A basic router with DHCP, recursive
+DNS, NTP and Internet forwarding needs no service credentials and no credential
+readiness gate. Add entries only for authentication used by enabled integrations:
 
-For active consumers, `/usr/share/lanrith/credentials.json` records the selected
-references, paths, native formats and service units. Disabled integrations add
-no requirement. It contains metadata only. The protected first-install writer,
-operator protocol and boot gate are still under implementation; this catalog
-does not seed an empty state filesystem.
+| Integration | When a credential is required |
+| --- | --- |
+| Authoritative DNS | Each configured signed-update writer; static zones need none |
+| BGP | Each peer group configured with password authentication |
+| Directory policy | The directory selected by the enabled policy; unused directories need none |
+| RADIUS | Shared secrets for configured UDP NAS clients and a UDP upstream proxy; a directory bind is separate and optional |
+| Remote logging | Only `authentication: basic`; `authentication: none` needs no credential |
+| SNMPv3 | The enabled monitoring user |
+| Extensions | Credential slots declared by an active admitted extension |
+
+Disabled integrations require no secret values. Their entries may remain in
+`credentials`: the builder does not read, validate file contents or embed unused
+inputs. Disabling DNS also disables its authoritative service and writer keys.
+Public SSH keys and build signing inputs are separate from this map.
+Extension references use `EXTENSION/NAME`:
+
+```yaml
+credentials:
+  directory_bind: {file: /run/private-build/directory-password}
+  example-addon/bootstrap: {file: /run/private-build/addon-bootstrap.json}
+```
+
+An enabled HTTPS log exporter can omit both `username` and `credential` for
+collectors without client authentication, or set `authentication: none`
+explicitly. TLS certificate and server-name validation still apply. Supplying
+both fields selects Basic authentication; `authentication: basic` can make that
+choice explicit. A partial pair or credentials combined with `none` is rejected,
+so a missing password cannot silently turn authentication off.
+
+RADIUS MAC admission currently uses a UDP proxy backend. Each NAS client and
+upstream proxy may specify `transport: udp` (the default); this protocol requires
+a matching shared secret. These are not per-device passwords. Other transports
+are rejected at build time rather than assigned an empty or invented secret.
+`admission: {network: devices}` uses the upstream server's admission decision
+without a directory bind. Add `directory` and `group_dn` only when integrating
+with Lanrith's directory policy; that integration requires its matching enabled
+policy and bind credential. Every accepted reply remains limited to the declared
+admission VLAN. Local RADIUS authentication and RADIUS/TLS are not implemented.
+
+Paths must be absolute and canonical. Files must have mode `0400` or `0600`
+and belong to the build user. Assembly rejects missing, linked or malformed
+inputs required by active consumers before creating the build workspace. The
+native formats are TSIG Base64, a BGP token, a directory password, a RADIUS shared secret, a logging
+password, and the bounded SNMP user configuration. Extension inputs are JSON
+objects. The generated catalog records formats, paths and consumer units;
+credential values are held separately in root-only image files.
+
+The YAML and source paths are build inputs only. Images and USB installers that
+contain these files are secret media: verified root storage does not encrypt
+them. See [credential provisioning](operations.md#service-credential-provisioning)
+for handling, A/B rotation and fallback requirements.
+
+Legacy `runtime.credentials` paths describe older mutable-state integrations.
+They cannot be combined with image credentials and cannot satisfy the complete
+credential-input requirement for new builds. `runtime.credential_headers` may
+still select the expected header for a retained SNMP input format.
 
 `runtime.service_identities` maps account names to required numeric `uid` and
 `gid`, with optional `home` and `shell`. Assembly checks the admitted base and

@@ -2,7 +2,7 @@
 
 import ipaddress
 
-from . import fancontrol_config, hardware_config, intent
+from . import authoritative, fancontrol_config, hardware_config, intent
 from .release import canonical, require
 
 
@@ -26,13 +26,13 @@ def required_units(value, *, target_facts=None, integrations=()):
                   'lanrith-policy-helper.service', 'lanrith-policy-reader.service']
     if value.get('identity', {}).get('radius', {}).get('enabled'):
         units.append('freeradius.service')
-    if value['services']['dns'].get('authoritative', {}).get('enabled'):
+    if authoritative.active(value):
         units.append('named.service')
     if value.get('translation', {}).get('nat46', {}).get('enabled'):
         units.append('lanrith-nat46.service')
     if value.get('translation', {}).get('nat64', {}).get('enabled'):
         units += ['lanrith-nat64.service', 'lanrith-nat64-internal.service']
-        if value['services']['dns'].get('authoritative', {}).get('enabled'):
+        if authoritative.active(value):
             units.append('lanrith-dns64-private.service')
     if target_facts is not None:
         units.append('lanrith-hardware-ownership.service')

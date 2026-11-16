@@ -201,6 +201,8 @@ class SNMPTests(unittest.TestCase):
             root = Path(temporary)
             base = root/'base.tar'
             base.write_bytes(b'synthetic assembly input')
+            from test_credential_image import fixture as credentials_fixture
+            value = credentials_fixture(root, value)
             build.assembly(value, base, root/'image', version='0.1.0', sequence=9)
             overlay = root/'image/mkosi.extra'
             self.assertTrue((overlay/'etc/systemd/system/snmpd.service').is_symlink())

@@ -61,7 +61,7 @@ def load(path):
 
 
 def effective_digest(value, integrations, serial_provisioning_sha256=None, *, target_facts=None,
-                     retained_allocations=None, boot_inputs=None, access_backend='tun'):
+                     retained_allocations=None, boot_inputs=None, access_backend='tun', credential_digest=None):
     """Bind normalized intent, admitted integrations and selected serial material."""
     value = normalize(value)
     require(isinstance(integrations, dict) and set(integrations) == set(value['extensions']) and
@@ -77,6 +77,10 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None, *, ta
     require(access_backend in ('legacy', 'tun'), 'Unknown access compiler.')
     if access_backend != 'legacy':
         inputs['access_backend'] = access_backend
+    if credential_digest is not None:
+        require(isinstance(credential_digest, str) and re.fullmatch(r'[0-9a-f]{64}', credential_digest),
+                'Invalid image credential digest.')
+        inputs['credential_digest'] = credential_digest
     if target_facts is not None:
         inputs['hardware_ownership'] = hardware_policy.ownership_manifest(value, target_facts)
     if retained_allocations is not None:
@@ -94,9 +98,11 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None, *, ta
 
 def normalize(value):
     value = intent.prepare(value)
+    from . import credential_image
+    credential_image.sources(value)
     fields(value, {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'access', 'services',
                    'administration', 'release', 'extensions', 'addressing', 'groups', 'routing',
-                   'translation', 'identity', 'observability', 'runtime'},
+                   'translation', 'identity', 'observability', 'runtime', 'credentials'},
            {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'administration'})
     require(type(value['schema']) is int and value['schema'] == 1, 'Unsupported configuration schema.')
     hostname = value['hostname']
@@ -479,7 +485,7 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
                                 'packet-queue-size': 64},
             'lease-database': {'type': 'memfile', 'persist': True, 'name': '/var/lib/kea/kea-leases4.csv'},
             'valid-lifetime': 3600, 'subnet4': scopes}
-        if value.get('identity', {}).get('radius', {}).get('enabled', False):
+        if radius.directory_admission(value):
             dhcp4['control-socket'] = {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
             # The qualified x86-64 Kea package supplies the commands used by
             # the bounded admission collector. A socket alone cannot serve them.

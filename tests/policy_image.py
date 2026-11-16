@@ -43,6 +43,10 @@ def main():
         value['translation'] = {'nat64': {'enabled': True}, 'nat46': {'enabled': True,
             'mappings': {'application': {'ipv4': '10.255.200.10', 'ipv6': 'fd42:1234:5678:10::20'}}}}
         value['runtime'] = {'trust': {'trust/directory.pem': (secret/'test.crt').read_text()}}
+        credential = secret/'directory-password'
+        credential.write_bytes(b'synthetic-policy-image-password\n')
+        credential.chmod(0o600)
+        value['credentials'] = {'directory_bind': {'file': str(credential)}}
         assembly = work/'image'
         identity = build.assembly(value, args.base, assembly, version='0.1.0', sequence=1,
             certificate=secret/'test.crt', private_key=secret/'test.key', initrd_base=args.initrd_base)

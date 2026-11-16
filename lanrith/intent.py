@@ -82,7 +82,7 @@ def prepare(value):
     """Expand only shorthand; repeated normalization is byte-for-byte stable."""
     fields(value, {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'access', 'services',
                    'administration', 'release', 'extensions', 'addressing', 'groups', 'routing',
-                   'translation', 'identity', 'observability', 'runtime'},
+                   'translation', 'identity', 'observability', 'runtime', 'credentials'},
            {'schema', 'hostname', 'hardware', 'uplink', 'networks', 'administration'})
     value = copy.deepcopy(value)
     hardware = value['hardware']

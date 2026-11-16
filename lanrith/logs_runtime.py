@@ -51,9 +51,16 @@ class LogsRuntimeError(ValueError):
 
 def load(path=MANIFEST, *, owner=0):
     value = decode(read(path, 64*1024, owner=owner), 64*1024)
+    if not isinstance(value, dict):
+        raise LogsRuntimeError('Log delivery contract differs.')
+    mode = value.get('authentication', 'basic')
+    if mode not in ('none', 'basic'):
+        raise LogsRuntimeError('Log authentication mode differs.')
+    auth_fields = {'username', 'credential_name'} if mode == 'basic' else set()
     value = exact(value, {
-        'schema_version', 'endpoint', 'target', 'source', 'tls_server_name',
-        'username', 'credential_name'} | ({'observer'} if isinstance(value, dict) and 'observer' in value else set()),
+        'schema_version', 'endpoint', 'target', 'source', 'tls_server_name'} | auth_fields |
+        ({'authentication'} if 'authentication' in value else set()) |
+        ({'observer'} if 'observer' in value else set()),
         'logs runtime')
     if 'observer' in value:
         observer = exact(value['observer'], {'user', 'uid', 'gid'}, 'Log observer')
@@ -70,10 +77,12 @@ def load(path=MANIFEST, *, owner=0):
     if (type(value['schema_version']) is not int or value['schema_version'] != 1 or parsed.scheme != 'https' or parsed.hostname != str(target) or
             parsed.port not in (None, 443) or parsed.username or parsed.password or parsed.query or parsed.fragment or
             target.version != source.version or not isinstance(value['tls_server_name'], str) or
-            not 1 <= len(value['tls_server_name']) <= 253 or not isinstance(value['username'], str) or
+            not 1 <= len(value['tls_server_name']) <= 253):
+        raise LogsRuntimeError('Log delivery contract differs.')
+    if mode == 'basic' and (not isinstance(value['username'], str) or
             not 1 <= len(value['username']) <= 64 or not isinstance(value['credential_name'], str) or
             not NAME.fullmatch(value['credential_name'])):
-        raise LogsRuntimeError('Log delivery contract differs.')
+        raise LogsRuntimeError('Log authentication contract differs.')
     return value
 
 
@@ -117,7 +126,10 @@ def stage(path=MANIFEST):
     os.chmod(RUNTIME, 0o750)
     if 'observer' in policy:
         prepare_local(policy['observer'], account)
-    write(RUNTIME/'password', credential(policy['credential_name']), account.pw_uid, group.gr_gid)
+    if policy.get('authentication', 'basic') == 'basic':
+        write(RUNTIME/'password', credential(policy['credential_name']), account.pw_uid, group.gr_gid)
+    else:
+        (RUNTIME/'password').unlink(missing_ok=True)
 
 
 def prepare_local(observer, account, path=LOCAL):
@@ -182,10 +194,10 @@ def prepare_local(observer, account, path=LOCAL):
         os.close(descriptor)
 
 
-def pipeline_healthy(text):
+def pipeline_healthy(text, *, minimum_components=9):
     """Alloy's HTTP health endpoints also succeed for an exited exporter.
 
-    Require the complete generated graph (nine components), no evaluation in
+    Require the complete selected graph, no evaluation in
     progress, and no failed/unknown/exited component. Extra admitted components
     must also be healthy; metrics from nested controllers cannot substitute.
     """
@@ -201,19 +213,20 @@ def pipeline_healthy(text):
                 counts[name] = int(value)
             elif match := EVALUATING.fullmatch(line):
                 evaluating.append(float(match[1]))
-        return (evaluating == [0] and counts.get('healthy', 0) >= 9 and
+        return (evaluating == [0] and counts.get('healthy', 0) >= minimum_components and
                 all(number == 0 for name, number in counts.items() if name != 'healthy'))
     except (ValueError, OverflowError):
         return False
 
 
-def health(*, local=False):
+def health(*, local=False, minimum_components=9):
     connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=2)
     try:
         connection.request('GET', '/metrics', headers={'Connection': 'close'})
         response = connection.getresponse()
         data = response.read(1024*1024+1)
-        if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(data.decode('ascii')):
+        if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(
+                data.decode('ascii'), minimum_components=minimum_components):
             raise LogsRuntimeError('Log component graph is not healthy.')
         return observation(data.decode('ascii'), local=local)
     except (OSError, http.client.HTTPException, UnicodeError) as error:
@@ -310,7 +323,11 @@ def notify(message):
             stream.sendto(message.encode('ascii'), address)
 
 
-def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION, local=False):
+def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION, local=False,
+              authentication='basic'):
+    if authentication not in ('none', 'basic'):
+        raise LogsRuntimeError('Log authentication mode differs.')
+    minimum_components = (9 if authentication == 'basic' else 7) + (3 if local else 0)
     stopping = False
 
     def stop(signum, frame):
@@ -330,7 +347,7 @@ def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path
             if child.poll() is not None:
                 raise LogsRuntimeError('Log exporter exited.')
             try:
-                value = health(local=True) if local else health()
+                value = health(local=local, minimum_components=minimum_components)
                 publish_observation(value, observation_path)
                 if local:
                     try:
@@ -371,7 +388,7 @@ def main(arguments=None):
             stage()
         else:
             policy = load()
-            supervise(local='observer' in policy)
+            supervise(local='observer' in policy, authentication=policy.get('authentication', 'basic'))
     except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print('logs-runtime: '+type(error).__name__+'; delivery remains closed', file=os.sys.stderr)
         return 1

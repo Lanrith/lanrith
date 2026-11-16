@@ -2,7 +2,7 @@
 
 from pathlib import PurePosixPath
 
-from . import bindings
+from . import authoritative, bindings
 from .release import canonical, require
 from .credential_values import FORMAT_UNITS, FORMATS, UNITS, validate_catalog
 
@@ -18,10 +18,8 @@ def catalog(value):
         credentials[reference] = item
         units.update(FORMAT_UNITS[kind])
 
-    dns = value['services']['dns'].get('authoritative', {})
-    if dns.get('enabled', False):
-        for writer in dns.get('writers', {}).values():
-            add(writer['credential'], 'tsig-base64')
+    for writer in authoritative.writers(value).values():
+        add(writer['credential'], 'tsig-base64')
     bgp = value.get('routing', {}).get('bgp', {})
     if bgp.get('enabled', False):
         for group in bgp['peer_groups'].values():
@@ -37,7 +35,7 @@ def catalog(value):
         for consumer in [*radius['clients'].values(), radius['proxy']]:
             add(consumer['credential'], 'radius-secret')
     logs = value.get('observability', {}).get('logs', {})
-    if logs.get('enabled', False):
+    if logs.get('enabled', False) and 'credential' in logs:
         add(logs['credential'], 'log-password')
     snmp = value.get('observability', {}).get('snmp', {})
     if snmp.get('enabled', False):
@@ -56,6 +54,14 @@ def render(value):
     result = catalog(value)
     if not result['credentials']:
         return {}
+    if 'credentials' in value:
+        files = {'usr/share/lanrith/credentials.json': canonical(result).decode(),
+            'usr/lib/systemd/system/lanrith-credential-ready.service': image_gate(
+                '/usr/bin/lanrith-credentials gate')}
+        for unit in result['units']:
+            files['etc/systemd/system/'+unit+'.d/50-lanrith-credentials.conf'] = (
+                '[Unit]\nRequires=lanrith-credential-ready.service\nAfter=lanrith-credential-ready.service\n')
+        return files
     control = '/var/lib/lanrith/credential-provisioning'
     directories = sorted({str(PurePosixPath(i['path']).parent) for i in result['credentials']})
     hardening = ('UMask=0077\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\n'
@@ -99,3 +105,16 @@ def render(value):
         files['etc/systemd/system/'+unit+'.d/50-lanrith-credentials.conf'] = (
             '[Unit]\nRequires=lanrith-credential-ready.service\nAfter=lanrith-credential-ready.service\n')
     return files
+
+
+def image_gate(command):
+    """One immediate check of signed image inputs, with no provisioning wait."""
+    return ('[Unit]\nDescription=Validate credentials supplied by this image\n'
+        'DefaultDependencies=no\nBefore=shutdown.target\nConflicts=shutdown.target\n'
+        '\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart='+command+'\n'
+        'TimeoutStartSec=30s\nUMask=0077\nNoNewPrivileges=yes\n'
+        'CapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\n'
+        'ProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nPrivateNetwork=yes\n'
+        'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\n'
+        'RestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\nLimitCORE=0\n'
+        'MemoryMax=128M\nMemorySwapMax=0\nTasksMax=16\n')

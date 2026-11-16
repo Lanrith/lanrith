@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from lanrith import build, config, credential_operation as core, credential_store, extensions, image_operation, runtime
+from lanrith import credential_image
 from lanrith import extension_credential_config as generation, extension_credential_operation as operation
 from lanrith.release import ReleaseError, canonical, file_record
 import test_extension_credentials as fixtures
@@ -55,6 +56,8 @@ class ExtensionCredentialAdmissionTests(unittest.TestCase):
                 value = minimal()
                 value['administration']['root_access'] = root_access
                 value['extensions'] = ['example-addon']
+                secret = root/'bootstrap'; secret.write_bytes(b'{"test":"synthetic"}'); secret.chmod(0o600)
+                value['credentials'] = {'example-addon/bootstrap': {'file': str(secret)}}
                 build.assembly(value, base, root/'assembly', version='0.1.0', sequence=12,
                                integrations={'example-addon': (source, pin)})
                 tree = root/'assembly/mkosi.extra'
@@ -64,8 +67,10 @@ class ExtensionCredentialAdmissionTests(unittest.TestCase):
                     'sha256': credential_store.digest(raw), 'core_required': False}})
                 self.assertEqual(installed['integration_health_units'], [])
                 self.assertIsNone(installed['credential_catalog_sha256'])
-                self.assertEqual(json.loads(raw), catalog())
-                self.assertTrue((tree/'usr/lib/systemd/system/sockets.target.wants/'
+                expected = catalog()
+                expected['credentials'][0]['path'] = '/usr/lib/lanrith/credentials/extensions/example-addon/bootstrap'
+                self.assertEqual(json.loads(raw), expected)
+                self.assertFalse((tree/'usr/lib/systemd/system/sockets.target.wants/'
                     'lanrith-extension-credential-example-addon.socket').is_symlink())
                 self.assertIn(' -I\n', (tree/'usr/bin/lanrith-extension-credentials').read_text())
                 for name in ('extension_credential_values', 'extension_credential_operation'):
@@ -77,7 +82,7 @@ class ExtensionCredentialAdmissionTests(unittest.TestCase):
                     self.assertFalse(any((tree/'etc/sudoers.d').glob('*')))
                 native = (tree/'etc/systemd/system/example-app.service.d/'
                           '50-lanrith-extension-credentials.conf').read_text()
-                self.assertIn('LoadCredential=bootstrap:/var/lib/lanrith/extension-credentials/example-addon/bootstrap', native)
+                self.assertIn('LoadCredential=bootstrap:/usr/lib/lanrith/credentials/extensions/example-addon/bootstrap', native)
 
     def test_disabled_provider_and_undeclared_slots_emit_no_provisioning_state_or_units(self):
         for credentials, features in ((True, ('dns',)), (False, ())):
@@ -87,6 +92,10 @@ class ExtensionCredentialAdmissionTests(unittest.TestCase):
                 value = config.normalize(minimal())
                 value['extensions'] = ['example-addon']
                 value['services']['dns']['enabled'] = False
+                value['credentials'] = {'example-addon/bootstrap': {'file': str(root/'not-present')}}
+                with patch.object(credential_image, 'private_read') as read:
+                    self.assertEqual(credential_image.resolve(value, {'example-addon': (root, pin)}), {})
+                    read.assert_not_called()
                 output = root/'output'
                 result = extensions.overlay(value, {'example-addon': (root, pin)}, output)
                 self.assertEqual(result['credential_catalogs'], {})

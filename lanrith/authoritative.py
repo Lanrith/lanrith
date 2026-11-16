@@ -13,7 +13,7 @@ def settings(value):
 
 
 def active(value):
-    return settings(value).get('enabled', False)
+    return value['services']['dns']['enabled'] and settings(value).get('enabled', False)
 
 
 def writers(value):

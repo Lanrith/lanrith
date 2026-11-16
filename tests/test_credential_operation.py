@@ -113,12 +113,15 @@ class CredentialProtocolTests(unittest.TestCase):
                     root = Path(temporary)
                     base = root/'base.tar'
                     base.write_bytes(b'synthetic input')
+                    if enabled:
+                        from test_credential_image import fixture
+                        value = fixture(root, value)
                     build.assembly(value, base, root/'work', version='0.1.0', sequence=12)
                     tree = root/'work/mkosi.extra'
                     installed = json.loads((tree/'usr/share/lanrith/installed.json').read_bytes())
                     self.assertEqual(installed['credential_catalog_sha256'] is not None, enabled)
                     units = tree/'usr/lib/systemd/system'
-                    self.assertEqual((units/'sockets.target.wants/lanrith-credentials.socket').is_symlink(), enabled)
+                    self.assertFalse((units/'sockets.target.wants/lanrith-credentials.socket').is_symlink())
                     self.assertIn(' -I\n', (tree/'usr/bin/lanrith-credentials').read_text())
                     if not enabled:
                         self.assertFalse((units/'lanrith-credentials.socket').exists())
@@ -126,8 +129,8 @@ class CredentialProtocolTests(unittest.TestCase):
                     source = (tree/'usr/share/lanrith/credentials.json').read_bytes()
                     self.assertEqual(credential_store.digest(source), installed['credential_catalog_sha256'])
                     manifest = json.loads(source)
-                    endpoint = (units/'lanrith-credentials@.service').read_text()
-                    self.assertIn('CollectMode=inactive-or-failed', endpoint)
+                    endpoint = (units/'lanrith-credential-ready.service').read_text()
+                    self.assertIn('TimeoutStartSec=30s', endpoint)
                     for control in ('NoNewPrivileges=yes', 'CapabilityBoundingSet=\n', 'PrivateNetwork=yes',
                                     'RestrictAddressFamilies=AF_UNIX', 'LimitCORE=0', 'ProtectSystem=strict'):
                         self.assertIn(control, endpoint)

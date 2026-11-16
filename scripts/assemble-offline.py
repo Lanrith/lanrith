@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import admission, build, build_inputs as boot, config, owner_inputs, release, trust
+from lanrith import admission, build, build_inputs as boot, config, credential_image, owner_inputs, release, trust
 import importlib.util
 spec = importlib.util.spec_from_file_location("consumer", Path(__file__).with_name("consumer.py"))
 consumer = importlib.util.module_from_spec(spec)
@@ -41,6 +41,10 @@ release.require(hashlib.sha256(release.canonical(value)).hexdigest() == receipt[
 integrations = consumer.integration_pins(args.owner, value)
 release.require({name: pin[1] for name, pin in integrations.items()} == receipt['integration_digests'],
                 'Owner integrations changed after isolated admission.')
+credentials = (credential_image.load(args.private/'credentials.json', value, integrations)
+               if receipt.get('credential_digest') else credential_image.validate(value, integrations, {}))
+release.require(credential_image.digest(credentials) == receipt.get('credential_digest'),
+                'Build credentials differ from admission.')
 boot_inputs = receipt.get('boot_inputs', {})
 extra = {}
 if boot_inputs:
@@ -68,7 +72,8 @@ release.require((args.fallback_release is not None) == ('fallback_binding' in bo
 serial_hash = args.private/'serial.hash' if value['administration']['serial']['enabled'] else None
 serial_digest = release.file_record(serial_hash)['sha256'] if serial_hash else None
 effective_digest = config.effective_digest(value, receipt['integration_digests'], serial_digest,
-                                         boot_inputs=boot.digest_fields(boot_inputs), **owner_options)
+                                         boot_inputs=boot.digest_fields(boot_inputs),
+                                         credential_digest=receipt.get('credential_digest'), **owner_options)
 release.require(serial_digest == receipt['serial_provisioning_sha256'] and
                 effective_digest == receipt['effective_configuration_sha256'],
                 'Effective configuration changed after isolated admission.')
@@ -76,7 +81,7 @@ identity = build.assembly(value, args.platform/'lanrith-base.tar.gz', args.works
                           version=selection['version'][1:], sequence=args.sequence,
                           certificate=args.private/'boot.crt', private_key=args.private/'boot.key',
                           initrd_base=args.platform/'lanrith-initrd-base.tar.gz', integrations=integrations,
-                          serial_hash=serial_hash, **extra, **owner_options)
+                          serial_hash=serial_hash, credentials=credentials, **extra, **owner_options)
 release.require(identity['configuration_sha256'] == effective_digest,
                 'Assembly identity differs from the admitted effective configuration.')
 build.run(args.workspace)

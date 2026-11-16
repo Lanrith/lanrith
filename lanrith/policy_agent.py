@@ -233,7 +233,8 @@ def runtime_contract(value, *, access_backend="tun"):
     translations.sort(key=lambda item: (item['kind'], item['manifest']))
     collector = None
     radius = identity.get('radius', {})
-    if radius.get('enabled', False):
+    from .radius import directory_admission
+    if directory_admission(value):
         admission_key = radius['admission']['network']
         admission = value['networks'][admission_key]
         ipv4 = next(ip.ip_interface(address).network for address in admission['addresses']

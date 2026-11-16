@@ -43,6 +43,7 @@ else:
     release.require(not {'pcr_certificate_sha256', 'pcr_public_key_sha256'} & boot.keys(),
                     'Manual-unlock evidence cannot declare a PCR signer.')
 effective_digest = config.effective_digest(value, integrations, deployment['serial_provisioning_sha256'],
+    credential_digest=deployment.get('credential_digest'),
                                          boot_inputs=build_inputs.digest_fields(boot), **owner_options)
 expected = {'configuration_sha256': hashlib.sha256(release.canonical(value)).hexdigest(),
             'effective_configuration_sha256': effective_digest,

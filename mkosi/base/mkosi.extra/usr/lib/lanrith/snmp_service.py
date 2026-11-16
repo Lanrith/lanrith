@@ -26,15 +26,18 @@ FILENAME = 'snmpd.conf'
 
 def policy_value(value):
     if (not isinstance(value, dict) or not {'schema', 'server', 'username'} <= set(value) <=
-            {'schema', 'server', 'username', 'state_directory', 'credential_header'}
+            {'schema', 'server', 'username', 'state_directory', 'credential_header', 'credential_delivery'}
             or type(value['schema']) is not int or value['schema'] != 1
             or not isinstance(value['username'], str)
             or re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,31}', value['username']) is None):
         raise SNMPError('SNMP runtime image policy is unsupported.', 76)
     credentials.listener_address(value['server'])
     directory = value.get('state_directory', str(ROOT))
-    if (not isinstance(directory, str) or len(directory) > 256
-            or re.fullmatch(r'/var/lib/[A-Za-z0-9_./-]+', directory) is None
+    immutable = value.get('credential_delivery') == 'image'
+    if ('credential_delivery' in value and not immutable or
+            not isinstance(directory, str) or len(directory) > 256
+            or re.fullmatch(r'/usr/lib/lanrith/credentials/core/[a-z][a-z0-9_-]{0,63}' if immutable else
+                            r'/var/lib/[A-Za-z0-9_./-]+', directory) is None
             or str(Path(directory)) != directory or '..' in Path(directory).parts
             or Path(directory).is_relative_to(PERSISTENT)):
         raise SNMPError('SNMP runtime private state path is unsupported.', 76)
@@ -220,6 +223,8 @@ class Service(SystemdService):
 
 
 def apply(policy, request):
+    if policy.get('credential_delivery') == 'image':
+        raise SNMPError('SNMP credentials change only through a new image.')
     header = policy.get('credential_header', credentials.HEADER)
     value = credentials.configuration(request, header)
     if request['username'] != policy['username']:
@@ -232,6 +237,16 @@ def apply(policy, request):
 def prepare(policy):
     """ExecCondition: recover before start, or skip the unit when unprovisioned."""
     header = policy.get('credential_header', credentials.HEADER)
+    if policy.get('credential_delivery') == 'image':
+        from lanrith.systemd_credential import read
+        path = Path(policy['state_directory'])/FILENAME
+        if path.resolve() != path:
+            raise SNMPError('Image SNMP credential contains a link.')
+        value = read(path, 4097, 0)
+        if credentials.parse(value, header)['username'] != policy['username']:
+            raise SNMPError('SNMP credentials do not match the image-authorized user.')
+        persistent_directory()
+        return True
     state = private_state(Path(policy.get('state_directory', ROOT)), header=header)
     with ExitStack() as stack:
         owned = True

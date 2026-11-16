@@ -5,11 +5,20 @@ import json
 from urllib.parse import urlsplit
 
 from . import bindings, intent, service_plane
-from .release import canonical
+from .release import canonical, require
 
 
 def active(value):
     return value.get('observability', {}).get('logs', {}).get('enabled', False)
+
+
+def authentication(settings):
+    fields = {'username', 'credential'} & settings.keys()
+    mode = settings.get('authentication', 'basic' if fields else 'none')
+    require(mode in ('none', 'basic') and
+            (fields == {'username', 'credential'} if mode == 'basic' else not fields),
+            'Log authentication requires either none without credentials or basic with username and credential.')
+    return mode
 
 
 def manifest(value, *, observer=None):
@@ -24,14 +33,23 @@ def manifest(value, *, observer=None):
         'target': str(target),
         'source': source,
         'tls_server_name': settings['tls_server_name'],
-        'username': settings['username'],
-        'credential_name': settings['credential'],
+        'authentication': authentication(settings),
+        **({'username': settings['username'], 'credential_name': settings['credential']}
+           if authentication(settings) == 'basic' else {}),
     }
 
 
 def configuration(value, *, observer=None):
     policy = manifest(value)
     quote = json.dumps
+    auth_components = ''
+    auth_handler = ''
+    if policy['authentication'] == 'basic':
+        auth_components = ('local.file "router_password" {\n'
+            '  filename  = "/run/lanrith-logs/password"\n  is_secret = true\n}\n\n'
+            'otelcol.auth.basic "router" {\n  username = '+quote(policy['username'])+'\n'
+            '  password = local.file.router_password.content\n}\n')
+        auth_handler = '    auth     = otelcol.auth.basic.router.handler\n'
     content = '''// Generated from admitted intent. No source configuration or secret is read at runtime.
 // Journal bodies never become labels, and redaction runs before the persistent queue.
 loki.relabel "router_journal" {
@@ -126,21 +144,12 @@ otelcol.storage.file "router" {
   }
 }
 
-local.file "router_password" {
-  filename  = "/run/lanrith-logs/password"
-  is_secret = true
-}
-
-otelcol.auth.basic "router" {
-  username = USERNAME
-  password = local.file.router_password.content
-}
+AUTH_COMPONENTS
 
 otelcol.exporter.otlphttp "router" {
   client {
     endpoint = ENDPOINT
-    auth     = otelcol.auth.basic.router.handler
-    timeout  = "15s"
+AUTH_HANDLER    timeout  = "15s"
     tls {
       server_name = SERVER_NAME
       min_version = "1.2"
@@ -166,9 +175,9 @@ otelcol.exporter.otlphttp "router" {
   }
 }
 '''.replace('HOSTNAME', quote(value['hostname'])).replace(
-        'USERNAME', quote(policy['username'])).replace(
         'ENDPOINT', quote(policy['endpoint'])).replace(
-        'SERVER_NAME', quote(policy['tls_server_name']))
+        'SERVER_NAME', quote(policy['tls_server_name'])).replace(
+        'AUTH_COMPONENTS', auth_components).replace('AUTH_HANDLER', auth_handler)
     if observer is not None:
         content = content.replace('forward_to = [otelcol.receiver.loki.router.receiver]',
             'forward_to = [otelcol.receiver.loki.router.receiver, loki.process.router_observations.receiver]')
@@ -213,14 +222,15 @@ def render(value, *, observer=None):
     # Resolving the target to exactly one declared attachment is both a
     # validation gate and the source of the firewall's outgoing interface.
     service_plane.destination_network(value, ip.ip_address(policy['target']))
-    credential = policy['credential_name']
+    credential = policy.get('credential_name')
+    credential_binding = ('LoadCredential='+credential+':'+bindings.credential_path(value, credential)+'\n'
+                          if credential else '')
     unit = (
         '[Unit]\nDescription=Redact and export the router journal\n'
         'Requires=lanrith-services.service\nAfter=lanrith-services.service systemd-journald.service\n'
         'BindsTo=lanrith-services.service nftables.service\n\n[Service]\nType=notify\nNotifyAccess=main\n'
         'User=alloy\nGroup=alloy\nSupplementaryGroups=systemd-journal\n'
-        'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'
-        'LoadCredential='+credential+':'+bindings.credential_path(value, credential)+'\n'
+        'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'+credential_binding+
         'ExecStartPre=+/usr/lib/lanrith/logs-runtime stage\n'
         'ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\nExecReload=\n'
         'EnvironmentFile=\nWorkingDirectory=/var/lib/lanrith-alloy\n'

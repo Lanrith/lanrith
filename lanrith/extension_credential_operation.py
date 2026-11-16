@@ -83,6 +83,7 @@ def activate(store, *, core_required, committed=False):
 
 
 def execute(value, extension, selected):
+    require(value.get('credential_delivery') != 'image', 'Extension credentials change only through a new image.')
     store = store_for(value, extension)
     require(store.items, 'This extension has no credential provisioning requirement.')
     if not eligible(value, extension):
@@ -156,6 +157,8 @@ def serve(connection, extension):
 
 
 def ready(value, extension, *, committed=True):
+    if value.get('credential_delivery') == 'image':
+        return core.image_ready(catalog(value, extension), extension=extension)
     store = store_for(value, extension)
     if not eligible(value, extension):
         return False
@@ -168,6 +171,8 @@ def required_ready(value):
 
 
 def wait_ready(value, extension, *, setup=False):
+    if value.get('credential_delivery') == 'image':
+        return ready(value, extension)
     catalog(value, extension)
     deadline = time.monotonic()+core.PROVISION_SECONDS
     while True:

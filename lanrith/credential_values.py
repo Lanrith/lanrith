@@ -37,7 +37,9 @@ def validate_catalog(value):
                 'Credential descriptor differs.')
         path = PurePosixPath(item['path'])
         require(str(path) == item['path'] and '..' not in path.parts and
-                str(path).startswith(('/var/lib/', '/var/cache/')) and
+                (str(path).startswith(('/var/lib/', '/var/cache/')) or str(path) ==
+                 '/usr/lib/lanrith/credentials/core/'+item['reference']+
+                 ('/snmpd.conf' if item['format'] == 'snmp-user' else '')) and
                 str(path.parent) not in ('/var/lib', '/var/cache', '/var/lib/lanrith') and
                 not path.is_relative_to('/var/lib/lanrith/credential-provisioning') and
                 not path.is_relative_to('/var/lib/lanrith/extension-credentials') and

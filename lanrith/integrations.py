@@ -132,8 +132,7 @@ def dns_records(value):
     dns = value['services']['dns']
     authoritative = dns.get('authoritative', {})
     intent.fields(authoritative, {'enabled', 'primary_zone', 'writers', 'zones'})
-    active = enabled(authoritative)
-    require(not active or dns['enabled'], 'Authoritative DNS requires the DNS service.')
+    active = enabled(authoritative) and dns['enabled']
     if active:
         domain(authoritative.get('primary_zone'))
     zones = authoritative.get('zones', {})
@@ -240,20 +239,28 @@ def identity(value):
     if enabled(radius):
         radius_network = selected_network(value, radius.get('network'))
         admission = radius.get('admission')
-        intent.fields(admission, {'directory', 'group_dn', 'network'}, {'directory', 'group_dn', 'network'})
-        directory_reference(admission['directory'])
-        text(admission['group_dn'])
+        intent.fields(admission, {'directory', 'group_dn', 'network'}, {'network'})
         admitted = selected_network(value, admission['network'])
-        require(admission['network'] in policy.get('networks', []),
-                'RADIUS admission must be enforced by the selected identity policy.')
-        require('dhcp4' in admitted and any(ip.ip_interface(a).version == 4 for a in admitted['addresses']) and
-                1 <= admitted.get('vlan', 0) <= 4094,
-                'RADIUS admission requires a tagged DHCPv4 network.')
+        require(('directory' in admission) == ('group_dn' in admission),
+                'Directory admission requires both a directory and group DN.')
+        if 'directory' in admission:
+            directory_reference(admission['directory'])
+            text(admission['group_dn'])
+            require(enabled(policy) and policy['directory'] == admission['directory'] and
+                    admission['network'] in policy.get('networks', []),
+                    'RADIUS directory admission requires its selected identity policy.')
+            require('dhcp4' in admitted and any(ip.ip_interface(a).version == 4 for a in admitted['addresses']),
+                    'RADIUS directory admission requires a DHCPv4 network.')
+        require(1 <= admitted.get('vlan', 0) <= 4094, 'RADIUS admission requires a tagged network.')
+        require('proxy' in radius, 'The RADIUS MAC proxy backend requires an upstream proxy.')
     clients = intent.named(radius.get('clients', {}), 64)
+    require(not enabled(radius) or bool(clients), 'RADIUS requires at least one configured NAS client.')
     for client in clients.values():
-        intent.fields(client, {'address', 'kind', 'port', 'credential'}, {'address', 'kind', 'credential'})
+        intent.fields(client, {'address', 'kind', 'port', 'transport', 'credential'}, {'address', 'kind'})
         intent.network(client['address'])
         require(client['kind'] in ('wired_mab', 'wireless_mac'), 'Unknown RADIUS client kind.')
+        require(client.get('transport', 'udp') == 'udp', 'The RADIUS MAC backend currently supports UDP transport.')
+        require('credential' in client, 'A RADIUS UDP NAS client requires a shared-secret credential reference.')
         credential(client['credential'])
         if 'port' in client:
             integer(client['port'], 1, 65535)
@@ -267,8 +274,10 @@ def identity(value):
                     'RADIUS client is outside its declared attachment network.')
     if 'proxy' in radius:
         proxy = radius['proxy']
-        intent.fields(proxy, {'address', 'credential'}, {'address', 'credential'})
+        intent.fields(proxy, {'address', 'transport', 'credential'}, {'address'})
         intent.address(proxy['address'])
+        require(proxy.get('transport', 'udp') == 'udp', 'The RADIUS MAC backend currently supports UDP transport.')
+        require('credential' in proxy, 'A RADIUS UDP proxy requires a shared-secret credential reference.')
         credential(proxy['credential'])
         if enabled(radius):
             target = intent.address(proxy['address'])
@@ -280,8 +289,7 @@ def identity(value):
                     'RADIUS proxy is outside its declared attachment network.')
     fallback = radius.get('fallback', {})
     intent.fields(fallback, {'enabled', 'clients'})
-    if enabled(fallback):
-        require(enabled(radius), 'RADIUS fallback requires RADIUS.')
+    if enabled(fallback) and enabled(radius):
         for key in intent.sequence(fallback.get('clients'), 64, 1):
             require(key in clients and clients[key]['kind'] == 'wired_mab' and 'port' in clients[key] and
                     intent.network(clients[key]['address']).num_addresses == 1,
@@ -347,11 +355,15 @@ def validate(value):
     intent.fields(observability, {'metrics', 'logs', 'snmp', 'ids'})
     for key, settings in observability.items():
         allowed = {'clients'} if key == 'metrics' else {'clients', 'username', 'credential'} if key == 'snmp' else {
-            'endpoint', 'tls_server_name', 'username', 'credential'} if key == 'logs' else set()
+            'endpoint', 'tls_server_name', 'authentication', 'username', 'credential'} if key == 'logs' else set()
         intent.fields(settings, allowed | {'enabled'})
         active = enabled(settings)
         if active:
-            require(allowed <= set(settings), 'Enabled observability integration is missing configuration.')
+            required = {'endpoint', 'tls_server_name'} if key == 'logs' else allowed
+            require(required <= set(settings), 'Enabled observability integration is missing configuration.')
+        if key == 'logs':
+            from .logs import authentication
+            authentication(settings)
         if 'clients' in settings:
             intent.sequence(settings['clients'], 64, 1)
             endpoints(value, settings['clients'])

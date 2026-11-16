@@ -77,92 +77,71 @@ offline. Exercise recovery with populated state before a production cutover.
 
 ## Service credential provisioning
 
-An image with credential-dependent integrations emits a fixed catalog at
-`/usr/share/lanrith/credentials.json`. It contains references, native formats,
-paths and consumer units. Credential values and owner YAML stay outside the
-image. The installed metadata binds the catalog's digest; a missing or changed
-catalog cannot disable the boot requirement. Minimal profiles have no catalog,
-provisioning socket or credential wait.
+A basic Lanrith installation needs no service credentials. Supply a credential
+only when an enabled integration uses it; disabled integrations and unused
+directory declarations need no values. Static DNS zones also need no TSIG keys.
+The optional `credentials` map connects each active service's reference to an
+absolute file path on the build controller:
 
-The configured operator can inspect provisioning through the existing SSH
-transport, including with `administration.root_access: disabled`:
-
-```sh
-ssh operator@router lanrith-credentials status
+```yaml
+credentials:
+  directory_bind: {file: /run/private-build/directory-password}
+  vpn_bgp: {file: /run/private-build/bgp-password}
 ```
 
-For initial installation or newly selected bindings, the owner's protected
-secret-manager runner supplies a JSON object on stdin. Each key is a catalog
-reference; each value is canonical Base64 of the complete native credential
-file. TSIG's native file already contains Base64, so the transport encodes that
-file again. Invoke `lanrith-credentials stage CONFIGURATION_SHA256` through SSH
-with that object as stdin. Never put values in arguments, environment variables,
-source files or temporary controller files. The server checks the socket peer's
-UID and validates the complete set before stopping any consumer.
+Have your existing secret manager materialize these files in private temporary
+storage for the build. Files must be ordinary, singly linked files owned by the
+build user, with mode `0400` or `0600`. For active references, symlinks, missing
+files, invalid native formats and incomplete sets fail the build. Unused
+references are not opened or embedded, so disabling a feature does not require
+removing its file references or keeping those files available. Values do not belong
+in YAML, command arguments or logs. The local builder checks the set again
+against preflight and passes it to the offline container through private tmpfs.
 
-Staging returns a transaction ID and starts the selected consumers so the
-owner's automation can check actual authentication and permissions. Syntax
-validation alone does not establish backend agreement. After those checks pass,
-the same operator confirms that exact transaction:
+**Treat the resulting private image, build workspace, backups and installer USB
+as secret media.** The verified root is read-only, not encrypted. Anyone who can
+read the raw image can extract its credentials. Keep these artifacts out of
+public releases and shared caches. The public platform contains no owner values.
 
-```sh
-ssh operator@router lanrith-credentials commit TRANSACTION_ID
-```
+The image stores its selected credentials under
+`/usr/lib/lanrith/credentials/`, in root-owned private directories and files.
+Services receive only their declared values through systemd `LoadCredential`;
+SNMP reads its private image configuration while retaining its engine identity
+and boot counter in encrypted persistent state. Owner YAML and controller source
+paths are not runtime inputs.
 
-Confirmation permits the normal image-health checks to run. It cannot bypass
-them. The service starts an inactive completion observer and leaves an active
-observer running. It never restarts that observer or stops mandatory firewall
-guards. SSH/OOB, recursive DNS and NTP have no dependency on the credential gate.
+First boot validates the image files immediately. There is no credential upload,
+stage/commit operation, or ten-minute provisioning wait. Missing or malformed
+image inputs fail the readiness check; the existing health and fallback logic
+still decides whether the image can be accepted. SSH/OOB, recursive DNS and NTP
+have no dependency on this credential check. Recovery-key acknowledgement
+remains a separate installation step.
 
-Provisioning has a 600-second window before the ordinary image-readiness
-deadline; the completion service's outer deadline remains effective. A failed
-candidate returns to its accepted fallback. On an initial installation, a late
-successful confirmation can start completion again without reinstalling.
-Keep the separate recovery-key acknowledgement and other health requirements
-in the installation workflow.
-
-Unchanged admitted bindings carry through ordinary A/B updates automatically.
-Staging cannot change a value needed by an admitted fallback. Initial,
-uncommitted installation values can be corrected; each replacement gets a new
-transaction ID. Interrupted writes resume only for the same image and catalog.
-Credential rotation needs a separately qualified transition workflow.
+Rotate credentials by building and installing a new image through A/B updates.
+Each slot carries its own set, so booting the previous slot selects its original
+credentials without restoring shared secret files. Keep the previous credentials
+valid at external services while that slot remains a supported fallback; image
+rollback cannot undo a password revocation in an external directory or service.
+Validate backend authentication as part of private image acceptance.
 
 ## Extension credential provisioning
 
-The same installed operator can provision an admitted extension with root access
-disabled. Each namespace has its own catalog, socket, lock and transaction history.
-Use the extension ID from the reviewed manifest:
+An admitted extension declares its JSON credential slots and service readers in
+its manifest. Supply each active slot under `EXTENSION/NAME` in the same build
+configuration:
 
-```sh
-ssh operator@router lanrith-extension-credentials example-addon status
+```yaml
+credentials:
+  example-addon/bootstrap: {file: /run/private-build/addon-bootstrap.json}
 ```
 
-The protected secret-manager runner sends the complete set as a JSON object on
-stdin: keys are slot names and values are canonical Base64 of each complete JSON
-credential object. Invoke `lanrith-extension-credentials example-addon stage
-CONFIGURATION_SHA256` with that input. The returned transaction ID identifies
-the exact prepared bytes and compiled reader bindings. Consumers receive
-systemd credentials under `$CREDENTIALS_DIRECTORY/NAME`. After the extension's
-authentication and functional checks succeed, confirm that transaction:
-
-```sh
-ssh operator@router lanrith-extension-credentials example-addon commit TRANSACTION_ID
-```
-
-An optional namespace reports `needs-core-acceptance` until both the persisted
-image identity and the current boot observation confirm acceptance. Its stage
-and commit operations control only its declared readers and readiness gate.
-An extension required by core health can provision before acceptance; boot
-completion waits for its committed set alongside the core credentials.
-
-Uncommitted extension values can be corrected after core acceptance. Invalid
-input and attempted changes to admitted values are rejected before readers stop.
-Changing readers requires fresh admission. To rotate an admitted value, use a
-new slot name in a newly built image and qualify the transition with the retained
-fallback. Each namespace retains its admitted history; exhausted history fails
-before service quiescence. Interrupted writes resume only for the same image,
-catalog and namespace. Extension state initialization and application-specific
-checks belong to that extension.
+Lanrith validates the bounded JSON object at build time and installs it under
+`/usr/lib/lanrith/credentials/extensions/EXTENSION/NAME`. The declared consumers
+receive it through `$CREDENTIALS_DIRECTORY/NAME`; an unrelated service receives
+no read grant. Extension credentials follow the same image rotation and fallback
+rules as core credentials. Optional extension startup remains subject to normal
+core boot acceptance. A required extension must pass its configured health
+checks before the image is accepted.
 
 ## Credential recovery after compromise
 

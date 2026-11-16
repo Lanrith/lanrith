@@ -387,7 +387,7 @@ class QualificationTests(unittest.TestCase):
                         selected = 'lanrith/credential_operation.py' if alteration == 'runtime-source' else 'scripts/qualify-credentials.py'
                         (project/selected).write_text('changed after qualification')
                     elif alteration == 'missing-check':
-                        report['checks'].remove('native-loadcredential-bytes')
+                        report['checks'].remove('native-loadcredential-unprivileged-reader')
                     elif alteration == 'extra-input':
                         report['implementation_sha256']['unreviewed.py'] = 'b'*64
                     elif alteration == 'missing-input':

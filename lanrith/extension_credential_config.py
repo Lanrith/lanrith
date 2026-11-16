@@ -7,7 +7,7 @@ from . import extension_credential_values as values
 from .release import canonical, require
 
 
-def render(extension, selected, operator, *, core_required):
+def render(extension, selected, operator, *, core_required, image=False):
     values.validate_catalog(extension, selected)
     require(type(core_required) is bool, 'Extension credential readiness role differs.')
     require(isinstance(operator, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,30}', operator),
@@ -15,6 +15,17 @@ def render(extension, selected, operator, *, core_required):
     if not selected['credentials']:
         return {}
     stem = 'lanrith-extension-credential-'+extension
+    if image:
+        from .credential_config import image_gate
+        result = {'usr/share/lanrith/extension-credentials/'+extension+'.json': canonical(selected).decode(),
+            'usr/lib/systemd/system/'+stem+'-ready.service': image_gate(
+                '/usr/bin/lanrith-extension-credentials '+extension+' gate')}
+        for unit in selected['units']:
+            result['etc/systemd/system/'+unit+'.d/50-lanrith-extension-credentials.conf'] = (
+                '[Unit]\nRequires='+stem+'-ready.service\nAfter='+stem+'-ready.service\n\n[Service]\n'+
+                ''.join('LoadCredential='+item['reference']+':'+item['path']+'\n'
+                        for item in selected['credentials'] if unit in item['parameters']['consumers']))
+        return result
     control = values.control_path(extension)
     secrets = '/var/lib/lanrith/extension-credentials/'+extension
     command = '/usr/bin/lanrith-extension-credentials '+extension+' '
@@ -68,13 +79,17 @@ def render(extension, selected, operator, *, core_required):
     return result
 
 
-def install(declarations, destination, operator):
+def install(declarations, destination, operator, *, image=False):
     index = {}
     for extension, selected, required in declarations:
         if not selected['credentials']:
             continue
         require(extension not in index and len(index) < 64, 'Extension credential namespace inventory differs.')
-        for name, text in render(extension, selected, operator, core_required=required).items():
+        if image:
+            selected = {**selected, 'credentials': [{**item, 'path':
+                '/usr/lib/lanrith/credentials/extensions/'+extension+'/'+item['reference']}
+                for item in selected['credentials']]}
+        for name, text in render(extension, selected, operator, core_required=required, image=image).items():
             target = destination/name
             require(not target.exists() and not target.is_symlink(),
                     'Extension file conflicts with generated credential authority.')

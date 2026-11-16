@@ -10,6 +10,10 @@ def active(value):
     return value.get('identity', {}).get('radius', {}).get('enabled', False)
 
 
+def directory_admission(value):
+    return active(value) and 'directory' in value['identity']['radius']['admission']
+
+
 def manifest(value):
     radius = value['identity']['radius']
     listeners = intent.service_addresses(value, 'radius')

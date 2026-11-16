@@ -75,6 +75,7 @@ def activate(store, *, committed=False):
 
 
 def execute(value, selected):
+    require(value.get('credential_delivery') != 'image', 'Credentials change only through a new image.')
     store = store_for(value)
     require(store.items, 'This image has no credential provisioning requirement.')
     with store.lock():
@@ -158,6 +159,8 @@ def serve(connection):
 
 def ready(value, *, committed=True):
     selected = catalog(value)
+    if value.get('credential_delivery') == 'image':
+        return image_ready(selected)
     if not selected['credentials']:
         return True
     store = credential_store.Store(value, selected)
@@ -172,6 +175,8 @@ def wait_ready(value, *, committed=True, deadline_seconds=PROVISION_SECONDS):
     if not catalog(value)['credentials'] and (not committed or
             not any(row['core_required'] for row in index(value).values())):
         return True
+    if value.get('credential_delivery') == 'image':
+        return ready(value, committed=committed) and (not committed or required_ready(value))
     deadline = time.monotonic()+deadline_seconds
     while True:
         try:
@@ -185,6 +190,7 @@ def wait_ready(value, *, committed=True, deadline_seconds=PROVISION_SECONDS):
 
 
 def setup(value):
+    require(value.get('credential_delivery') != 'image', 'Image credentials need no mutable setup.')
     store = store_for(value)
     require(store.items, 'No credential setup scope.')
     store.setup()
@@ -249,6 +255,20 @@ def main(arguments=None):
             print(json.dumps(client(selected), sort_keys=True))
     except (OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError):
         # Never print parser errors, subprocess output, paths or supplied bytes.
-        print('Credential operation failed; inspect operator status and system diagnostics.', file=sys.stderr)
+        print('Credential operation failed; inspect service status and system diagnostics.', file=sys.stderr)
         return 1
     return 0
+
+
+def image_ready(selected, *, extension=None):
+    from .systemd_credential import read
+    from .credential_values import validate
+    from .extension_credential_values import validate as validate_extension
+    from pathlib import Path
+    for item in selected['credentials']:
+        require(item['path'].startswith('/usr/lib/lanrith/credentials/'), 'Image credential path differs.')
+        path = Path(item['path'])
+        require(path.resolve() == path, 'Image credential path contains a link.')
+        raw = read(path, 65536 if extension else 4097, 0)
+        (validate_extension if extension else validate)(item, raw)
+    return True
