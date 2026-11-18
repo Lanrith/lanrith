@@ -220,7 +220,7 @@ def pipeline_healthy(text, *, minimum_components=9):
 
 
 def health(*, local=False, minimum_components=9):
-    connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=2)
+    connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=5)
     try:
         connection.request('GET', '/metrics', headers={'Connection': 'close'})
         response = connection.getresponse()
@@ -323,7 +323,7 @@ def notify(message):
             stream.sendto(message.encode('ascii'), address)
 
 
-def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION, local=False,
+def supervise(command=ALLOY, *, startup_seconds=60, interval=3, observation_path=OBSERVATION, local=False,
               authentication='basic'):
     if authentication not in ('none', 'basic'):
         raise LogsRuntimeError('Log authentication mode differs.')
