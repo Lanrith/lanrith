@@ -422,7 +422,8 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
         kind, selector = next(iter(interface['match'].items()))
         match = {'mac': 'MACAddress', 'path': 'Path', 'driver': 'Driver'}[kind]
         files[f'etc/systemd/network/10-{key}.link'] = (
-            f'[Match]\n{match}={selector}\n\n[Link]\nName={interface["name"]}\n'
+            # VLANs inherit their parent's MAC; they keep their netdev names.
+            f'[Match]\n{match}={selector}\nKind=!vlan\n\n[Link]\nName={interface["name"]}\n'
             f'MTUBytes={interface.get("mtu", 1500)}\n')
         if interface.get('state') == 'down':
             files[f'etc/systemd/network/15-{key}-disabled.network'] = (

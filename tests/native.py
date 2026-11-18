@@ -137,3 +137,6 @@ subprocess.run([sys.executable, str(Path(__file__).with_name('kea_control_native
 # Observe the real private Chrony socket with the service identity, while the
 # host metrics reader retains only CAP_NET_ADMIN and a snapshot read group.
 subprocess.run([sys.executable, str(Path(__file__).with_name('ntp_health_native.py'))], check=True, timeout=45)
+
+# Physical-link naming must not rename a tagged network that inherits its MAC.
+subprocess.run([sys.executable, str(Path(__file__).with_name('link_native.py'))], check=True, timeout=30)

@@ -29,6 +29,8 @@ def render(value):
         'default-log-dir': '/var/log/suricata',
         'max-pending-packets': 1024,
         'runmode': 'workers',
+        # Observation must not attempt to change the router's NIC settings.
+        'capture': {'disable-offloading': False},
         'af-packet': [{'interface': wan, 'threads': 1, 'cluster-id': 99, 'cluster-type': 'cluster_flow',
                        'use-mmap': True, 'tpacket-v3': True, 'disable-promisc': True}],
         'flow': {'memcap': '32mb', 'hash-size': 65536, 'prealloc': 10000},

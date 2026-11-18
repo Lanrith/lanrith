@@ -18,7 +18,8 @@ class ServiceHardeningTests(unittest.TestCase):
                       'CAP_NET_BIND_SERVICE\n', unit)
         self.assertIn('ProtectSystem=strict\n', unit)
         self.assertIn('SystemCallFilter=~', unit)
-        self.assertIn('MemoryMax=512M\nMemorySwapMax=0\nTasksMax=64\nLimitNOFILE=4096\n', unit)
+        self.assertIn('MemoryMax=512M\nMemorySwapMax=0\nTasksMax=64\n', unit)
+        self.assertIn('LimitNOFILE=8192\n', unit)
         self.assertIn('pidfile: "/run/unbound/unbound.pid"', runtime)
         self.assertIn('control-enable: no', runtime)
 
@@ -50,7 +51,7 @@ class ServiceHardeningTests(unittest.TestCase):
         health = (ROOT/'mkosi/base/mkosi.extra/usr/lib/lanrith/verify-host-hardening').read_text()
         self.assertIn('require_service_hardening unbound.service', health)
         self.assertIn('require_service_hardening kea-dhcp4-server.service', health)
-        self.assertIn('require_service_resources unbound.service 536870912 64 4096', health)
+        self.assertIn('require_service_resources unbound.service 536870912 64 8192', health)
         self.assertIn('require_service_resources chrony.service 134217728 32 1024', health)
         self.assertIn('require_service_resources kea-dhcp4-server.service 268435456 64 4096', health)
         self.assertIn('cron.service systemd-hostnamed.service systemd-hostnamed.socket '
