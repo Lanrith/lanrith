@@ -63,7 +63,7 @@ CREDENTIAL_CHECKS = {
     'operator-and-unrelated-user-read-denial',
     'pid1-named-user-acl-and-owning-group-denial',
     'required-and-optional-extension-image-credentials',
-    'snmp-image-input-with-separate-engine-state',
+    'snmp-image-input-with-separate-engine-state', 'snmp-fresh-engine-directory-before-sandbox',
 }
 CREDENTIAL_IMPLEMENTATION = {
     'lanrith/authoritative.py',

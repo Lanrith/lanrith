@@ -438,6 +438,16 @@ def main():
         except KeyError:
             run('useradd', '--system', '--no-create-home', 'Debian-snmp')
         policy = tree/'etc/lanrith/integrations/snmp-runtime-policy.json'
+        # Fresh /var contains no package-created engine directory. It must exist
+        # before systemd constructs the daemon's ReadWritePaths sandbox.
+        shutil.rmtree('/var/lib/snmp', ignore_errors=True)
+        run('systemd-tmpfiles', '--create', str(tree/'usr/lib/tmpfiles.d/80-lanrith-snmp.conf'))
+        engine = Path('/var/lib/snmp').stat()
+        assert engine.st_uid == pwd.getpwnam('Debian-snmp').pw_uid
+        assert stat.S_IMODE(engine.st_mode) == 0o700
+        unit = (tree/'usr/lib/systemd/system/snmpd.service').read_text()
+        assert 'ExecStartPre=/usr/lib/lanrith/snmp-runtime prepare\n' in unit
+        assert 'ExecCondition=' not in unit
         snmp_source = Path('/usr/lib/lanrith/credentials/core/monitor_user/snmpd.conf')
         before = snmp_source.stat()
         run('python3', '-c', 'import sys,json;sys.path.insert(0,"/usr/lib/lanrith");'
@@ -466,7 +476,7 @@ def main():
                        'native-loadcredential-unprivileged-reader', 'operator-and-unrelated-user-read-denial',
                        'image-set-rotation-and-fallback-selection', 'missing-and-malformed-input-fast-failure',
                        'required-and-optional-extension-image-credentials', 'generated-log-credential-staging',
-                       'snmp-image-input-with-separate-engine-state',
+                       'snmp-image-input-with-separate-engine-state', 'snmp-fresh-engine-directory-before-sandbox',
                        'pid1-named-user-acl-and-owning-group-denial', 'no-secret-in-journal'],
             'limits': ['synthetic-consumers', 'simulated-slot-selection',
                        'no-ssh-or-encryption-acceptance', 'no-full-image-or-backend-qualification']}
