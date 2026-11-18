@@ -203,7 +203,7 @@ def render(value):
         'ExecStartPre=/usr/sbin/freeradius -Cx -lstdout\n'
         'BindReadOnlyPaths=/run/lanrith-radius/clients.conf:/etc/freeradius/3.0/clients.conf\n'
         'BindReadOnlyPaths=/run/lanrith-radius/proxy.conf:/etc/freeradius/3.0/proxy.conf\n'
-        'ReadWritePaths=/run/freeradius\n'
+        'ReadWritePaths=/run/freeradius\nLogsDirectory=freeradius\nLogsDirectoryMode=0750\n'
         'IPAddressDeny=any\nIPAddressAllow=localhost\n'+
         ''.join('IPAddressAllow='+prefix+'\n' for prefix in allows)+
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nNoNewPrivileges=yes\n'

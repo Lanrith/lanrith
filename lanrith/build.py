@@ -403,6 +403,8 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
                    if value.get('identity', {}).get('policy', {}).get('enabled') else set())
     if value['services'].get('discovery', {}).get('enabled'):
         auxiliaries.add('avahi-daemon.socket')
+    if 'freeradius.service' in required:
+        auxiliaries.add('lanrith-radius-runtime.service')
     for unit in sorted(set(required) | auxiliaries | {'lanrith-slot-initialization.service', 'lanrith-recovery-key.service',
                                        'lanrith-health.service', 'lanrith-observation.service',
                                        'lanrith-ssh-host-key.service'}):

@@ -100,5 +100,6 @@ def render(value):
             'ExecStart=/usr/sbin/unbound -d -p -c /etc/unbound/unbound-private.conf\n'
             'Restart=on-failure\nRestartSec=2s\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n'
             'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
-            'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n'
+            # Unbound enumerates interfaces through an unprivileged netlink socket.
+            'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK\n'
             '[Install]\nWantedBy=multi-user.target\n')}

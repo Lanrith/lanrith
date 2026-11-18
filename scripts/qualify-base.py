@@ -43,13 +43,15 @@ DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-autho
     'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
 DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
     'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
-    'lanrith/config.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
+    'lanrith/config.py',
+    'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
     'tests/test_directory.py', 'tests/test_policy_agent.py', 'tests/test_intent.py'}
 CREDENTIAL_CHECKS = {
     'basic-router-no-credential-requirement',
     'dns-authority-without-writer-credentials',
     'radius-proxy-without-directory-credentials',
     'radius-native-cold-start-restart-and-readonly-fragments',
+    'dns64-native-sandbox-cold-start-restart',
     'enabled-log-without-authentication',
     'generated-log-credential-staging',
     'image-set-rotation-and-fallback-selection',
@@ -68,6 +70,7 @@ CREDENTIAL_IMPLEMENTATION = {
     'lanrith/bindings.py',
     'lanrith/build.py',
     'lanrith/config.py',
+    'lanrith/dns64.py',
     'lanrith/credential_config.py',
     'lanrith/credential_image.py',
     'lanrith/credential_operation.py',

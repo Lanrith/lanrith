@@ -61,6 +61,9 @@ class RadiusContractTests(unittest.TestCase):
             build.assembly(value, base, root/'image', version='0.1.0', sequence=1)
             tree = root/'image/mkosi.extra'
             self.assertTrue((tree/'etc/systemd/system/freeradius.service.d/60-lanrith.conf').exists())
+            helper = tree/'etc/systemd/system/lanrith-radius-runtime.service'
+            self.assertTrue(helper.is_symlink())
+            self.assertEqual(helper.readlink(), Path('/usr/lib/systemd/system/lanrith-radius-runtime.service'))
             self.assertFalse((tree/'etc/router-policy-agent').exists())
             self.assertFalse((tree/'usr/lib/lanrith/credentials/core/directory_bind').exists())
             self.assertNotIn('control-socket', json.loads((tree/'etc/kea/kea-dhcp4.conf').read_bytes())['Dhcp4'])

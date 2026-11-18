@@ -35,6 +35,7 @@ IMPLEMENTATION = {
     'lanrith/bindings.py',
     'lanrith/build.py',
     'lanrith/config.py',
+    'lanrith/dns64.py',
     'lanrith/credential_config.py',
     'lanrith/credential_image.py',
     'lanrith/credential_operation.py',
@@ -205,9 +206,11 @@ def native_radius_startup(files, policy, references):
     entry.chmod(0o755)
     run('systemctl', 'daemon-reload')
     assert not Path('/run/lanrith-radius').exists()
+    shutil.rmtree('/var/log/freeradius', ignore_errors=True)
     try:
         run('systemctl', 'start', 'freeradius.service')
         run('systemctl', 'is-active', '--quiet', 'freeradius.service')
+        assert Path('/var/log/freeradius').is_dir()
         fragment = Path('/run/lanrith-radius/clients.conf')
         before = fragment.stat()
         assert before.st_uid == 0 and stat.S_IMODE(before.st_mode) == 0o640
@@ -229,6 +232,39 @@ def native_radius_startup(files, policy, references):
         raise
     finally:
         run('systemctl', 'stop', 'freeradius.service')
+        run('ip', 'netns', 'delete', 'lanrith-services')
+
+
+def native_dns64_startup():
+    """Run the generated DNS64 unit with its real sandbox and query loopback."""
+    value = dns_declaration()
+    value['translation'] = {'nat64': {'enabled': True}}
+    files = config.render(value)
+    units = Path('/run/systemd/system')
+    units.mkdir(exist_ok=True)
+    for name in ('lanrith-services.service', 'nftables.service', 'named.service'):
+        (units/name).write_text('[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
+    run('ip', 'netns', 'add', 'lanrith-services')
+    network = ['nsenter', '--net=/run/netns/lanrith-services', '--']
+    run(*network, 'ip', 'link', 'set', 'lo', 'up')
+    unit = 'lanrith-dns64-private.service'
+    (units/unit).write_text(files['usr/lib/systemd/system/'+unit])
+    Path('/etc/unbound/unbound-private.conf').write_text(files['etc/unbound/unbound-private.conf'])
+    run('systemctl', 'daemon-reload')
+    try:
+        for action in ('start', 'restart'):
+            run('systemctl', action, unit)
+            for attempt in range(20):
+                answer = subprocess.run([*network, 'dig', '@127.0.0.1', '-p', '5354',
+                    'localhost', 'A', '+short', '+time=1', '+tries=1'], capture_output=True, timeout=3)
+                if answer.returncode == 0 and answer.stdout.strip() == b'127.0.0.1':
+                    break
+                time.sleep(.1)
+            else:
+                raise AssertionError('Generated DNS64 sandbox cannot start and answer local DNS.')
+            run('systemctl', 'is-active', '--quiet', unit)
+    finally:
+        run('systemctl', 'stop', unit)
         run('ip', 'netns', 'delete', 'lanrith-services')
 
 
@@ -269,6 +305,7 @@ def native_service_authentication(root):
     Path('/etc/freeradius/3.0/proxy.conf').write_text(radius_runtime.proxy_configuration(policy, secrets))
     run('freeradius', '-Cx', '-lstdout')
     native_radius_startup(files, policy, references)
+    native_dns64_startup()
 
 
 def main():
@@ -424,6 +461,7 @@ def main():
             'checks': ['basic-router-no-credential-requirement', 'dns-authority-without-writer-credentials',
                        'radius-proxy-without-directory-credentials', 'enabled-log-without-authentication',
                        'radius-native-cold-start-restart-and-readonly-fragments',
+                       'dns64-native-sandbox-cold-start-restart',
                        'nine-native-credentials-at-first-start', 'no-upload-or-mutable-credential-store',
                        'native-loadcredential-unprivileged-reader', 'operator-and-unrelated-user-read-denial',
                        'image-set-rotation-and-fallback-selection', 'missing-and-malformed-input-fast-failure',
