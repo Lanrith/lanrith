@@ -533,15 +533,46 @@ def bindings_loop(contract_path=CONTRACT, interval=30):
         time.sleep(interval)
 
 
+def kernel_clock_state():
+    """Query Linux clock discipline without granting permission to change it."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    query = libc.adjtimex
+    query.argtypes = [ctypes.c_void_p]
+    query.restype = ctypes.c_int
+    # An aligned, zeroed buffer is larger than Linux struct timex on supported
+    # machines. Its modes field stays zero: this syscall only reads state.
+    observation = (ctypes.c_long * 64)()
+    state = query(ctypes.byref(observation))
+    if state < 0:
+        raise OSError(ctypes.get_errno(), 'Kernel clock observation failed.')
+    return state
+
+
+def wait_clock():
+    """Keep startup guards closed during bounded initial time synchronization."""
+    deadline = time.monotonic()+90
+    print('policy-runtime: waiting up to 90 seconds for synchronized kernel time', flush=True)
+    while kernel_clock_state() != 0:  # TIME_OK; leap/error/unsynchronized states wait.
+        if time.monotonic() >= deadline:
+            raise PolicyRuntimeError('Synchronized kernel time is unavailable.')
+        time.sleep(.5)
+    # This does not authorize a flow. The helper independently checks the full
+    # kernel clock reading, policy generation and fresh grants before admission.
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop', 'serve'))
+    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop', 'serve', 'wait-clock'))
     args = parser.parse_args(arguments)
     try:
         if args.operation == 'install-guards':
             install_guards()
         elif args.operation == 'bootstrap':
             bootstrap()
+        elif args.operation == 'wait-clock':
+            wait_clock()
         elif args.operation == 'serve':
             serve()
         else:
