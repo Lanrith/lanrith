@@ -76,6 +76,7 @@ IMPLEMENTATION = {
     'tests/test_logs.py',
     'tests/test_logs_runtime.py',
     'tests/test_radius.py',
+    'tests/radius_proxy_fixture.py',
     'tests/test_routing.py',
     'tests/test_systemd_credential.py',
 }
@@ -173,6 +174,39 @@ def generated_log_staging(tree, units, raw, value):
     assert Path('/run/lanrith-logs/no-auth-proof').read_text() == 'passed'
 
 
+def native_radius_clients(policy, network):
+    """Every declared NAS reaches the authenticated proxy; unknown MACs stay denied."""
+    import ipaddress
+
+    upstream = policy['proxy']['address']
+    run(*network, 'ip', 'address', 'add', upstream+('/128' if ':' in upstream else '/32'), 'dev', 'lo')
+    with tempfile.TemporaryDirectory(prefix='radius-proxy.') as temporary:
+        proof = Path(temporary)/'packets'
+        backend = subprocess.Popen([*network, 'python3', str(Path(__file__).with_name('radius_proxy_fixture.py')),
+            upstream, str(proof)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            for _ in range(50):
+                if Path(str(proof)+'.ready').exists(): break
+                assert backend.poll() is None
+                time.sleep(.1)
+            for index, client in enumerate(policy['clients'], 1):
+                prefix = ipaddress.ip_network(client['address'])
+                source = str(prefix.network_address+(1 if prefix.num_addresses > 1 else 0))
+                run(*network, 'ip', 'address', 'add', source+'/32', 'dev', 'lo')
+                packet = ('User-Name = "020000000001"\nUser-Password = "020000000001"\n'
+                    'Calling-Station-Id = "02:00:00:00:00:01"\nService-Type = Call-Check\n'
+                    'NAS-Port = 5\nMessage-Authenticator = 0x00\nPacket-Src-IP-Address = '+source+'\n')
+                result = subprocess.run([*network, 'radclient', '-t', '3', '-r', '1',
+                    policy['listeners'][0]+':1812', 'auth', 'A'*32], input=packet.encode(),
+                    capture_output=True, timeout=10)
+                assert b'Access-Reject' in result.stdout, result.stdout+result.stderr
+                assert proof.exists() and int(proof.read_text()) >= index, \
+                    'Configured NAS did not reach the authenticated proxy: '+client['name']
+        finally:
+            backend.terminate()
+            backend.wait(timeout=5)
+
+
 def native_radius_startup(files, policy, references):
     """Cold start and restart the packaged daemon with the real generated sandbox."""
     units = Path('/run/systemd/system')
@@ -225,6 +259,7 @@ def native_radius_startup(files, policy, references):
         run('systemctl', 'restart', 'freeradius.service')
         run('systemctl', 'is-active', '--quiet', 'freeradius.service')
         assert fragment.stat().st_ino != before.st_ino
+        native_radius_clients(policy, network)
     except AssertionError:
         diagnostic = subprocess.run(['journalctl', '-b', '--no-pager', '-n', '50',
             '-u', 'freeradius.service', '-u', 'lanrith-radius-runtime.service'], capture_output=True, timeout=10)
@@ -470,7 +505,7 @@ def main():
             'external_network': False, 'private_image_qualified': False,
             'checks': ['basic-router-no-credential-requirement', 'dns-authority-without-writer-credentials',
                        'radius-proxy-without-directory-credentials', 'enabled-log-without-authentication',
-                       'radius-native-cold-start-restart-and-readonly-fragments',
+                       'radius-native-cold-start-restart-and-readonly-fragments', 'all-radius-nas-clients-reach-authenticated-proxy',
                        'dns64-native-sandbox-cold-start-restart',
                        'nine-native-credentials-at-first-start', 'no-upload-or-mutable-credential-store',
                        'native-loadcredential-unprivileged-reader', 'operator-and-unrelated-user-read-denial',

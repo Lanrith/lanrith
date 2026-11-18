@@ -50,7 +50,7 @@ CREDENTIAL_CHECKS = {
     'basic-router-no-credential-requirement',
     'dns-authority-without-writer-credentials',
     'radius-proxy-without-directory-credentials',
-    'radius-native-cold-start-restart-and-readonly-fragments',
+    'radius-native-cold-start-restart-and-readonly-fragments', 'all-radius-nas-clients-reach-authenticated-proxy',
     'dns64-native-sandbox-cold-start-restart',
     'enabled-log-without-authentication',
     'generated-log-credential-staging',
@@ -111,6 +111,7 @@ CREDENTIAL_IMPLEMENTATION = {
     'tests/test_logs.py',
     'tests/test_logs_runtime.py',
     'tests/test_radius.py',
+    'tests/radius_proxy_fixture.py',
     'tests/test_routing.py',
     'tests/test_systemd_credential.py',
 }

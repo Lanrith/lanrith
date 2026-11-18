@@ -131,8 +131,9 @@ def _site(policy):
         '    }',
         '    authorize {',
     ]
-    for client in policy['clients']:
-        text.append('        if ("%{client:shortname}" == "'+client['name']+'") {')
+    for index, client in enumerate(policy['clients']):
+        branch = 'if' if index == 0 else 'elsif'
+        text.append('        '+branch+' ("%{client:shortname}" == "'+client['name']+'") {')
         text.extend(_mab_validation('            ').rstrip().splitlines())
         text += ['            update control {', '                Proxy-To-Realm := "lanrith"',
                  '            }', '        }']
