@@ -328,6 +328,11 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
         '\n[Install]\nWantedBy=multi-user.target\n')
     wants = overlay / 'etc/systemd/system'
     wants.mkdir(parents=True, exist_ok=True)
+    # Administration has image-owned network listeners. Do not generate an
+    # additional VSOCK listener, including on machines without VSOCK support.
+    generators = overlay/'etc/systemd/system-generators'
+    generators.mkdir(parents=True, exist_ok=True)
+    (generators/'systemd-ssh-generator').symlink_to('/dev/null')
     # Core confinement must also reach owners assembling on an older admitted
     # base. Keep one source for both the neutral base and every owner overlay.
     policies = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/etc/systemd/system'
