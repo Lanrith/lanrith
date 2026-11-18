@@ -49,6 +49,7 @@ CREDENTIAL_CHECKS = {
     'basic-router-no-credential-requirement',
     'dns-authority-without-writer-credentials',
     'radius-proxy-without-directory-credentials',
+    'radius-native-cold-start-restart-and-readonly-fragments',
     'enabled-log-without-authentication',
     'generated-log-credential-staging',
     'image-set-rotation-and-fallback-selection',

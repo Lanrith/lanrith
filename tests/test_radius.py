@@ -102,8 +102,18 @@ class RadiusContractTests(unittest.TestCase):
         self.assertEqual(policy['admission_vlan'], 22)
         self.assertEqual(policy['fallback_clients'], ['wired-switch'])
         unit = files['etc/systemd/system/freeradius.service.d/60-lanrith.conf']
+        stage = files['usr/lib/systemd/system/lanrith-radius-runtime.service']
         for reference in ('radius_wired', 'radius_wireless', 'radius_upstream'):
-            self.assertIn('LoadCredential='+reference+':/var/lib/lanrith/credentials/'+reference, unit)
+            self.assertIn('LoadCredential='+reference+':/var/lib/lanrith/credentials/'+reference, stage)
+        self.assertNotIn('LoadCredential=', unit)
+        self.assertNotIn('radius-runtime stage', unit)
+        self.assertIn('Requires=lanrith-services.service lanrith-radius-runtime.service', unit)
+        self.assertIn('ExecStartPre=\nExecStartPre=/usr/sbin/freeradius', unit)
+        self.assertIn('User=root\nGroup=freerad', stage)
+        self.assertIn('RuntimeDirectoryPreserve=yes', stage)
+        self.assertNotIn('RemainAfterExit', stage)
+        self.assertIn('CapabilityBoundingSet=\n', stage)
+        self.assertNotIn('BindReadOnlyPaths', stage)
         self.assertIn('NetworkNamespacePath=/run/netns/lanrith-services', unit)
         self.assertIn('/run/lanrith-radius/clients.conf:/etc/freeradius/3.0/clients.conf', unit)
         self.assertNotIn('shared_secret', ''.join(files.values()))

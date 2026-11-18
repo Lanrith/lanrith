@@ -194,22 +194,35 @@ def render(value):
                     {str(ip.ip_network(policy['proxy']['address']))})
     unit = (
         '[Unit]\nDescription=Bounded network admission and accounting\n'
-        'Requires=lanrith-services.service\nAfter=lanrith-services.service systemd-journald.service\n'
+        'Requires=lanrith-services.service lanrith-radius-runtime.service\n'
+        'After=lanrith-services.service lanrith-radius-runtime.service systemd-journald.service\n'
         'BindsTo=lanrith-services.service nftables.service\n'
         'Before=lanrith-policy-bindings.service\n\n[Service]\n'
-        'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'+credentials+
-        'ExecStartPre=/usr/lib/lanrith/radius-runtime stage\n'
+        'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'
+        'ExecStartPre=\n'
         'ExecStartPre=/usr/sbin/freeradius -Cx -lstdout\n'
         'BindReadOnlyPaths=/run/lanrith-radius/clients.conf:/etc/freeradius/3.0/clients.conf\n'
         'BindReadOnlyPaths=/run/lanrith-radius/proxy.conf:/etc/freeradius/3.0/proxy.conf\n'
-        'RuntimeDirectory=lanrith-radius\nRuntimeDirectoryMode=0750\n'
-        'ReadWritePaths=/run/lanrith-radius /run/freeradius\n'
+        'ReadWritePaths=/run/freeradius\n'
         'IPAddressDeny=any\nIPAddressAllow=localhost\n'+
         ''.join('IPAddressAllow='+prefix+'\n' for prefix in allows)+
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nNoNewPrivileges=yes\n'
         'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\n'
         'Restart=on-failure\nRestartSec=2s\n')
+    # Mount sources must exist before systemd constructs the daemon's sandbox.
+    # A separate root helper also keeps the native fragments read-only to freerad.
+    stage = (
+        '[Unit]\nDescription=Prepare protected RADIUS configuration fragments\n'
+        'Before=freeradius.service\n\n[Service]\nType=oneshot\nUser=root\nGroup=freerad\n'
+        'ExecStart=/usr/lib/lanrith/radius-runtime stage\n'+credentials+
+        'RuntimeDirectory=lanrith-radius\nRuntimeDirectoryMode=0750\nRuntimeDirectoryPreserve=yes\n'
+        'UMask=0077\nTimeoutStartSec=30s\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n'
+        'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nPrivateNetwork=yes\n'
+        'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\n'
+        'ProtectControlGroups=yes\nRestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\n'
+        'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
+        'ReadWritePaths=/run/lanrith-radius\nMemoryMax=64M\nMemorySwapMax=0\nTasksMax=8\nLimitCORE=0\n')
     return {
         'usr/share/lanrith/radius.json': canonical(policy).decode(),
         'etc/freeradius/3.0/clients.conf': '# Runtime credentials are staged through systemd credentials.\n',
@@ -225,4 +238,5 @@ def render(value):
         'etc/freeradius/3.0/sites-enabled/default': _site(policy),
         'etc/freeradius/3.0/sites-enabled/lanrith_mab_fallback': _fallback(policy),
         'etc/systemd/system/freeradius.service.d/60-lanrith.conf': unit,
+        'usr/lib/systemd/system/lanrith-radius-runtime.service': stage,
     }
