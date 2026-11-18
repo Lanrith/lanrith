@@ -140,3 +140,6 @@ subprocess.run([sys.executable, str(Path(__file__).with_name('ntp_health_native.
 
 # Physical-link naming must not rename a tagged network that inherits its MAC.
 subprocess.run([sys.executable, str(Path(__file__).with_name('link_native.py'))], check=True, timeout=30)
+
+# Restarting a dependency must not append another copy of the identity guards.
+subprocess.run([sys.executable, str(Path(__file__).with_name('policy_guards_native.py'))], check=True, timeout=30)

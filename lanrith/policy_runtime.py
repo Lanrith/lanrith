@@ -206,8 +206,9 @@ def atomic(path, value, *, owner=0, group=0, mode=0o600):
         temporary.unlink(missing_ok=True)
 
 
-def command(arguments, timeout=15):
-    result = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+def command(arguments, timeout=15, *, data=None):
+    result = subprocess.run(arguments, input=data, stdin=subprocess.DEVNULL if data is None else None,
+                            stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, timeout=timeout)
     if result.returncode:
         raise PolicyRuntimeError('Policy runtime command failed: '+Path(arguments[0]).name+'.')
@@ -491,9 +492,16 @@ def install_guards(contract_path=CONTRACT):
     if os.geteuid() != 0:
         raise PolicyRuntimeError('Policy guard installation requires root.')
     contract = load_contract(contract_path)
-    metadata(contract)
+    pins = metadata(contract)
     wait_interfaces(contract)
-    command([contract['nft_executable'], '-f', str(Path(contract['profile_directory'])/'guards.nft')])
+    guards = read(Path(contract['profile_directory'])/'guards.nft', 8*1024*1024, private=True)
+    if hashlib.sha256(guards).hexdigest() != pins['guards_sha256']:
+        raise PolicyRuntimeError('Policy guards changed after image verification.')
+    # Re-declaring a table appends its rules. Replace this fixed guard table's
+    # rules in one atomic batch, retaining set elements and their expiry times.
+    # The main access table and its startup barrier remain untouched.
+    batch = b'add table netdev lanrith_identity\nflush table netdev lanrith_identity\n'+guards
+    command([contract['nft_executable'], '-f', '-'], data=batch)
 
 
 def bootstrap(contract_path=CONTRACT):
