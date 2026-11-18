@@ -1,6 +1,7 @@
 """RADIUS is compiled as bounded connectivity, never embedded credentials."""
 
 import copy
+import ipaddress
 import json
 from pathlib import Path
 import tempfile
@@ -33,6 +34,23 @@ def declaration():
 
 
 class RadiusContractTests(unittest.TestCase):
+    def test_host_boundary_admits_only_configured_nas_udp_to_radius(self):
+        value = config.normalize(declaration())
+        files = config.render(value)
+        policy = radius.manifest(value)
+        nas = sorted(str(ipaddress.ip_network(c['address'])) for c in policy['clients'])
+        network = value['networks'][value['identity']['radius']['network']]['name']
+        rules = [line.strip() for line in files['etc/nftables.conf'].splitlines()
+                 if 'dport { 1812, 1813 }' in line]
+        target = next(a for a in policy['listeners'] if ':' not in a)
+        self.assertEqual(rules, [f'iifname "{network}" oifname "lr-services" '
+            f'ip saddr {{ {", ".join(nas)} }} ip daddr {{ {target} }} udp dport {{ 1812, 1813 }} accept'])
+        forward = files['etc/nftables.conf'].split('chain forward', 1)[1]
+        self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index(rules[0]))
+        self.assertLess(forward.index(rules[0]), forward.index('oifname "lr-services" drop'))
+        value['identity']['radius'] = {'enabled': False}
+        self.assertNotIn('dport { 1812, 1813 }', config.render(value)['etc/nftables.conf'])
+
     def test_transport_controls_the_shared_secret_requirement(self):
         value = declaration()
         for client in value['identity']['radius']['clients'].values():
