@@ -78,7 +78,10 @@ def static_routes(value, network):
     for route in value.get('routing', {}).get('static_routes', []):
         if route['network'] == network:
             for prefix in integrations.prefixes(value, route['to']):
-                text += f'\n[Route]\nDestination={prefix}\nScope=link\n'
+                text += f'\n[Route]\nDestination={prefix}\n'
+                # IPv6 direct routes have no gateway; networkd ignores Scope.
+                if ip.ip_network(prefix).version == 4:
+                    text += 'Scope=link\n'
     return text
 
 

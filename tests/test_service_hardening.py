@@ -27,6 +27,7 @@ class ServiceHardeningTests(unittest.TestCase):
         unit = (ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/'
                 '30-lanrith-hardening.conf').read_text()
         self.assertIn('CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW\n', unit)
+        self.assertIn('ConfigurationDirectoryMode=0750\n', unit)
         self.assertIn('AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW\n', unit)
         self.assertIn('NoNewPrivileges=yes\n', unit)
         self.assertIn('RestrictAddressFamilies=AF_INET AF_INET6 AF_PACKET AF_NETLINK AF_UNIX\n', unit)

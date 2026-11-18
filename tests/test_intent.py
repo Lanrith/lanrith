@@ -70,6 +70,23 @@ class IntentTests(unittest.TestCase):
         self.assertIn('oifname "lan" drop', firewall)
         self.assertNotIn('iifname "lan" oifname "lr-services"', firewall)
 
+    def test_networkd_preserves_only_required_on_link_service_proxy_ndp(self):
+        for delivery in ('on_link', 'routed'):
+            for enabled in (False, True):
+                value = minimal()
+                value['uplink']['ipv6'] = {
+                    'address': '2001:db8:10::2/48' if delivery == 'on_link' else '2001:db8:20::2/64',
+                    'gateway': '2001:db8:10::1' if delivery == 'on_link' else '2001:db8:20::1',
+                    'downstream_prefix': '2001:db8:10::/48', 'delivery': delivery}
+                value['services'] = {'dns': {'enabled': enabled}, 'ntp': {'enabled': enabled}}
+                files = config.render(value)
+                with self.subTest(delivery=delivery, enabled=enabled):
+                    self.assertIn('IPv6ProxyNDP='+('yes' if enabled and delivery == 'on_link' else 'no')+'\n',
+                                  files['etc/systemd/network/20-uplink.network'])
+        value = minimal()
+        value['uplink']['ipv6'] = 'disabled'
+        self.assertIn('IPv6ProxyNDP=no\n', config.render(value)['etc/systemd/network/20-uplink.network'])
+
     def test_global_and_network_disabling_remove_connectivity_and_listeners(self):
         for name in ('dns', 'ntp', 'dhcp4'):
             value = minimal()

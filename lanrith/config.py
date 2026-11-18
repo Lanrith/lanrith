@@ -432,9 +432,13 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
     wan = interfaces[value['uplink']['interface']]['name']
     uplink = value['uplink']
     dhcp = 'ipv4' if uplink.get('ipv4', 'dhcp') == 'dhcp' else 'no'
+    proxy_ndp = bool(service_plane.topology(value)['proxy'])
     files['etc/systemd/network/20-uplink.network'] = (
         f'[Match]\nName={wan}\n\n[Network]\nDHCP={dhcp}\n'
         f'IPv6AcceptRA={"yes" if uplink.get("ipv6", "ra") == "ra" else "no"}\n'
+        # Networkd reapplies this switch when restarted. It must agree with
+        # the service attachment instead of disabling its on-link replies.
+        f'IPv6ProxyNDP={"yes" if proxy_ndp else "no"}\n'
         'LLMNR=no\nMulticastDNS=no\n' +
         ('LinkLocalAddressing=no\n' if uplink.get('ipv6', 'ra') == 'disabled' else 'LinkLocalAddressing=ipv6\n') +
         ''.join(f'Address={address}\n' for address in uplink.get('addresses', [])) +
