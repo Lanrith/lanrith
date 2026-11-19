@@ -35,6 +35,7 @@ IMPLEMENTATION = {
     'lanrith/bindings.py',
     'lanrith/build.py',
     'lanrith/config.py',
+    'lanrith/dns64.py',
     'lanrith/credential_config.py',
     'lanrith/credential_image.py',
     'lanrith/credential_operation.py',
@@ -75,6 +76,7 @@ IMPLEMENTATION = {
     'tests/test_logs.py',
     'tests/test_logs_runtime.py',
     'tests/test_radius.py',
+    'tests/radius_proxy_fixture.py',
     'tests/test_routing.py',
     'tests/test_systemd_credential.py',
 }
@@ -172,6 +174,135 @@ def generated_log_staging(tree, units, raw, value):
     assert Path('/run/lanrith-logs/no-auth-proof').read_text() == 'passed'
 
 
+def native_radius_clients(policy, network):
+    """Every declared NAS reaches the authenticated proxy; unknown MACs stay denied."""
+    import ipaddress
+
+    upstream = policy['proxy']['address']
+    run(*network, 'ip', 'address', 'add', upstream+('/128' if ':' in upstream else '/32'), 'dev', 'lo')
+    with tempfile.TemporaryDirectory(prefix='radius-proxy.') as temporary:
+        proof = Path(temporary)/'packets'
+        backend = subprocess.Popen([*network, 'python3', str(Path(__file__).with_name('radius_proxy_fixture.py')),
+            upstream, str(proof)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            for _ in range(50):
+                if Path(str(proof)+'.ready').exists(): break
+                assert backend.poll() is None
+                time.sleep(.1)
+            for index, client in enumerate(policy['clients'], 1):
+                prefix = ipaddress.ip_network(client['address'])
+                source = str(prefix.network_address+(1 if prefix.num_addresses > 1 else 0))
+                run(*network, 'ip', 'address', 'add', source+'/32', 'dev', 'lo')
+                packet = ('User-Name = "020000000001"\nUser-Password = "020000000001"\n'
+                    'Calling-Station-Id = "02:00:00:00:00:01"\nService-Type = Call-Check\n'
+                    'NAS-Port = 5\nMessage-Authenticator = 0x00\nPacket-Src-IP-Address = '+source+'\n')
+                result = subprocess.run([*network, 'radclient', '-t', '3', '-r', '1',
+                    policy['listeners'][0]+':1812', 'auth', 'A'*32], input=packet.encode(),
+                    capture_output=True, timeout=10)
+                assert b'Access-Reject' in result.stdout, result.stdout+result.stderr
+                assert proof.exists() and int(proof.read_text()) >= index, \
+                    'Configured NAS did not reach the authenticated proxy: '+client['name']
+        finally:
+            backend.terminate()
+            backend.wait(timeout=5)
+
+
+def native_radius_startup(files, policy, references):
+    """Cold start and restart the packaged daemon with the real generated sandbox."""
+    units = Path('/run/systemd/system')
+    units.mkdir(exist_ok=True)
+    for name in ('lanrith-services.service', 'nftables.service'):
+        (units/name).write_text('[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
+    # Network/firewall readiness is a fixture precondition. The service,
+    # credentials, staging helper, privilege boundary and daemon are real.
+    run('ip', 'netns', 'add', 'lanrith-services')
+    network = ['nsenter', '--net=/run/netns/lanrith-services', '--']
+    run(*network, 'ip', 'link', 'set', 'lo', 'up')
+    for address in policy['listeners']:
+        run(*network, 'ip', 'address', 'add',
+            address+('/128' if ':' in address else '/32'), 'dev', 'lo')
+    store = Path('/var/lib/lanrith/credentials')
+    store.mkdir(parents=True, mode=0o700, exist_ok=True)
+    for name in references:
+        (store/name).write_bytes(b'A'*32)
+        (store/name).chmod(0o600)
+    metadata = Path('/usr/share/lanrith')
+    metadata.mkdir(parents=True, exist_ok=True)
+    (metadata/'radius.json').write_text(files['usr/share/lanrith/radius.json'])
+    for name in ('usr/lib/systemd/system/lanrith-radius-runtime.service',
+                 'etc/systemd/system/freeradius.service.d/60-lanrith.conf'):
+        target = units/name.split('system/', 1)[1]
+        target.parent.mkdir(exist_ok=True)
+        target.write_text(files[name])
+    entry = Path('/usr/lib/lanrith/radius-runtime')
+    entry.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0,"/usr/lib/lanrith")\n'
+                     'from lanrith.radius_runtime import main\nsys.exit(main())\n')
+    entry.chmod(0o755)
+    run('systemctl', 'daemon-reload')
+    assert not Path('/run/lanrith-radius').exists()
+    shutil.rmtree('/var/log/freeradius', ignore_errors=True)
+    try:
+        run('systemctl', 'start', 'freeradius.service')
+        run('systemctl', 'is-active', '--quiet', 'freeradius.service')
+        assert Path('/var/log/freeradius').is_dir()
+        fragment = Path('/run/lanrith-radius/clients.conf')
+        before = fragment.stat()
+        assert before.st_uid == 0 and stat.S_IMODE(before.st_mode) == 0o640
+        for user in ('freerad', 'fixture-other'):
+            denied = subprocess.run(['runuser', '-u', user, '--', 'python3', '-c',
+                'from pathlib import Path;Path("/run/lanrith-radius/clients.conf").write_bytes(b"changed")'],
+                capture_output=True, timeout=10)
+            assert denied.returncode != 0
+        denied = subprocess.run(['runuser', '-u', 'freerad', '--', str(entry), 'stage'],
+                                capture_output=True, timeout=10)
+        assert denied.returncode != 0
+        run('systemctl', 'restart', 'freeradius.service')
+        run('systemctl', 'is-active', '--quiet', 'freeradius.service')
+        assert fragment.stat().st_ino != before.st_ino
+        native_radius_clients(policy, network)
+    except AssertionError:
+        diagnostic = subprocess.run(['journalctl', '-b', '--no-pager', '-n', '50',
+            '-u', 'freeradius.service', '-u', 'lanrith-radius-runtime.service'], capture_output=True, timeout=10)
+        print(diagnostic.stdout[-12000:].decode(errors='replace'), flush=True)
+        raise
+    finally:
+        run('systemctl', 'stop', 'freeradius.service')
+        run('ip', 'netns', 'delete', 'lanrith-services')
+
+
+def native_dns64_startup():
+    """Run the generated DNS64 unit with its real sandbox and query loopback."""
+    value = dns_declaration()
+    value['translation'] = {'nat64': {'enabled': True}}
+    files = config.render(value)
+    units = Path('/run/systemd/system')
+    units.mkdir(exist_ok=True)
+    for name in ('lanrith-services.service', 'nftables.service', 'named.service'):
+        (units/name).write_text('[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
+    run('ip', 'netns', 'add', 'lanrith-services')
+    network = ['nsenter', '--net=/run/netns/lanrith-services', '--']
+    run(*network, 'ip', 'link', 'set', 'lo', 'up')
+    unit = 'lanrith-dns64-private.service'
+    (units/unit).write_text(files['usr/lib/systemd/system/'+unit])
+    Path('/etc/unbound/unbound-private.conf').write_text(files['etc/unbound/unbound-private.conf'])
+    run('systemctl', 'daemon-reload')
+    try:
+        for action in ('start', 'restart'):
+            run('systemctl', action, unit)
+            for attempt in range(20):
+                answer = subprocess.run([*network, 'dig', '@127.0.0.1', '-p', '5354',
+                    'localhost', 'A', '+short', '+time=1', '+tries=1'], capture_output=True, timeout=3)
+                if answer.returncode == 0 and answer.stdout.strip() == b'127.0.0.1':
+                    break
+                time.sleep(.1)
+            else:
+                raise AssertionError('Generated DNS64 sandbox cannot start and answer local DNS.')
+            run('systemctl', 'is-active', '--quiet', unit)
+    finally:
+        run('systemctl', 'stop', unit)
+        run('ip', 'netns', 'delete', 'lanrith-services')
+
+
 def native_service_authentication(root):
     """Enabled native services do not imply unrelated authentication integrations."""
     value = dns_declaration()
@@ -208,6 +339,8 @@ def native_service_authentication(root):
     Path('/etc/freeradius/3.0/clients.conf').write_text(radius_runtime.clients_configuration(policy, secrets))
     Path('/etc/freeradius/3.0/proxy.conf').write_text(radius_runtime.proxy_configuration(policy, secrets))
     run('freeradius', '-Cx', '-lstdout')
+    native_radius_startup(files, policy, references)
+    native_dns64_startup()
 
 
 def main():
@@ -250,6 +383,7 @@ def main():
         started = time.monotonic()
         assert credential_operation.wait_ready(basic_installed)
         assert time.monotonic()-started < 3
+        shutil.copytree(basic_tree/'usr/lib/lanrith', '/usr/lib/lanrith', dirs_exist_ok=True)
         native_service_authentication(root)
         first = credential_image.resolve(config.normalize(value), selected)
         build.assembly(value, base, root/'first', version='0.1.0', sequence=12, integrations=selected)
@@ -339,6 +473,16 @@ def main():
         except KeyError:
             run('useradd', '--system', '--no-create-home', 'Debian-snmp')
         policy = tree/'etc/lanrith/integrations/snmp-runtime-policy.json'
+        # Fresh /var contains no package-created engine directory. It must exist
+        # before systemd constructs the daemon's ReadWritePaths sandbox.
+        shutil.rmtree('/var/lib/snmp', ignore_errors=True)
+        run('systemd-tmpfiles', '--create', str(tree/'usr/lib/tmpfiles.d/80-lanrith-snmp.conf'))
+        engine = Path('/var/lib/snmp').stat()
+        assert engine.st_uid == pwd.getpwnam('Debian-snmp').pw_uid
+        assert stat.S_IMODE(engine.st_mode) == 0o700
+        unit = (tree/'usr/lib/systemd/system/snmpd.service').read_text()
+        assert 'ExecStartPre=/usr/lib/lanrith/snmp-runtime prepare\n' in unit
+        assert 'ExecCondition=' not in unit
         snmp_source = Path('/usr/lib/lanrith/credentials/core/monitor_user/snmpd.conf')
         before = snmp_source.stat()
         run('python3', '-c', 'import sys,json;sys.path.insert(0,"/usr/lib/lanrith");'
@@ -361,11 +505,13 @@ def main():
             'external_network': False, 'private_image_qualified': False,
             'checks': ['basic-router-no-credential-requirement', 'dns-authority-without-writer-credentials',
                        'radius-proxy-without-directory-credentials', 'enabled-log-without-authentication',
+                       'radius-native-cold-start-restart-and-readonly-fragments', 'all-radius-nas-clients-reach-authenticated-proxy',
+                       'dns64-native-sandbox-cold-start-restart',
                        'nine-native-credentials-at-first-start', 'no-upload-or-mutable-credential-store',
                        'native-loadcredential-unprivileged-reader', 'operator-and-unrelated-user-read-denial',
                        'image-set-rotation-and-fallback-selection', 'missing-and-malformed-input-fast-failure',
                        'required-and-optional-extension-image-credentials', 'generated-log-credential-staging',
-                       'snmp-image-input-with-separate-engine-state',
+                       'snmp-image-input-with-separate-engine-state', 'snmp-fresh-engine-directory-before-sandbox',
                        'pid1-named-user-acl-and-owning-group-denial', 'no-secret-in-journal'],
             'limits': ['synthetic-consumers', 'simulated-slot-selection',
                        'no-ssh-or-encryption-acceptance', 'no-full-image-or-backend-qualification']}

@@ -102,7 +102,7 @@ def render(value):
             + ('SupplementaryGroups='+' '.join(groups)+'\n' if groups else '') +
             'ExecStart=/usr/lib/lanrith/router-metrics\n'
             'ExecStopPost=/usr/lib/lanrith/router-metrics --on-stop\n'
-            'TimeoutStartSec=25s\nTimeoutStopSec=2s\nKillMode=control-group\n'
+            'TimeoutStartSec=25s\nTimeoutStopSec=10s\nKillMode=control-group\n'
             'CapabilityBoundingSet=CAP_NET_ADMIN\nNoNewPrivileges=yes\n'
             'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
             'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
@@ -154,7 +154,7 @@ def ntp_observer():
             'NetworkNamespacePath=/run/netns/lanrith-services\n'
             'ExecStart=/usr/lib/lanrith/ntp-health\n'
             'RuntimeDirectory=lanrith-ntp-health\nRuntimeDirectoryMode=0750\n'
-            'RuntimeDirectoryPreserve=yes\nUMask=0027\nTimeoutStartSec=5s\nTimeoutStopSec=2s\n'
+            'RuntimeDirectoryPreserve=yes\nUMask=0027\nTimeoutStartSec=15s\nTimeoutStopSec=5s\n'
             'NoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nProtectHome=yes\n'
             'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
             'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'

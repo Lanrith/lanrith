@@ -22,6 +22,7 @@ class IDSTests(unittest.TestCase):
         self.assertEqual([entry['interface'] for entry in settings['af-packet']], ['wan'])
         self.assertNotIn('copy-mode', settings['af-packet'][0])
         self.assertNotIn('nfq', settings)
+        self.assertEqual(settings['capture'], {'disable-offloading': False})
         unit = files['usr/lib/systemd/system/lanrith-ids.service']
         self.assertIn('User=lanrith-ids', unit)
         self.assertIn('CapabilityBoundingSet=CAP_NET_RAW\n', unit)

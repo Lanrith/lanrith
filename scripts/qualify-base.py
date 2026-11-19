@@ -43,12 +43,15 @@ DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-autho
     'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
 DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
     'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
-    'lanrith/config.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
+    'lanrith/config.py',
+    'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
     'tests/test_directory.py', 'tests/test_policy_agent.py', 'tests/test_intent.py'}
 CREDENTIAL_CHECKS = {
     'basic-router-no-credential-requirement',
     'dns-authority-without-writer-credentials',
     'radius-proxy-without-directory-credentials',
+    'radius-native-cold-start-restart-and-readonly-fragments', 'all-radius-nas-clients-reach-authenticated-proxy',
+    'dns64-native-sandbox-cold-start-restart',
     'enabled-log-without-authentication',
     'generated-log-credential-staging',
     'image-set-rotation-and-fallback-selection',
@@ -60,13 +63,14 @@ CREDENTIAL_CHECKS = {
     'operator-and-unrelated-user-read-denial',
     'pid1-named-user-acl-and-owning-group-denial',
     'required-and-optional-extension-image-credentials',
-    'snmp-image-input-with-separate-engine-state',
+    'snmp-image-input-with-separate-engine-state', 'snmp-fresh-engine-directory-before-sandbox',
 }
 CREDENTIAL_IMPLEMENTATION = {
     'lanrith/authoritative.py',
     'lanrith/bindings.py',
     'lanrith/build.py',
     'lanrith/config.py',
+    'lanrith/dns64.py',
     'lanrith/credential_config.py',
     'lanrith/credential_image.py',
     'lanrith/credential_operation.py',
@@ -107,6 +111,7 @@ CREDENTIAL_IMPLEMENTATION = {
     'tests/test_logs.py',
     'tests/test_logs_runtime.py',
     'tests/test_radius.py',
+    'tests/radius_proxy_fixture.py',
     'tests/test_routing.py',
     'tests/test_systemd_credential.py',
 }

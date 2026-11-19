@@ -234,7 +234,7 @@ def render(value, *, observer=None):
         'ExecStartPre=+/usr/lib/lanrith/logs-runtime stage\n'
         'ExecStart=\nExecStart=/usr/lib/lanrith/logs-runtime run\nExecReload=\n'
         'EnvironmentFile=\nWorkingDirectory=/var/lib/lanrith-alloy\n'
-        'TimeoutStartSec=35s\nTimeoutStopSec=20s\nWatchdogSec=30s\n'
+        'TimeoutStartSec=70s\nTimeoutStopSec=20s\nWatchdogSec=30s\n'
         'StateDirectory=lanrith/alloy\nStateDirectoryMode=0750\n'
         'BindPaths=/var/lib/lanrith/alloy:/var/lib/lanrith-alloy\n'
         'RuntimeDirectory=lanrith-logs\nRuntimeDirectoryMode=0750\nUMask=0027\n'
@@ -256,7 +256,9 @@ def render(value, *, observer=None):
         'etc/systemd/system/alloy.service.d/60-lanrith.conf': unit,
         'usr/lib/systemd/system/lanrith-telemetry-heartbeat.service': (
             '[Unit]\nDescription=Emit the remote telemetry liveness identity\n'
-            'Requires=boot-complete.target alloy.service\nAfter=boot-complete.target alloy.service\n\n'
+            'Requires=boot-complete.target alloy.service\n'
+            'After=boot-complete.target alloy.service lanrith-observation.service\n'
+            'ConditionPathExists=/run/lanrith/boot.json\n\n'
             '[Service]\nType=oneshot\nUser=alloy\nGroup=alloy\n'
             'ExecStart=/usr/bin/lanrith-runtime telemetry\n'
             'NoNewPrivileges=yes\nPrivateTmp=yes\nPrivateDevices=yes\nProtectHome=yes\nProtectSystem=strict\n'

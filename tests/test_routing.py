@@ -46,8 +46,9 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn('redistribute', text)
         self.assertNotIn('default-originate', text)
         self.assertIn('bgp listen limit 8', text)
-        self.assertIn('Destination=fd42:1234:5678:500::/64\nScope=link', files[
+        self.assertIn('Destination=fd42:1234:5678:500::/64\n', files[
             'etc/systemd/network/40-home.network'])
+        self.assertNotIn('Scope=', files['etc/systemd/network/40-home.network'])
         firewall = files['etc/nftables.conf']
         self.assertIn('ip6 saddr { fd42:1234:5678:10::e100/120 } '
                       'ip6 daddr { fd42:1234:5678:10::1 } tcp dport 179 accept', firewall)
@@ -73,6 +74,13 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn('fd42:9876:5432::/48', files['etc/nftables.conf'])
         self.assertNotIn('fd42:9876:5432::/48', files['etc/unbound/unbound.conf.d/lanrith.conf'])
         self.assertIn('[Route]', files['etc/systemd/network/40-home.network'])
+
+    def test_ipv4_direct_routes_keep_link_scope(self):
+        value = declaration()
+        value['routing']['static_routes'] = [
+            {'to': '198.51.100.0/24', 'network': 'home', 'on_link': True}]
+        self.assertIn('Destination=198.51.100.0/24\nScope=link\n',
+                      config.render(value)['etc/systemd/network/40-home.network'])
 
     def test_additional_attachments_keep_their_own_gateway_without_ra(self):
         value = declaration()

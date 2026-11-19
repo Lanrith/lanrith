@@ -1,6 +1,7 @@
 """RADIUS is compiled as bounded connectivity, never embedded credentials."""
 
 import copy
+import ipaddress
 import json
 from pathlib import Path
 import tempfile
@@ -33,6 +34,23 @@ def declaration():
 
 
 class RadiusContractTests(unittest.TestCase):
+    def test_host_boundary_admits_only_configured_nas_udp_to_radius(self):
+        value = config.normalize(declaration())
+        files = config.render(value)
+        policy = radius.manifest(value)
+        nas = sorted(str(ipaddress.ip_network(c['address'])) for c in policy['clients'])
+        network = value['networks'][value['identity']['radius']['network']]['name']
+        rules = [line.strip() for line in files['etc/nftables.conf'].splitlines()
+                 if 'dport { 1812, 1813 }' in line]
+        target = next(a for a in policy['listeners'] if ':' not in a)
+        self.assertEqual(rules, [f'iifname "{network}" oifname "lr-services" '
+            f'ip saddr {{ {", ".join(nas)} }} ip daddr {{ {target} }} udp dport {{ 1812, 1813 }} accept'])
+        forward = files['etc/nftables.conf'].split('chain forward', 1)[1]
+        self.assertLess(forward.index('ct state invalid,untracked drop'), forward.index(rules[0]))
+        self.assertLess(forward.index(rules[0]), forward.index('oifname "lr-services" drop'))
+        value['identity']['radius'] = {'enabled': False}
+        self.assertNotIn('dport { 1812, 1813 }', config.render(value)['etc/nftables.conf'])
+
     def test_transport_controls_the_shared_secret_requirement(self):
         value = declaration()
         for client in value['identity']['radius']['clients'].values():
@@ -61,6 +79,9 @@ class RadiusContractTests(unittest.TestCase):
             build.assembly(value, base, root/'image', version='0.1.0', sequence=1)
             tree = root/'image/mkosi.extra'
             self.assertTrue((tree/'etc/systemd/system/freeradius.service.d/60-lanrith.conf').exists())
+            helper = tree/'etc/systemd/system/lanrith-radius-runtime.service'
+            self.assertTrue(helper.is_symlink())
+            self.assertEqual(helper.readlink(), Path('/usr/lib/systemd/system/lanrith-radius-runtime.service'))
             self.assertFalse((tree/'etc/router-policy-agent').exists())
             self.assertFalse((tree/'usr/lib/lanrith/credentials/core/directory_bind').exists())
             self.assertNotIn('control-socket', json.loads((tree/'etc/kea/kea-dhcp4.conf').read_bytes())['Dhcp4'])
@@ -102,8 +123,18 @@ class RadiusContractTests(unittest.TestCase):
         self.assertEqual(policy['admission_vlan'], 22)
         self.assertEqual(policy['fallback_clients'], ['wired-switch'])
         unit = files['etc/systemd/system/freeradius.service.d/60-lanrith.conf']
+        stage = files['usr/lib/systemd/system/lanrith-radius-runtime.service']
         for reference in ('radius_wired', 'radius_wireless', 'radius_upstream'):
-            self.assertIn('LoadCredential='+reference+':/var/lib/lanrith/credentials/'+reference, unit)
+            self.assertIn('LoadCredential='+reference+':/var/lib/lanrith/credentials/'+reference, stage)
+        self.assertNotIn('LoadCredential=', unit)
+        self.assertNotIn('radius-runtime stage', unit)
+        self.assertIn('Requires=lanrith-services.service lanrith-radius-runtime.service', unit)
+        self.assertIn('ExecStartPre=\nExecStartPre=/usr/sbin/freeradius', unit)
+        self.assertIn('User=root\nGroup=freerad', stage)
+        self.assertIn('RuntimeDirectoryPreserve=yes', stage)
+        self.assertNotIn('RemainAfterExit', stage)
+        self.assertIn('CapabilityBoundingSet=\n', stage)
+        self.assertNotIn('BindReadOnlyPaths', stage)
         self.assertIn('NetworkNamespacePath=/run/netns/lanrith-services', unit)
         self.assertIn('/run/lanrith-radius/clients.conf:/etc/freeradius/3.0/clients.conf', unit)
         self.assertNotIn('shared_secret', ''.join(files.values()))

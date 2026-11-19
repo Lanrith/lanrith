@@ -220,19 +220,26 @@ def pipeline_healthy(text, *, minimum_components=9):
 
 
 def health(*, local=False, minimum_components=9):
-    connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=2)
-    try:
-        connection.request('GET', '/metrics', headers={'Connection': 'close'})
-        response = connection.getresponse()
-        data = response.read(1024*1024+1)
-        if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(
-                data.decode('ascii'), minimum_components=minimum_components):
-            raise LogsRuntimeError('Log component graph is not healthy.')
-        return observation(data.decode('ascii'), local=local)
-    except (OSError, http.client.HTTPException, UnicodeError) as error:
-        raise LogsRuntimeError('Log component graph is unavailable.') from error
-    finally:
-        connection.close()
+    # A transient local scrape timeout must not kill an otherwise working
+    # exporter. Retry transport once, without publishing health or notifying
+    # the watchdog until the complete graph and queue have been validated.
+    for attempt in range(2):
+        connection = http.client.HTTPConnection('127.0.0.1', 12345, timeout=5)
+        try:
+            connection.request('GET', '/metrics', headers={'Connection': 'close'})
+            response = connection.getresponse()
+            data = response.read(1024*1024+1)
+            if response.status != 200 or len(data) > 1024*1024 or not pipeline_healthy(
+                    data.decode('ascii'), minimum_components=minimum_components):
+                raise LogsRuntimeError('Log component graph is not healthy.')
+            return observation(data.decode('ascii'), local=local)
+        except (OSError, http.client.HTTPException) as error:
+            if attempt:
+                raise LogsRuntimeError('Log component graph is unavailable.') from error
+        except UnicodeError as error:
+            raise LogsRuntimeError('Log component metrics are malformed.') from error
+        finally:
+            connection.close()
 
 
 def observation(text, *, local=False):
@@ -323,7 +330,7 @@ def notify(message):
             stream.sendto(message.encode('ascii'), address)
 
 
-def supervise(command=ALLOY, *, startup_seconds=25, interval=3, observation_path=OBSERVATION, local=False,
+def supervise(command=ALLOY, *, startup_seconds=60, interval=3, observation_path=OBSERVATION, local=False,
               authentication='basic'):
     if authentication not in ('none', 'basic'):
         raise LogsRuntimeError('Log authentication mode differs.')

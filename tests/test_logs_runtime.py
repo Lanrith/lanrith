@@ -101,6 +101,44 @@ class LogSupervisorTests(unittest.TestCase):
             for key in ('NOTIFY_SOCKET', 'WATCHDOG_PID', 'WATCHDOG_USEC'):
                 self.assertNotIn(key, launch.call_args.kwargs['env'])
 
+    def test_transient_scrape_timeout_retries_without_bypassing_validation(self):
+        first, second = mock.Mock(), mock.Mock()
+        first.getresponse.side_effect = TimeoutError('synthetic local scrape timeout')
+        second.getresponse.return_value.status = 200
+        second.getresponse.return_value.read.return_value = (metrics()+'\n'+exporter_metrics()).encode()
+        with mock.patch.object(runtime.http.client, 'HTTPConnection', side_effect=[first, second]) as connect:
+            value = runtime.health()
+        self.assertEqual(value['queue_capacity_bytes'], 67108864)
+        self.assertEqual(connect.call_args_list, [mock.call('127.0.0.1', 12345, timeout=5)]*2)
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+
+    def test_unavailable_scrape_is_bounded_to_two_attempts(self):
+        connections = [mock.Mock(), mock.Mock()]
+        for connection in connections:
+            connection.getresponse.side_effect = TimeoutError('synthetic timeout')
+        with mock.patch.object(runtime.http.client, 'HTTPConnection', side_effect=connections) as connect:
+            with self.assertRaisesRegex(runtime.LogsRuntimeError, 'unavailable'):
+                runtime.health()
+        self.assertEqual(connect.call_count, 2)
+        for connection in connections:
+            connection.close.assert_called_once()
+
+    def test_invalid_graph_queue_or_payload_is_never_retried(self):
+        valid = (metrics()+'\n'+exporter_metrics()).encode()
+        for status, data in ((500, valid), (200, b'\xff'), (200, b'x'*(1024*1024+1)),
+                             (200, (metrics(exited=1)+'\n'+exporter_metrics()).encode()),
+                             (200, valid.replace(b' 67108864', b' 1'))):
+            connection = mock.Mock()
+            connection.getresponse.return_value.status = status
+            connection.getresponse.return_value.read.return_value = data
+            with self.subTest(status=status, size=len(data)), \
+                    mock.patch.object(runtime.http.client, 'HTTPConnection', return_value=connection) as connect:
+                with self.assertRaises(runtime.LogsRuntimeError):
+                    runtime.health()
+                connect.assert_called_once()
+                connection.close.assert_called_once()
+
     def test_failed_component_after_readiness_exits_for_service_restart(self):
         child = mock.Mock()
         child.poll.return_value = None

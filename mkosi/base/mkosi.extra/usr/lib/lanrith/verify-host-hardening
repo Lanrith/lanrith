@@ -49,7 +49,7 @@ require_service_resources() {
 
 if systemctl is-active --quiet unbound.service; then
   require_service_hardening unbound.service
-  require_service_resources unbound.service 536870912 64 4096
+  require_service_resources unbound.service 536870912 64 8192
   for capability in $(systemctl show -P CapabilityBoundingSet unbound.service); do
     case "$capability" in
       cap_chown|cap_dac_override|cap_setgid|cap_setuid|cap_net_bind_service) ;;

@@ -114,7 +114,7 @@ def render(value):
             'BindsTo=lanrith-services.service nftables.service\n'
             f'ConditionPathExists={state}/snmpd.conf\n'
             '[Service]\nType=simple\nPrivateNetwork=no\nNetworkNamespacePath=\n'
-            'ExecCondition=/usr/lib/lanrith/snmp-runtime prepare\n'
+            f'{"ExecStartPre" if immutable else "ExecCondition"}=/usr/lib/lanrith/snmp-runtime prepare\n'
             'ExecStart=/usr/sbin/snmpd -f -LOw -u Debian-snmp -g Debian-snmp '
             f'-c {state}/snmpd.conf\n'
             'CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_READ_SEARCH CAP_FOWNER\n'
@@ -129,4 +129,6 @@ def render(value):
             'etc/lanrith/integrations/snmp-runtime-policy.json': canonical(policy).decode(),
             'usr/lib/systemd/system/snmpd.service': unit,
             'usr/lib/tmpfiles.d/80-lanrith-snmp.conf': (
-                ('' if immutable else f'd {state} 0700 root root -\n')+'d /run/lanrith-snmp 0700 root root -\n')}
+                ('' if immutable else f'd {state} 0700 root root -\n')+
+                'd /var/lib/snmp 0700 Debian-snmp Debian-snmp -\n'
+                'd /run/lanrith-snmp 0700 root root -\n')}

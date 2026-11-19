@@ -279,7 +279,7 @@ def core_forward(value, plane):
     host = plane['host_link']
     lines = [f'  iifname "{host}" ct state established,related ct direction reply accept',
              f'  oifname "{host}" ct state established,related ct direction reply accept']
-    for feature, port in (('dns', 53), ('ntp', 123), ('authoritative', 53)):
+    for feature, port in (('dns', 53), ('ntp', 123), ('authoritative', 53), ('radius', 1812)):
         if feature not in plane['endpoints']:
             continue
         for family, spelling in ((4, 'ip'), (6, 'ip6')):
@@ -288,9 +288,10 @@ def core_forward(value, plane):
                 network = value['networks'][client['network']]
                 sources = [a for a in client['addresses'] if ipaddress.ip_network(a).version == family]
                 if sources:
-                    for protocol in ('tcp', 'udp') if feature != 'ntp' else ('udp',):
+                    for protocol in ('tcp', 'udp') if feature not in ('ntp', 'radius') else ('udp',):
+                        ports = '{ 1812, 1813 }' if feature == 'radius' else str(port)
                         lines.append(f'  iifname "{network["name"]}" oifname "{host}" {spelling} saddr {values(sources)} '
-                                     f'{spelling} daddr {values(targets)} {protocol} dport {port} accept')
+                                     f'{spelling} daddr {values(targets)} {protocol} dport {ports} accept')
     for path in service_plane.egress(value):
         spelling = 'ip6' if ':' in path['address'] else 'ip'
         protocols, port = ((('udp',), 123) if path['kind'] == 'ntp' else

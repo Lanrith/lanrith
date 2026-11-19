@@ -55,6 +55,8 @@ class LogsContractTests(unittest.TestCase):
         self.assertIn('User=alloy\n', heartbeat)
         self.assertIn('NoNewPrivileges=yes\n', heartbeat)
         self.assertIn('ExecStart=/usr/bin/lanrith-runtime telemetry\n', heartbeat)
+        self.assertIn('After=boot-complete.target alloy.service lanrith-observation.service\n', heartbeat)
+        self.assertIn('ConditionPathExists=/run/lanrith/boot.json\n', heartbeat)
         self.assertIn('OnUnitActiveSec=60s\n', timer)
         self.assertIn('lanrith-telemetry-heartbeat.timer',
                       json.loads(files['usr/share/lanrith/health.json'])['units'])

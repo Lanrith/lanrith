@@ -206,8 +206,9 @@ def atomic(path, value, *, owner=0, group=0, mode=0o600):
         temporary.unlink(missing_ok=True)
 
 
-def command(arguments, timeout=15):
-    result = subprocess.run(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+def command(arguments, timeout=15, *, data=None):
+    result = subprocess.run(arguments, input=data, stdin=subprocess.DEVNULL if data is None else None,
+                            stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, timeout=timeout)
     if result.returncode:
         raise PolicyRuntimeError('Policy runtime command failed: '+Path(arguments[0]).name+'.')
@@ -491,9 +492,16 @@ def install_guards(contract_path=CONTRACT):
     if os.geteuid() != 0:
         raise PolicyRuntimeError('Policy guard installation requires root.')
     contract = load_contract(contract_path)
-    metadata(contract)
+    pins = metadata(contract)
     wait_interfaces(contract)
-    command([contract['nft_executable'], '-f', str(Path(contract['profile_directory'])/'guards.nft')])
+    guards = read(Path(contract['profile_directory'])/'guards.nft', 8*1024*1024, private=True)
+    if hashlib.sha256(guards).hexdigest() != pins['guards_sha256']:
+        raise PolicyRuntimeError('Policy guards changed after image verification.')
+    # Re-declaring a table appends its rules. Replace this fixed guard table's
+    # rules in one atomic batch, retaining set elements and their expiry times.
+    # The main access table and its startup barrier remain untouched.
+    batch = b'add table netdev lanrith_identity\nflush table netdev lanrith_identity\n'+guards
+    command([contract['nft_executable'], '-f', '-'], data=batch)
 
 
 def bootstrap(contract_path=CONTRACT):
@@ -533,15 +541,46 @@ def bindings_loop(contract_path=CONTRACT, interval=30):
         time.sleep(interval)
 
 
+def kernel_clock_state():
+    """Query Linux clock discipline without granting permission to change it."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    query = libc.adjtimex
+    query.argtypes = [ctypes.c_void_p]
+    query.restype = ctypes.c_int
+    # An aligned, zeroed buffer is larger than Linux struct timex on supported
+    # machines. Its modes field stays zero: this syscall only reads state.
+    observation = (ctypes.c_long * 64)()
+    state = query(ctypes.byref(observation))
+    if state < 0:
+        raise OSError(ctypes.get_errno(), 'Kernel clock observation failed.')
+    return state
+
+
+def wait_clock():
+    """Keep startup guards closed during bounded initial time synchronization."""
+    deadline = time.monotonic()+90
+    print('policy-runtime: waiting up to 90 seconds for synchronized kernel time', flush=True)
+    while kernel_clock_state() != 0:  # TIME_OK; leap/error/unsynchronized states wait.
+        if time.monotonic() >= deadline:
+            raise PolicyRuntimeError('Synchronized kernel time is unavailable.')
+        time.sleep(.5)
+    # This does not authorize a flow. The helper independently checks the full
+    # kernel clock reading, policy generation and fresh grants before admission.
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop', 'serve'))
+    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop', 'serve', 'wait-clock'))
     args = parser.parse_args(arguments)
     try:
         if args.operation == 'install-guards':
             install_guards()
         elif args.operation == 'bootstrap':
             bootstrap()
+        elif args.operation == 'wait-clock':
+            wait_clock()
         elif args.operation == 'serve':
             serve()
         else:
