@@ -67,6 +67,28 @@ class PrivilegeBoundaryTests(unittest.TestCase):
         self.assertEqual(failure.exception.diagnostic['postconditions']['categories'], [])
         self.assertLess(len(str(failure.exception)), 512)
 
+    def test_remote_resource_expectations_match_packaged_service_budgets(self):
+        guest = self.guest()
+        unprivileged_control_boundary(guest)
+        script = shlex.split(guest.ssh.call_args.args[0])[3]
+        program = script.split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY\n', 1)[0]
+        loop = next(node for node in ast.parse(program).body
+                    if isinstance(node, ast.For) and isinstance(node.target, ast.Tuple)
+                    and [name.id for name in node.target.elts] ==
+                    ['unit', 'account', 'names', 'mask', 'resources'])
+        root = Path(__file__).resolve().parents[1]/'mkosi/base/mkosi.extra/etc/systemd/system'
+        for entry in loop.iter.elts:
+            unit = ast.literal_eval(entry.elts[0])
+            expected = ast.literal_eval(entry.elts[-1])
+            with self.subTest(unit=unit):
+                fields = dict(line.split('=', 1) for line in
+                              (root/unit.replace('.service', '.service.d')/
+                               '30-lanrith-hardening.conf').read_text().splitlines()
+                              if '=' in line)
+                memory = fields['MemoryMax']
+                memory = str(int(memory[:-1])*1024**2) if memory.endswith('M') else memory
+                self.assertEqual(expected, (memory, fields['TasksMax'], fields['LimitNOFILE']))
+
     def test_firewall_probe_serializes_every_required_core_listener(self):
         receipt = {'result': 'pass', 'stopped_with_firewall': True,
                    'blocked_on_firewall_failure': True, 'effective_kernel_hardening': True}

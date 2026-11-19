@@ -866,7 +866,7 @@ services = {'systemd-networkd.service': {'pid': networkd,
     'group': dict(line.split('=', 1) for line in properties)['ControlGroup']}}
 for unit, account, names, mask, resources in (
         ('unbound.service', 'unbound', set('cap_chown cap_dac_override cap_setgid cap_setuid '
-                                'cap_net_bind_service'.split()), 0, ('536870912', '64', '4096')),
+                                'cap_net_bind_service'.split()), 0, ('536870912', '64', '8192')),
         ('kea-dhcp4-server.service', '_kea', {'cap_net_bind_service', 'cap_net_raw'},
          sum(1 << bit for bit in (10, 13)), ('268435456', '64', '4096')),
         ('chrony.service', '_chrony', {'cap_net_bind_service', 'cap_sys_time'},
