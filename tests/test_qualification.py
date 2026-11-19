@@ -1,5 +1,6 @@
 """Production claims require exact native subjects and reviewed hosted workflows."""
 
+import ast
 import datetime
 import importlib.util
 import json
@@ -22,6 +23,24 @@ spec.loader.exec_module(qualification)
 
 
 class QualificationTests(unittest.TestCase):
+    def test_native_catalogs_match_independent_admission_requirements(self):
+        # Synthetic reports built from admission's own constants cannot detect
+        # drift in the real producers. Check their declarations before building.
+        source = Path(__file__).resolve().parent
+        for filename, field, expected in (
+                ('directory_native.py', 'IMPLEMENTATION', qualification.DIRECTORY_IMPLEMENTATION),
+                ('credentials_native.py', 'IMPLEMENTATION', qualification.CREDENTIAL_IMPLEMENTATION),
+                ('directory_native.py', 'CHECKS', qualification.DIRECTORY_CHECKS),
+                ('logs_native.py', 'CHECKS', qualification.LOG_CHECKS)):
+            with self.subTest(producer=filename, field=field):
+                tree = ast.parse((source/filename).read_text())
+                actual = next(ast.literal_eval(node.value) for node in tree.body
+                              if isinstance(node, ast.Assign) and any(
+                                  isinstance(target, ast.Name) and target.id == field
+                                  for target in node.targets))
+                self.assertEqual(set(actual), expected)
+                self.assertEqual(len(actual), len(expected))
+
     def copy_repository_assessment(self, project):
         source = Path(__file__).resolve().parents[1]
         shutil.copytree(source/'.github/workflows', project/'.github/workflows', dirs_exist_ok=True)
