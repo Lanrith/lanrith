@@ -417,6 +417,11 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
         files['etc/sudoers.d/60-lanrith'] = (
             f'{user} ALL=(ALL:ALL) ALL\nDefaults:{user} env_keep += "SSH_AUTH_SOCK"\n'
             f'Defaults:{user} timestamp_type=tty\nDefaults:{user} timestamp_timeout=5\n')
+    # FRR and the service/translation runtimes own routes outside .network
+    # files. Networkd must preserve both those routes and their nexthop objects
+    # when it restarts; keeping BGP sessions up does not restore deleted routes.
+    files['etc/systemd/networkd.conf.d/60-lanrith-route-owners.conf'] = (
+        '[Network]\nManageForeignRoutes=no\nManageForeignNextHops=no\n')
     interfaces, networks = value['hardware']['interfaces'], value['networks']
     for key, interface in interfaces.items():
         kind, selector = next(iter(interface['match'].items()))

@@ -1146,6 +1146,10 @@ def qualify(value, base, initrd, work, secret, *, manual=False):
         guest.ssh('sudo lanrith-runtime accept 9')
         unprivileged_control_boundary(guest)
         print('Native VM: unprivileged control boundaries passed.', flush=True)
+        from qualify_networkd_routes_vm import qualify as qualify_networkd_routes
+        qualify_networkd_routes(guest, value['networks']['home']['name'],
+                               '192.168.10.254', 'fd42:1000:1000:10::fe')
+        print('Native VM: foreign routes and nexthops survived networkd restarts.', flush=True)
         root(guest, '''set -eu
 mkdir -p /var/lib/lanrith/qualification-state /var/lib/kea
 systemctl stop kea-dhcp4-server.service
@@ -1177,6 +1181,7 @@ done''')
             return {'profile': 'manual-encryption', 'result': 'pass', 'checks': [
                 'secure-boot', 'dm-verity', 'manual-state-encryption', 'recovery-enrollment',
                 'ssh-pam-administration', 'automatic-boot-observation',
+                'networkd-preserves-foreign-routes-and-nexthops',
                 'persistent-state-reboot', 'optional-services-inactive', 'unprivileged-control-boundary']}
         firewall_failure(guest)
         second_assembly, _, second = image(value, base, initrd, work, secret, 10)
@@ -1244,7 +1249,7 @@ done''')
         provisioning_failure(value, base, initrd, work/'provisioning-failure', secret)
         return {'profile': 'tpm2-ab', 'result': 'pass', 'interrupted_staging': fault, 'checks': ['factory-install-readback',
             'secure-boot', 'dm-verity', 'tpm2-state-encryption', 'recovery-enrollment', 'ssh-pam-administration',
-            'automatic-boot-observation',
+            'automatic-boot-observation', 'networkd-preserves-foreign-routes-and-nexthops',
             'optional-services-inactive', 'one-shot-upgrade', 'fallback-protection', 'unaccepted-reboot-fallback',
             'explicit-acceptance', 'replay-rejection', 'tamper-rejection', 'interrupted-staging',
             'failed-health-fallback', 'populated-state-upgrade-and-rollback',

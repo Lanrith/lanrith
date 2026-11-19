@@ -17,6 +17,12 @@ class ConfigTests(unittest.TestCase):
     def setUp(self):
         self.example = config.load(ROOT / 'examples/minimal.yaml')
 
+    def test_networkd_preserves_routes_owned_by_other_router_components(self):
+        files = config.render(self.example)
+        ownership = files['etc/systemd/networkd.conf.d/60-lanrith-route-owners.conf']
+        self.assertIn('ManageForeignRoutes=no\n', ownership)
+        self.assertIn('ManageForeignNextHops=no\n', ownership)
+
     def test_independent_topologies_have_explicit_management_and_no_cross_network_default(self):
         for example in ('minimal.yaml', 'segmented.yaml'):
             value = config.load(ROOT / 'examples' / example)

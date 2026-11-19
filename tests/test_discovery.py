@@ -40,6 +40,16 @@ def declaration():
 
 
 class DiscoveryContractTests(unittest.TestCase):
+    def test_bus_outlives_avahi_and_its_ordered_consumers(self):
+        files = config.render(declaration())
+        avahi = files['etc/systemd/system/avahi-daemon.service.d/60-lanrith.conf']
+        self.assertIn('Requires=dbus.service\n', avahi)
+        self.assertIn('After=dbus.service\n', avahi)
+        for consumer in ('collector', 'publisher'):
+            unit = files[f'etc/systemd/system/discovery-bridge-{consumer}.service.d/60-lanrith.conf']
+            after = next(line.split('=', 1)[1].split() for line in unit.splitlines() if line.startswith('After='))
+            self.assertIn('avahi-daemon.service', after)
+
     def test_native_translator_observation_matches_the_selected_service_binary(self):
         files = config.render(declaration(), access_backend='tun')
         router = json.loads(files['etc/discovery-bridge/router.json'])

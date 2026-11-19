@@ -302,6 +302,10 @@ def render(value, retained_allocations=None, *, access_backend='tun'):
         'etc/discovery-bridge/router.json': canonical(router).decode(),
         'etc/discovery-bridge/dns.json': canonical(dns).decode(),
         'etc/avahi/avahi-daemon.conf': avahi_configuration(value),
+        # Type=dbus orders Avahi against the socket, not the bus daemon.
+        # Keep the bus alive until Avahi and its ordered consumers have stopped.
+        'etc/systemd/system/avahi-daemon.service.d/60-lanrith.conf': (
+            '[Unit]\nRequires=dbus.service\nAfter=dbus.service\n'),
         'etc/unbound/unbound.conf.d/61-lanrith-discovery.conf': resolver_configuration(value),
         'etc/systemd/system/discovery-bridge-collector.service.d/60-lanrith.conf': collector,
         'etc/systemd/system/discovery-bridge-publisher.service.d/60-lanrith.conf': (
