@@ -41,6 +41,31 @@ INACTIVE_OPTIONAL_UNITS = (
     'lanrith-nat46.service')
 
 
+def tpm_diagnostic(buffer):
+    """Classify upstream TPM setup errors without retaining private console text."""
+    markers = {
+        'runtime-srk-mismatch': b'Saved runtime SRK differs from TPM SRK, refusing.',
+        'srk-read': b"Failed to read '/run/systemd/tpm2-srk-public-key.pem'",
+        'persistent-srk-read': b"Failed to read '/var/lib/systemd/tpm2-srk-public-key.pem'",
+        'srk-parse': b'Failed to parse SRK public key file',
+        'srk-fingerprint': b'Failed to calculate fingerprint of public key:',
+        'srk-get-or-create': b'Failed to get or create SRK:',
+        'srk-convert': b'Failed to convert TPM2 SRK public key to OpenSSL public key:',
+        'srk-open': b'Failed to open SRK public key file',
+        'srk-write': b'Failed to write SRK public key file',
+        'srk-permissions': b'Failed to adjust access mode of SRK public key file',
+        'srk-sync': b'Failed to sync SRK key to disk:',
+        'srk-publish': b'Failed to move SRK public key file',
+        'tpm-context': b'Failed to create TPM2 context:',
+        'tpm-unusable': b'TPM device not usable as it does not support the required functionality',
+        'tpm-driver': b'TPM TCTI driver not available.',
+        'tpm-missing': b'TPM device not found.',
+    }
+    codes = re.findall(rb'Esys_[A-Za-z0-9_]{1,64}\(\) Esys Finish ErrorCode \((0x[0-9a-fA-F]{8})\)', buffer)
+    return {'errors': sorted(name for name, marker in markers.items() if marker in buffer),
+            'tss2_codes': sorted({code.decode().lower() for code in codes})[:16]}
+
+
 def run(*arguments, timeout=180, **kwargs):
     result = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, **kwargs)
     release.require(result.returncode == 0, Path(arguments[0]).name+' failed: '+
@@ -434,10 +459,14 @@ class Guest:
                  for name, present in flags.items()}
         literals.update(previous.get('literal_errors', []))
         units.update(previous.get('failed_units', []))
+        tpm = tpm_diagnostic(buffer)
+        for field in tpm:
+            tpm[field] = sorted(set(tpm[field]) | set(previous.get('tpm', {}).get(field, [])))[:16]
         self.observed_diagnostics = {'flags': flags, 'literal_errors': sorted(literals)[:32],
-                                     'failed_units': sorted(units)[:32]}
+                                     'failed_units': sorted(units)[:32], 'tpm': tpm}
         return json.dumps({'flags':flags,'qmp_events':self.qmp_events[-16:], 'literal_errors':sorted(literals)[:32],
             'service_state':getattr(self, 'service_state', None),
+            'tpm': tpm,
             'failed_units':sorted(units)[:32],'console_sha256':hashlib.sha256(buffer).hexdigest()},sort_keys=True)
 
     def service_diagnostic(self):
@@ -453,7 +482,41 @@ class Guest:
                 fields = line.split()
                 if fields and re.fullmatch(r'[A-Za-z0-9_@.\\-]+\.(?:service|mount|target|device|socket)', fields[0]):
                     names.add(fields[0])
-        return {'query_succeeded': result.returncode == 0, 'failed_units': sorted(names)[:32]}
+        report = {'query_succeeded': result.returncode == 0, 'failed_units': sorted(names)[:32]}
+        services = [name for name in report['failed_units'] if name.endswith('.service')]
+        if not services:
+            return report
+        # These properties are readable without elevation. Never retain free-form
+        # status text, command lines, SSH stderr or journal messages in CI evidence.
+        report['unit_status'] = {}
+        try:
+            properties = self.ssh('systemctl show --property=Id,Result,ExecMainCode,ExecMainStatus,StatusErrno -- '+
+                                  ' '.join(shlex.quote(name) for name in services),
+                                  success=False, timeout=10, agent=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return report
+        if properties.returncode != 0 or len(properties.stdout) > 65536:
+            return report
+        results = {'success', 'resources', 'timeout', 'exit-code', 'signal', 'core-dump',
+                   'watchdog', 'start-limit-hit', 'protocol', 'exec-condition', 'oom-kill'}
+        for block in properties.stdout.decode(errors='replace').strip().split('\n\n'):
+            fields = {}
+            for line in block.splitlines():
+                key, separator, value = line.partition('=')
+                if not separator or key in fields:
+                    fields = {}
+                    break
+                fields[key] = value
+            if set(fields) != {'Id', 'Result', 'ExecMainCode', 'ExecMainStatus', 'StatusErrno'} or \
+                    fields['Id'] not in services or fields['Result'] not in results:
+                continue
+            numeric = {key: fields[key] for key in ('ExecMainCode', 'ExecMainStatus', 'StatusErrno')}
+            if any(not re.fullmatch(r'[0-9]{1,5}', value) or int(value) > 65535
+                   for value in numeric.values()):
+                continue
+            report['unit_status'][fields['Id']] = {'Result': fields['Result'],
+                                                   **{key: int(value) for key, value in numeric.items()}}
+        return report
 
     def ssh_arguments(self, command, *, agent=True, user='admin'):
         return ['ssh', '-F', '/dev/null']+(['-A'] if agent else [])+[
@@ -539,6 +602,13 @@ def image(value, base, initrd, work, secret, sequence):
         certificate=secret/'test.crt', private_key=secret/'test.key',
         serial_hash=secret/'serial.hash' if value['administration'].get('serial', {}).get('enabled') else None,
         initrd_base=initrd, **recovery)
+    # Synthetic VM images only: retain TPM setup errors on the already private
+    # serial stream, including when the profile deliberately has no root access.
+    # diagnostic() publishes fixed categories and numeric codes, never raw text.
+    diagnostic = assembly/'mkosi.extra/etc/systemd/system/systemd-tpm2-setup.service.d/90-qualification.conf'
+    diagnostic.parent.mkdir(parents=True, exist_ok=True)
+    diagnostic.write_text('[Service]\nEnvironment=SYSTEMD_LOG_TARGET=console\n'
+                          'StandardOutput=journal+console\nStandardError=inherit\n')
     build.run(assembly)
     update = work/('update-'+str(sequence))
     build.update_payload(assembly, identity, update)
