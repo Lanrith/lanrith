@@ -29,6 +29,15 @@ def declaration():
 
 
 class AuthoritativeTests(unittest.TestCase):
+    def test_service_lifecycle_does_not_require_the_disabled_command_channel(self):
+        files = authoritative.render(config.normalize(declaration()))
+        self.assertIn('controls {};', files['etc/bind/named.conf'])
+        unit = files['etc/systemd/system/named.service.d/60-lanrith-services.conf']
+        self.assertIn('ExecStop=\n', unit)
+        self.assertIn('KillSignal=SIGTERM\n', unit)
+        self.assertIn('ExecReload=\nExecReload=/usr/bin/kill -HUP $MAINPID\n', unit)
+        self.assertNotIn('rndc', unit)
+
     def test_generated_records_and_nested_source_and_key_checks(self):
         value = config.normalize(declaration())
         files = config.render(value)

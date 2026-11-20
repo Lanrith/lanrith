@@ -165,7 +165,10 @@ def render(value):
         '[Unit]\nRequires=lanrith-services.service lanrith-dns-state.service\n'
         'After=lanrith-services.service lanrith-dns-state.service\n'
         'BindsTo=lanrith-services.service nftables.service lanrith-dns-state.service\n'
-        '[Service]\nNetworkNamespacePath=/run/netns/'+NAMESPACE+'\n')
+        # The command channel is intentionally disabled by controls {} above.
+        # Use named's native signals instead of the package's rndc commands.
+        '[Service]\nExecStop=\nExecReload=\nExecReload=/usr/bin/kill -HUP $MAINPID\n'
+        'KillSignal=SIGTERM\nNetworkNamespacePath=/run/netns/'+NAMESPACE+'\n')
     return files
 
 

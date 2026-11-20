@@ -23,6 +23,33 @@ spec.loader.exec_module(qualification)
 
 
 class QualificationTests(unittest.TestCase):
+    def test_vm_profile_catalogs_match_independent_admission_requirements(self):
+        tree = ast.parse((Path(__file__).parent/'vm.py').read_text())
+        profiles = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            fields = {key.value: value for key, value in zip(node.keys, node.values)
+                      if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+            profile = fields.get('profile')
+            if not isinstance(profile, ast.Constant) or profile.value not in qualification.CHECKS:
+                continue
+            checks = ast.literal_eval(fields['checks'])
+            self.assertNotIn(profile.value, profiles)
+            self.assertEqual(len(checks), len(set(checks)))
+            profiles[profile.value] = set(checks)
+        self.assertEqual(profiles, qualification.CHECKS)
+
+    def test_networkd_route_preservation_evidence_is_required_for_both_profiles(self):
+        for name in ('tpm2-ab', 'manual-encryption'):
+            with self.subTest(profile=name), tempfile.TemporaryDirectory() as temporary:
+                directory, project, now, native = self.fixture(Path(temporary))
+                profile = next(item for item in native['profiles'] if item['profile'] == name)
+                profile['checks'].remove('networkd-preserves-foreign-routes-and-nexthops')
+                (directory/'native-qualification.json').write_bytes(release.canonical(native))
+                with self.assertRaisesRegex(release.ReleaseError, 'incomplete profile'):
+                    qualification.qualify(directory, project, {}, now=now)
+
     def test_native_catalogs_match_independent_admission_requirements(self):
         # Synthetic reports built from admission's own constants cannot detect
         # drift in the real producers. Check their declarations before building.
