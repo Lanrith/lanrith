@@ -1,20 +1,20 @@
 {
-  "base_sha": "060e508d6fef36a7cabbe1059b77f179f1a5c9bb",
-  "candidate_id": "f984a4766b06c069e246f4c795935ea0f3b2d04dd78a6e549472c52829d80b0b",
+  "base_sha": "9d9bebef3206323bca7b04b4135a7bfa53cf4348",
+  "candidate_id": "cb4ce2048a0c61c74a90ab0114ee0ca2556f1a3617fe4ba7afecb07d643a8452",
   "changes": {
     "build-inputs.json": {
-      "after_sha256": "fa4f39a5651c95162a53295a30cd890a39711f9c3f3bfcd1eb2ecafafee61732",
-      "before_sha256": "7397ba4e4c0d70fa32d665d5b26a2304223632a3b15958ae6f25280432b14071"
+      "after_sha256": "475bb889725ba16b2860a129222aa1650cb907c9ccb45994608b86ddc5eaabe9",
+      "before_sha256": "fa4f39a5651c95162a53295a30cd890a39711f9c3f3bfcd1eb2ecafafee61732"
     },
     "builders/build-inputs.lock": {
-      "after_sha256": "e29feafe4d7599d495f1c9a7f518703e169c8e8239a4186b50dfa7e8e91e26c2",
-      "before_sha256": "e07e804c5ff4991197852f379d62b891db1362fcb49eee57fdfd096ad94d1dba"
+      "after_sha256": "80a1345be4a44a3e420ce1dcd3e1e480f6df549d60f7c321425b82f9d17ba33d",
+      "before_sha256": "e29feafe4d7599d495f1c9a7f518703e169c8e8239a4186b50dfa7e8e91e26c2"
     }
   },
-  "created_at": "2026-11-21T19:33:51.492561+00:00",
+  "created_at": "2026-11-23T07:56:15.441610+00:00",
   "kind": "security-update-candidate",
   "policy_sha256": "bd7278f8871a9d9ff91442f88fd1b0b40af39457e71c62fb91699d9c1fd9afa1",
-  "producer_sha": "060e508d6fef36a7cabbe1059b77f179f1a5c9bb",
+  "producer_sha": "9d9bebef3206323bca7b04b4135a7bfa53cf4348",
   "reasons": [
     {
       "ecosystem": "Debian",
@@ -153,6 +153,1996 @@
       "id": "CVE-2026-97399",
       "installed": "2.41-12+deb13u4",
       "package": "glibc",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dab4da189fb5589d13a9afa80d716dc10713dc110137393199a2407aeacdfe3b",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-107364",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dab4da189fb5589d13a9afa80d716dc10713dc110137393199a2407aeacdfe3b",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-107884",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dab4da189fb5589d13a9afa80d716dc10713dc110137393199a2407aeacdfe3b",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-111423",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d3c65d22c086b3197d04302d04aaefc46a1d74909db025684806748072f98e1f",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112314",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c1e02ec1fd2165dbbec7621c9ed4e55d79565e65ff6742d3a01c0030a616631e",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112315",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "2dd00d4a427bf67bdc6f170eb5f6985ab56203e7c26e26c57bb6bc5da251ceaa",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112316",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "fed5b892e148caa8177c2d32cc013ec73e067310adb454975bfd555d1e4abfa4",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112317",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "bb80f637758a93a6c4f946b6b12dab5ce0d28e0b44c2dbbd1bdf81fcdbf426b6",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112318",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e415a302c48b89128ebdede6d2859356625d85f91c073a4606274bf646d3df97",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112319",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c47667ebf0caa9ddc740bbff217937d919b690bfa88bdb7eafe5b798748898ca",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112320",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "30682f0257341bc8e95025e2082199169c539f9d7b78a425f104b9acf9b194db",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112321",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f17fb1a4b02bae21a56ea92407eac9595f61e91f482f64ada5320bc55cb87b12",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112322",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "935945f5e9fb21862e86729c37b8988b7fd9cfe2946582910eb852af47c50325",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-112323",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dab4da189fb5589d13a9afa80d716dc10713dc110137393199a2407aeacdfe3b",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-118380",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "9710983d24f7f51006cf73b3030bc3c6971e7c0f1161a5f17e5951a9af08bc4e",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-11850",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3b174f6d27e1262f93b568131a93ccd6e3a6253d4f3962a6520a69460b0dd727",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-119079",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dab4da189fb5589d13a9afa80d716dc10713dc110137393199a2407aeacdfe3b",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-71199",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dab4da189fb5589d13a9afa80d716dc10713dc110137393199a2407aeacdfe3b",
+      "fixed": "1.21.3-5+deb13u2",
+      "id": "CVE-2026-71200",
+      "installed": "1.21.3-5+deb13u1",
+      "package": "krb5",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f91f9c201330cf19c2801dddf7ad85e011bcdf8b73232bf3a9a9716025d04a3b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99272",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "a49cd44308faa99c7c9c3d58b40b8cf230489924aa63c4cb8061cbade8f623ad",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99275",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "98540afc087ddfcb70a5e4270df689e2c79e67c0cce41a1ae56f908ead24a4e7",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99308",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "01138423beaf403789f91337d698f91a0036e96c7dcebdd54e5eb1609b30b37c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99312",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "4236179f9342c3a320ca4023c4c955f6ff41407c4efcd6ae0e45ca33796ee29e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99314",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "bab337c0335c41af3325305f2ae42f922371a465bb93ffb420d3f59b6f155ffc",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99315",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "4e820ccbbca847d6fad5368fad685cf06b6092303e5a3a563243c3a564ebdcf1",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99316",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f12a6f46213ec4870f65731bdba8d93838901f0e06ed50bff588a43c70c84fed",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99317",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "514a9df89bdd42ee00e0563d050a8130fa90254e3719ea3cd47b8d10ff57d860",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99318",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "eb7d7ba46b8296ba5fa030ca004df4a393573c3441e49ad893544d2dc2a2d785",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99319",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3890bc806ee98ca7350669f870199bfbb8aef8dd4e51ac4d8c2837bf9c8d015a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99320",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3356b37f96bff46c03fb9c2d61ea41ed94cfac6d99f54bfb7b6ccb9fc6b06d74",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99335",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "49988248207ebb5fbf682e6aaad0b817b9d73060d4e87b7573d5cc5800acb0aa",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99336",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "083f45a10767514d15bd5865c223a4a6b98d127e63757b35bc677742695be8fe",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99345",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6edd4bd83c9bf7e439e7c023d0acf413886bf5087f5f57b24b3cc960a3fc387d",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99347",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "306c89e6cd7e97d1e65724ad8d7ad042cc4a9be0ce43cb3cd2e41d7ced96ea3f",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99348",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "95d8edc8d1054ca79c612566af29052ab894123e019ff4cb7e910ecdbd0c64e9",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99350",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "29b410b337d96079b3935fd97b272e21a2ca7eb8219fea5df76ba2210651d2ab",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99363",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1f9d295b31d21a0bb5796fd0aeb95aedd8f24006b7689a3291ff10f3c9abe216",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99376",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3298f6ed99cb428a1f61ea02b921b5e8cf7ed52d48fa06a8953457915dfffeb3",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99377",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "65483f3e3cf0ec549bce13ed1ee3f068ac584cc7a4e6c4760fdfeb47794bfe15",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99379",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8a9014643024efa37552efa3c535c82fd0f148b6e259e53822d3fcc370143153",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99382",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d2715d63ebbe8aade5039b928ad11a3ad32c2802929020d1a719b24ca0c8b4e5",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99384",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "a41272be8a93ba7840e9a0114281f79df53e89941cb8e4583226b81db030d57c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99387",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dcf26a4b474d4c1938f8a14862dbff5dc262ccc069f9f42c9457ccdc5058cbf8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99394",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7437d7f294cbd52e58a4e5dc699906aa02dfa9adbccefd8e82dd8df2ee551c15",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99426",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7291b1b0ac3538dc7f624d8697eadbddb2ce1682b890400bc4770a01a4043f98",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99484",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "17750e775e13fda7e368a61a54f380b18811dcabbd9d6e88964f2a503e96b5cc",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99496",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "77bc7d9379d5c20b13f5ccff5209bc79feadaa27b9f52ffb116bddd6f99595c9",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99566",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "0def916fb389ead3a9c3d29a53be8d2116f223cfcf63776fb37c7575031e4953",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99567",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f3d11a4be9d65acca11ef804da6b748124196334677afe59f592d6404b2a7f87",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99568",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1fa9fa79ed834be539d8d2b5e41c88ced5b42d8446d00e8e5384c3b76fbcc94e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99569",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6dc9f7f0d40175440494aaab6ae5c7eb2f77355372dbe7c1224ed58cb23e550b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99570",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "402a8764480b5f3f86ba28bd067987d7c02a09e3ca1954d6950358387492caf3",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99573",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "15da3e1c466aad7db157bf231dd66e77e0e196eda29e3bb4421899a626ff7c6d",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99574",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "70dc15703afda1ff64ce1e164f49e16ea37a6f5a2dad61fe11e2ec93d86bb43e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99575",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ca5f5bd69c3c7c99a55345c511864923bd970e1b26790ee039398118cab7b5f7",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99576",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b0603a360717fe88dadb69b435fda81cab6536a743c952a85ff87627d96d0e9b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99577",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b01d2eabf964d5fd29d9e7a779f5526de6db2777baf78c87a301c62b4728837b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99578",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1104256f039f03bbf225a6c78b3f3be6320296dfc1ef0b2984e75f2bfac290c4",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99579",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "92e255c969bc1f0e0060626784f4df2d363ab96d3d68cd0d97f2e6e3af0ff964",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99580",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "371d83ca4c55eeffd710775454b1132220bc93ff06012bc982c3fecea38f31d8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99582",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8e01d2b6614fa999cbee836e5985c70aefdb8c3dd74c77b6470f83c30e635e98",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99583",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "94a5ee47d8e661b41653b0dcbb220be7f2028480dd75a93549c460d2b586054e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99587",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "10d177d50f9238c8b62fdb6a4ff8ed3f293b4711087e819bc60c034d18d97e87",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99588",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f3b94f6c3663e1af7d9e7b7e8e6f39a624b0a096fb15ab9edd2ca63e162a49f1",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99589",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "0f5ae9781473ed228bf7f856b03e7a14ec3c0dda453d9557d563cdfef872ed5e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99590",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "23e5f0e64b935cb81b3882794b97ea4deefdee00e3174720916dd47f23dd0c2a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99591",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "90de852a438fc4d0579077cf8fa44753b2f91986c03ca3ba03b16aafd2504c67",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99593",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "4a3d9d7f4f14b68d1dfbe0117d4e3ac13a9872a48a08803ed7c07623a7954cce",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99594",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "67646a7adb4e27e5cc369a6b74f343bf793e223b985cb504b44c6ee131980859",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99596",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c85126ae28111e16e254ddc01379380920a35abb49abe4406cca2d450c8b0223",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99597",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "bd02461551e1f77dbb0637a86fa972f5a74d8934c6ab65acc74c1bcfd4119b39",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99598",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c509edf9a8dfbf97fad4d2a4c9d0c6bf24e60f30ffdcb699f08c1a5d0d9c2c48",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99599",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "64eea00734562c8bf1bcc354bf5c883821dd85e728cc25b41b6e259794f4f366",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99600",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "66e8c108e4263b195eb3cd7af6019ee52353cc386c85ca5e63ff01113fc04578",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99601",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7bb8b3428960034aae3c7adb53604749cdb7511a93f2d79b18d0ef4fd69dc52a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99602",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "509c05764bc9bfbc39f2b3ed1507c95f0e3342f726e7f1864ae06a03799550da",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99603",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "4c0b712a3c938c5ceb4eef0e691d92acce60e60123af820f513629572f44f1e9",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99604",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "815231d5dce3d892a4d94cec5a227239382a10ba26d4fe8715907450b50b5158",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99606",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "645792eca047c03f6437624e1bdea2b1afbf4f2e8e2087c0c148055c072d6c4a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99607",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7393767108f6ffa6df2674cbdb15a22b5ea53d868d7914232eadd233a32a2c0c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99608",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e3df08ec6c655ef1d577a52a3717268690f3256881ad60d725a406ba418412cc",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99609",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "30fef13d6e3b37dfb704ee6a76858544d66ae497ead201343dc73a15f8c3ff7f",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99610",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d048d05a5b750c47e017bcb5946ae9f016ac8d9abdc48fcd7320dd1929206228",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99611",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "67edc7c8fcbbc9e4517c2d1c23b370f6b94f4192505b355c7ea2092a2e1135b6",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99613",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "142a0caefdaaeff539a8c4ee09c721665295bddb635b17b41bec0185c061d5b3",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99614",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ffc346efee8af76ba8394554e71d77fade3b8c85d009cdacfe6673d8fc68b65d",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99615",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6d56c33ac751507cb4db3d1b05cdbdac5a597141a396ecec24c489f35b424453",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99616",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ac058f0cd0d181e0e0995f07cd010d34d51160eed7169a15c829fc250f927a3e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99617",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6b2fdc1bfa160d21f0d8f1d057a257af3436073a9886a17728ae750977014cc2",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99618",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3041af5e6ff812a0fa4e7c05242e2a2c17083fb8e85993bea05c60f9f9852de4",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99619",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "2cb2e3eacea5209acd5d6d05baa0d6ffa0a832dd1be86ed6cd16169dff688cac",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99622",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8635a4e429ae8d88a34d168e7ca1873b4fce62fe6218e764b5fef8da6ca4e629",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99624",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "4b72dcdd864dc63d24cf9732b0aece3d25d7c487f9f53e3b562c66d86f0715f3",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99625",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "907aad55b2de1a2a92a6e2ed0c0eb616196d5c60640c10c461ffd7840740d06e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99626",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6853612cbfae8e7bfb9f42f99d0057c7c19f03f0d7b92f1d975637ddf2e18413",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99627",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "164e60a09bd2fa3d1cab941dd3fdce238f8ccaf2b4b5903f9e1d0dcbd8e1227c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99628",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1e98379b0700b2e4b23c10c6f15f56c25f7f053a40cfae90b260b21a51c9a863",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99629",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dcff71e6dd34e74522bcf87bd81041acfa6f0deeefc4ebcd8c963c2eece0a4f6",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99633",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "fae856ec1d10275d8a1a840ca9ca1552453abdd6421790d38e42d3a79001380b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99634",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "30115c8e2a8f9b1a5ebfa63242d610f2aa3c7ab784affd0839f8326898dbc94e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99635",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "37ed6fc102e8dcb7466f1e4b1c4d4ea1bd0cca52d4decf89ea6da9a449eaf61a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99636",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "5713e279e8e1b3aba6784147fb126bd5527288ef24042d283dabe2c5a07ae89e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99638",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "718c968fe43453154afbcd8d9051b7b2e39b34bae18ae02693804af133c0fda2",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99642",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d327dc5329b2a17e5b731e2a95e6136fa93f782111df046ddde4eb24afd8b4bf",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99647",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d9f0d44c2cb3a98cf315a7264db1a26ce0b306266bcf004c99f53d835916f08f",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99651",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3abbbca2a241bc7c02a1857b9f73424d0b7dfd7d9d9b845d0e636296ddbd7c2d",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99653",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "55dd426ffa0a45ba1b301c10e007c8424b880163910c4d13db634dfaeb9ea605",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99654",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e6fa14190bbad0f8926e01f08258275bdce77d30311d4b360bb15053be9418e8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99655",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "bd724a892ba68b328cc2e762c1870ec439cd2feea8c6f7995d2228069199ed9b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99656",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c622fd82e515f0e089fbe6b044eb0fdb4796b05f1463bf41b4265d734ff93d66",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99657",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "08f1533eeaacca28f70db498fc9ce250b959e6f53215cdd1b56d2075bc9729a8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99658",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "9556cd45a71708a038cd2e6a54a51bb1995bb4518edb82303d54b276a060c00e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99659",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "0800dbab68bf78872475c06f793b56e78af2d4f1da3f62a1d3dda04ab990e27b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99661",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "20e91795a47c22f503609980399183c44a0f2dd24b5f856f2e5a9aff01dc4749",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99662",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f7cacd3d0b507e497e2240fc5837e6e05e009d68022acbdf7d6f1fc815445feb",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99663",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "144947801ddaf1418e0652c0ee00cdbf3c5bbdb5bc0c3adae6dd7915536aa319",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99670",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b0a8526b08faebdb0ccbbc9a2dec7a0590ade730c72e9090039834a72037ee0b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99671",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "46cba3f08ec77e28f455eab012e86b8af5d607949c69dc7fe3e1fde39af582cf",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99672",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7c76f9e0580b01cf36659d4402431551edfc6708c0a166893a34ea58c3c32db8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99673",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e98af6056d8c63e9748bec6b133df06fffde9fc78e7dea934b895d8ef8eb179c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99676",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e1488114fa426c4559d42385e3d556762fb0ea36fa744b02b9f189090a173c12",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99677",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6a98adcff79d1b5a04fcd33b8fcd0a20d6ad635c740ca11c951bc23e9c027fa2",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99678",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d462ab506da3802f4a019da020f4427d613c4606c579bed0c7d711db92467b95",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99680",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "dd89619dacef03f82b45e8a87d17d615ea16a1e0a0224a889843e2a36b0769a1",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99683",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "db54c9989068d0f270eab958f9825cfc39f3a494c33ee43b2a13de4c13ab2eac",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99684",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "df2813c229d2a8b78d50d4436e196d42896c6031ac5974ee4d0bc48ead8fceed",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99685",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b2f8d5d083e77f2f3fb763b48dab339c43e4db36656a6a46615cc3ef27248fc7",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99688",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "129d27f0786e0a404c3ce067a6b1da41861e84a65f643ce7abcf0aa41e8fbbc8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99689",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "52a120c77123fa924875b572d86f1b08ba6c3ceb6ab21e4325469c9bafa7900b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99690",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d4b24bff9d7ae7ec9d92a1f02930bfe6b15a8304826fef26919502b6f1eeb1db",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99691",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ed8dfcbcfce2350f07455c66ca8785cefeb134c8dedb21a1c70f55849ef4f89b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99692",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f05c96c53174e4ad43581bd61b76d513ee8cf18217ee1f3cfa4e0e23251b6138",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99693",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d90ee3f39376feb386e10cfa081b445819aaeb1d7a7c86373309a2b64544994f",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99694",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c838c27732e76595dcff201fe4675ce34925c887736bf04c761c25702bc7f980",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99695",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ceb7f02addc24fbb775d110cd8be74dcd50165fd2d8bf1126ee4628819d9d70f",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99696",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "a74bd18b1a11621ae370896a801dd5505249675859749c1f4f94e32be4e18685",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99697",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "875d04bae0c0e5bd0348f4a74980fe4a8af549059baffd0f20d0ebf3d6b9cc49",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99704",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "302e33fae0d27799958e8dbef9771cd8d3d8d6889a00351b3af70dda7cebe79c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99707",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "52aa72c8ed6207eea1034b1ae99fbb93ee02e7d8c0ef00f6318d8ed3d6b4d001",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99708",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "bd3444ae9c344aa61bd02864761537053951dc74de17d53fbdb2ca275e765ca7",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99710",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e86feafcefedbe0bce389ff5173a6d1673227877797ef8eb0e31ad0352003e47",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99711",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "af6470f39a8a792615deadb67a9e61b5969653c8762052a51a99f57f159c06d3",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99712",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d5c34cbc604de3cbc7f6a4ae957da685d25b26e23c57c484bef0693e53da3742",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99713",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "f58056216ed31dd44afa4178101a6b42b4bfaf7993d4cb5cf222deac0e45e950",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99717",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ab3a94a4335a50c282547beec16c7d23a3dfd0760274bab80d7198c049da7fec",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99718",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1941b25125a4110e88bab49ba3acc211a801c72503c02fe7d9da17d88813eb54",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99719",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ae23dbd3e7e379e757294e23e6ad1bd44d1260dca1ea6a21c88db879a2dd28c5",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99721",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b0be342ba82337e8f4ae28f14a3a44c51b1df080eda8bac43cebc69c4d9c5a65",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99722",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d85bac9a6d067746c4dfa71a4479c38b0b963de9f3d11cfab3cad85707fd1545",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99723",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8136fdd933e1efa8c3f78ec29b5a7c59594ddb0b0b7eb07639df8cd9f7499aa3",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99725",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b4e2cfc61b39771a16a609dd414bbe4620a20b614fe83991951b0ad4a8702bc4",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99730",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "088a2e2c3501c699ea94c16df7d1f238cf45318f43acaa6eb21436da216b8ee0",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99731",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "210a387605749f94dae6453820e352919586348198d5fec0195cbf0a2afb6bdd",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99735",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7f2bcd4a44226dbd3331d03487ee4f1da394254c0399510231d69dc659bbaad8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99737",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "97850ccb1809ec6f071e6bb34d2d74fffc46c179538c4f7cf1742be9820b7bc1",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99739",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3b32d8832a10d637640650eca3f195c9b34856b3484a6e808e8a06d23f3a3341",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99740",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1365de66d0f794709e80ef33e6e4bcf95f6a4ab87282309a1601740f256d7259",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99741",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d65ddf677b3013a49d1cace41e6963dcceddea99a2ebf714d1be1e33c6f7c06b",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99742",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "12aae1e4fb2988f4cd68c07f290149c05b4c18c24b23128313418db988291e0a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99743",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "fc410fc860996f2c1be441429a39dc38a4d21135a9edd791b78a0c023b17d6fb",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99744",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "763ae3b3f598d12596e8baeb2e91440e696716e122fac384276189df34c1ce0c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99750",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "3e3aa27762a82d10e7d16bd5f7c32153af9ebc5f39afa5c0371110a608b56fbb",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99751",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "1e87a39cf96a8590623046d5270853591faf51c1d7123c2f640693afe23367f0",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99752",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e2de6c64d48bf38d2601b946cc52b31a15f3c0dcc70a5ff7418e59e1ca537ec8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99753",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "9f07cad718e501213becbeb658e338d90056646419965e329535da46d7475775",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99754",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "0dbebfff3ea2b547ff2f7e931904d935de338c500a1a1bf9cb64b3982e19c3f1",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99755",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "283b1ca6a1a58f05d5dba584e9914238370a749ba8b34776a5e61a2b7813d55d",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99757",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "d69e4d4a3f5f1d8a95567280b4992329a908cfb43beccaa8aa60730c7e9599f7",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99758",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "cdaf39984ba9b6b39ec267b9a9cc9f9bc86ec36f5154c388567c8fc658ac9ef8",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99759",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6b42972eccbaede8f657c0da20c9e4262a4bb1c6de08b079e42168469d514dfe",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99760",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "70332aa778301cf32bd5afcf90171ba39f493c983f43f56a42572421b99d38fd",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99761",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "592918284f5b0a04b3d04fb402bda3fa5214036ce02f265fb08631682fe72715",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99762",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c774bb914632e2b47fcc6a460942241eabde603997f50df45684ddc33d316266",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99763",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "aefb9efdf35dbe76bbc68213e40c0ecdbac35c1350c2b52c5d5a23ff2e3445d5",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99764",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "5c08489d1d02a789d0b00aad17e6b0108520a1f0008a5821aa6c355d01031425",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99766",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8031c0ddf86d4c9db0af52611ea426badb95478bbcc26316df5364728dc4bede",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99768",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "30d032cc6df4e5ff3fe2bbf4f71582a34d269fcc80d4ac07885ad0d917323009",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99770",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "858be9bde8c732800eb64911667fee184241719a6873d6cded309b20e2619b74",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99771",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "26fb29ab0eb1c72b37f4d85fbc068caafc67417c72d8b553436bb5fe19512258",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99773",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "4e3ff180d02a04125350e7d29dad942d1f953c2a24aa026dd69db3433a922613",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99774",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "5291540c0640c53cd3ea03e3223e4dd82b42fa915179a4c6b1d2a8e6bfa1f42a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99775",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "7452636626aa8ac808391aa51350e871badf9205056b013e022fcd3ff23325ac",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99776",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "af6d70f31cefb89063193e8dbb66c113ca62e1ac3bcddfd0f9601be7b301010c",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99777",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "016cf81739a986d6b8ca52c12e36cbe04a803eda6f09ad8217fa8b8ecd29d256",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99778",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ba5b3aa57dd928c4a1fff8b593bb8d25c52aa74f96297fe5154584a6ef3b63af",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99779",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "2fe4bb40ec80f1bfef0a77103001b0adc87034e7a12f3c52c221d3b44d6fb512",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99780",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "917b8de557f671cd545e410c477229e829b8892f0877b23280a2e800f45646bc",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99781",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "08508552e89a86c8a3bc9beb82760861b213b6c4b0c84ffcf68067bc22af1903",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99782",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "8bec2aabd28ac63bab5b595bb7292670ed022ec5f342467242b63ea51cc21d17",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99783",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "78faf25d089c48468316ea6cb0026a83f18f158da13f35585149d05ddff0955a",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99784",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "e88782e97f430448e825b6cbb7695a885464f3d134eb5ab9806d92051fda12bf",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99785",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "454a14ae0c388cac5b7b5b0e330f8a9afaa41c87a003875a91a582eebe793de5",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99786",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "c74aba4f23ffd4ae7597784e313451e74e48e7a943ab53f578171589e1ee87c7",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99788",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "719488b6dcdaf44170111b5d7c2c9ef4d02c90d10dd7031c5472572b51d5ec43",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99790",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "a50b5c515f402f26907627ae47d7ef9047073a942841e9f44743a4c68f40a12d",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99791",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "88685bde3fec87eb154e5276ebfbf31203c23a10f5ee634ca1a83698315eb711",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99793",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "6b6efb664ae75acdb86ac84d61edcc990fbc9dd31b4241bff5882a833b12ce8e",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99794",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "b10c5b52e3fc680ba74d039d5cbd0b6e56fc4606eec21756839047568306e026",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99796",
+      "installed": "6.12.117-1",
+      "package": "linux",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
+    },
+    {
+      "ecosystem": "Debian",
+      "evidence_sha256": "ce4ea1233681b7b0e5259c62139a576ca7ab4754a17d4a4b9ee594f8105a7fdb",
+      "fixed": "6.12.118-1",
+      "id": "CVE-2026-99797",
+      "installed": "6.12.117-1",
+      "package": "linux",
       "source": "https://security-tracker.debian.org/tracker/data/json",
       "type": "debian-security-fix"
     },
@@ -457,7 +2447,7 @@
       "type": "debian-security-fix"
     }
   ],
-  "remediation_id": "security-2868e2690ee0bf7b3c81",
+  "remediation_id": "security-a3a880d2c10b361f95d5",
   "repository": "Lanrith/lanrith",
   "requires_human": false,
   "schema": 1
