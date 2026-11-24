@@ -14,6 +14,12 @@ spec.loader.exec_module(canary)
 
 
 class CanaryBoundaryTests(unittest.TestCase):
+    def test_serial_fixture_uses_the_same_credential_contract_as_owner_assembly(self):
+        from lanrith.recovery_console import HASH
+        first, second = canary.disposable_serial_hash(), canary.disposable_serial_hash()
+        self.assertIsNotNone(HASH.fullmatch(first))
+        self.assertNotEqual(first, second)
+
     def test_only_the_isolated_repository_can_use_disposable_qualification(self):
         with patch.dict(os.environ, {'GITHUB_REPOSITORY': 'Lanrith/config-template'}, clear=True), \
                 self.assertRaisesRegex(ReleaseError, 'isolated canary'):

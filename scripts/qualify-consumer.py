@@ -2,6 +2,7 @@
 """Assemble the isolated consumer canary with disposable keys and publish only a report."""
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -14,6 +15,13 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith import config, release, trust
+
+
+def disposable_serial_hash():
+    salt = secrets.token_bytes(16)
+    derived = hashlib.scrypt(secrets.token_bytes(32), salt=salt, n=32768, r=8, p=1,
+                             dklen=32, maxmem=64*1024*1024)
+    return 'scrypt:32768:8:1:'+salt.hex()+':'+derived.hex()
 
 
 def qualification(owner, output):
@@ -52,9 +60,7 @@ def qualification(owner, output):
         os.environ['LANRITH_BOOT_KEY'] = (keys/'boot.key').read_text()
         os.environ['LANRITH_BOOT_CERTIFICATE'] = (copied/'trust/boot.crt').read_text()
         if config.load(copied/'config.yaml')['administration']['serial']['enabled']:
-            os.environ['LANRITH_SERIAL_PASSPHRASE_HASH'] = subprocess.run(
-                ['openssl', 'passwd', '-6', '-stdin'], input=secrets.token_hex(32)+'\n',
-                capture_output=True, text=True, check=True).stdout.strip()
+            os.environ['LANRITH_SERIAL_PASSPHRASE_HASH'] = disposable_serial_hash()
         try:
             consumer.assemble(copied, bundle, request_path, work/'image')
         finally:
@@ -65,7 +71,7 @@ def qualification(owner, output):
             'repository': os.environ['GITHUB_REPOSITORY'], 'source_commit': os.environ['GITHUB_SHA'],
             'workflow_commit': os.environ['LANRITH_WORKFLOW_COMMIT'], 'platform_version': selection['version'],
             'platform_lock_sha256': request['platform_lock_sha256'], 'configuration_sha256': request['configuration_sha256'],
-            'deployment_record_sha256': __import__('hashlib').sha256(deployment).hexdigest(),
+            'deployment_record_sha256': hashlib.sha256(deployment).hexdigest(),
             'deployable': False, 'signing_authority': 'disposable-per-run',
             'run_url': 'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'/actions/runs/'+os.environ['GITHUB_RUN_ID']}))
 
