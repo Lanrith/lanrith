@@ -1,5 +1,6 @@
 {
   "approval": "Independent human review must be recorded in GitHub after all current-head checks pass. This document grants no approval.",
+  "artifact_cleanup_recovery": "Completed Check, Package qualification and Release workflows trigger the existing trusted-main cleanup. The archived plan, two-hour retry window, active-run protection and immutable deletion result remain required; the watchdog also reports cleanup failures.",
   "date": "2026-11-24",
   "findings": [
     {
@@ -104,9 +105,15 @@
     "actionlint": "verified v1.7.12; passed",
     "private_canary_archive": "Operational report validates exact repository/source/workflow/run/digests and immutable publication; it carries no production authorization and uses no paid private-repository attestation.",
     "published_alloy_coverage": "all four reachable module/advisory pairs covered by the proposed verified pins",
-    "python_suite": "1406 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
+    "python_suite": "1408 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
     "source_boundary": "passed",
     "workflow_invariants": "passed"
+  },
+  "qualification_repair": {
+    "change": "Authenticate every existing security root against both published checksums, resolve only those exact versions with go get, then recheck the selected unreplaced pins. Apply the existing x/net pin before resolution. No broad upgrade flag or unrelated dependency pruning is used.",
+    "failure_run": "https://github.com/Lanrith/lanrith/actions/runs/45431564359",
+    "reason": "Beyla vendoring rejected an incomplete go.mod after exact OpenTelemetry security pins were edited directly. Required indirect modules and minimum-version changes were not materialized.",
+    "validation": "Reproduced the exact vendor failure at Beyla fd4b139d9e899ab1a09b0f0fc006d8b749fd3961 and OBI 861d9070c1ac8e2bccabbbc897e5895b0243c214. The repaired graph passes go mod verify, go mod vendor and the three configuration/exporter package test gates; socket tests pass in isolated rootless Linux. Full hosted qualification remains required."
   },
   "requires_human": true,
   "rollout": [

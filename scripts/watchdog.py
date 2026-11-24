@@ -20,7 +20,7 @@ def assess(repo, releases, clock):
               re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', r['tag_name'])]
     findings = []
     for workflow in ('security-audit.yml', 'update-inputs.yml', 'release.yml',
-                     'maintenance-reconcile.yml', 'prepare-workflow-updates.yml'):
+                     'maintenance-reconcile.yml', 'prepare-workflow-updates.yml', 'cleanup-artifacts.yml'):
         rows = api('repos/'+repo+'/actions/workflows/'+workflow+'/runs?branch=main&per_page=5')['workflow_runs']
         finished = [r for r in rows if r['status'] == 'completed']
         latest = max(finished, key=lambda r: r['id']) if finished else None

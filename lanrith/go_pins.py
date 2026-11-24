@@ -40,12 +40,16 @@ def apply(root, value, run):
         require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', current) and
                 tuple(map(int, current[1:].split('.'))) <= tuple(map(int, item['version'][1:].split('.'))),
                 'Embedded Go pin would downgrade an existing dependency.')
-    command('mod', 'edit', *('-require='+name+'@'+pins[name]['version'] for name in sorted(pins)))
     for name, item in sorted(pins.items()):
         resolved = json.loads(command('mod', 'download', '-json', name+'@'+item['version']))
         require(not resolved.get('Error') and resolved.get('Path') == name and resolved.get('Version') == item['version'] and
                 resolved.get('Sum') == item['sum'] and resolved.get('GoModSum') == item['go_mod_sum'],
                 'Embedded Go module differs from its reviewed checksum-database identity.')
+    # A manifest edit alone does not materialize new indirect requirements.
+    # Resolve only these exact existing roots after authenticating every pin;
+    # Go's minimum-version selection supplies their declared dependencies.
+    command('get', *(name+'@'+pins[name]['version'] for name in sorted(pins)))
+    for name, item in sorted(pins.items()):
         selected = json.loads(command('list', '-mod=mod', '-m', '-json', name))
         require(selected.get('Path') == name and selected.get('Version') == item['version'] and not selected.get('Replace'),
                 'Embedded Go graph did not select the reviewed fixed dependency.')

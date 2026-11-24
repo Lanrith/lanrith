@@ -1,5 +1,8 @@
 name: Clean completed Actions handoffs
 on:
+  workflow_run:
+    workflows: ['Package qualification', 'Release', 'Check']
+    types: [completed]
   schedule:
     - cron: '11 * * * *'
   workflow_dispatch:

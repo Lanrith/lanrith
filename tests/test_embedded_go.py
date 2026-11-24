@@ -41,12 +41,34 @@ class EmbeddedWorkerPinsTests(unittest.TestCase):
     def test_existing_modules_are_checked_against_both_verified_hashes_and_selected_graph(self):
         with patch.dict('os.environ', {'GOPROXY': 'https://untrusted.invalid', 'GONOSUMDB': '*'}):
             go_pins.apply(Path('/fixture'), self.pins, self.command)
-        self.assertTrue(any('-require=github.com/andybalholm/brotli@v1.2.7' in args for args, _ in self.calls))
+        resolutions = [args for args, _ in self.calls if args[1] == 'get']
+        self.assertEqual(resolutions, [('go', 'get', *(n+'@'+v['version'] for n, v in sorted(self.pins.items())))])
         self.assertEqual(sum(args[1] == 'list' for args, _ in self.calls), len(self.pins))
         for _, kwargs in self.calls:
             self.assertEqual(kwargs['env']['GOSUMDB'], 'sum.golang.org')
             self.assertEqual(kwargs['env']['GONOSUMDB'], '')
             self.assertEqual(kwargs['env']['GOPROXY'], 'https://proxy.golang.org')
+
+    def test_every_pin_is_authenticated_before_dependency_resolution(self):
+        last = sorted(self.pins)[-1]
+        def run(*args, **kwargs):
+            result = self.command(*args, **kwargs)
+            if args[1:4] == ('mod', 'download', '-json') and args[-1].startswith(last+'@'):
+                value = json.loads(result.stdout)
+                value['GoModSum'] = 'h1:'+'A'*43+'='
+                result.stdout = json.dumps(value)
+            return result
+        with self.assertRaises(ReleaseError):
+            go_pins.apply(Path('/fixture'), self.pins, run)
+        self.assertFalse(any(args[1] == 'get' for args, _ in self.calls))
+
+    def test_beyla_does_not_acquire_an_unused_log_sdk_root(self):
+        missing = 'go.opentelemetry.io/otel/sdk/log'
+        self.manifest['Require'] = [row for row in self.manifest['Require'] if row['Path'] != missing]
+        go_pins.apply(Path('/fixture'), self.pins, self.command)
+        resolved = [args for args, _ in self.calls if args[1] == 'get'][0][2:]
+        self.assertNotIn(missing+'@'+self.pins[missing]['version'], resolved)
+        self.assertEqual(len(resolved), len(self.pins)-1)
 
     def test_new_replaced_or_downgraded_modules_fail_before_editing_the_graph(self):
         for attack in ('new-module', 'replacement', 'downgrade'):
