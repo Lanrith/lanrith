@@ -70,8 +70,10 @@ def covered(binary, observed, root, previous):
     for identity, module, installed in observed:
         selected = proposed.get(module)
         if selected and version(selected) > version(installed):
-            result = osv_queries([{'package': {'ecosystem': 'Go', 'name': module}, 'version': selected}])[0]
-            if identity not in {v['id'] for v in result.get('vulns', [])}:
+            old, new = osv_queries([{'package': {'ecosystem': 'Go', 'name': module}, 'version': value}
+                                   for value in (installed, selected)])
+            if (identity in {v['id'] for v in old.get('vulns', [])} and
+                    identity not in {v['id'] for v in new.get('vulns', [])}):
                 continue
         blockers.append(binary+': '+identity+' in '+module+' '+installed+
                         '; no verified fix is covered by the proposed inputs')

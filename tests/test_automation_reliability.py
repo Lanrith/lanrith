@@ -43,8 +43,9 @@ class PublishedCoverageTests(unittest.TestCase):
 
     def test_increased_version_does_not_clear_an_advisory_that_still_applies(self):
         findings = [('GO-2026-1234', 'go.opentelemetry.io/otel', 'v1.46.0')]
-        for response, blocked in (({}, False), ({'vulns': [{'id': 'GO-2026-1234'}]}, True)):
-            with patch.object(published_go, 'osv_queries', return_value=[response]):
+        affected = {'vulns': [{'id': 'GO-2026-1234'}]}
+        for response, blocked in (([affected, {}], False), ([affected, affected], True), ([{}, {}], True)):
+            with patch.object(published_go, 'osv_queries', return_value=response):
                 self.assertEqual(bool(published_go.covered('alloy', findings, ROOT, {})), blocked)
 
 
@@ -133,6 +134,36 @@ class ReconciliationTests(unittest.TestCase):
         self.checks = [{'id': 1, 'name': 'Security update admission', 'app': {'id': 999},
                         'head_sha': 'a'*40, 'conclusion': 'success'}]
         self.assertEqual(self.decide()[0][0]['kind'], 'review')
+
+    def test_manual_updater_pr_recovers_review_but_is_not_blindly_rebased(self):
+        self.pr['user'] = {'login': self.policy['proposer_login'], 'id': self.policy['proposer_user_id'], 'type': 'Bot'}
+        self.pr['head']['ref'] = 'security/manual-repair'
+        self.assertEqual(self.decide()[0][0]['kind'], 'review')
+        self.base = 'c'*40
+        actions, blockers = self.decide()
+        self.assertEqual(actions, [])
+        self.assertIn('not rewritten', blockers[0])
+
+    def test_passing_manual_pr_can_recover_a_missed_human_notification(self):
+        self.checks = [{'id': 1, 'name': 'Security update admission', 'app': {'id': self.policy['reviewer_app_id']},
+                        'head_sha': 'a'*40, 'conclusion': 'success'}]
+        self.assertEqual(self.decide()[0][0]['kind'], 'notify')
+        self.assertEqual(self.decide({self.subject: ['notify']}), ([], []))
+
+    def test_stale_latest_failure_cannot_rerun_an_older_success(self):
+        def api(endpoint):
+            if '/workflows/' not in endpoint:
+                return self.api(endpoint)
+            path = '.github/workflows/'+endpoint.split('/workflows/')[1].split('/')[0]
+            run = {'id': 1, 'path': path, 'head_sha': 'a'*40, 'event': 'pull_request', 'status': 'completed',
+                   'conclusion': 'success', 'pull_requests': [{'number': 97, 'base': {'sha': 'b'*40}}]}
+            return {'workflow_runs': [run, {**run, 'id': 2, 'conclusion': 'failure'}]}
+        with patch.object(reconcile, 'api', side_effect=api), \
+                patch.object(reconcile, 'manual_validation_policy', return_value=self.policy), \
+                patch.object(reconcile, 'validation_runs', side_effect=MaintenanceError('Validation is stale')):
+            actions, blockers = reconcile.decision(self.pr, self.policy, {})
+        self.assertEqual(actions, [])
+        self.assertTrue(blockers)
 
 
 class ControllerBundleTests(unittest.TestCase):

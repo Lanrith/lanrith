@@ -14,10 +14,14 @@ def decision(pr, policy, attempts, *, clock=None):
     """Return only safe recovery actions; a failed build is never blindly rerun."""
     clock = clock or datetime.datetime.now(datetime.timezone.utc)
     repo, number = policy['repository'], pr['number']
-    if pr['draft'] or pr['head']['repo']['full_name'] != repo or pr['base']['ref'] != 'main':
+    if pr['draft'] or (pr['head']['repo'] or {}).get('full_name') != repo or pr['base']['ref'] != 'main':
         return [], []
-    automatic = pr['head']['ref'] == policy['proposal_branch'] and pr['user']['login'] == policy['proposer_login']
-    bot = automatic or pr['user']['login'] == 'dependabot[bot]' and pr['user']['type'] == 'Bot'
+    proposer = (pr['user']['login'] == policy['proposer_login'] and pr['user']['type'] == 'Bot' and
+                pr['user'].get('id') == policy['proposer_user_id'])
+    automatic = pr['head']['ref'] == policy['proposal_branch'] and proposer
+    control = pr['head']['ref'] == 'automation/workflow-updates' and proposer
+    dependabot = pr['user']['login'] == 'dependabot[bot]' and pr['user']['type'] == 'Bot'
+    bot = proposer or dependabot
     if not bot:
         return [], []
     subject = str(number)+':'+pr['head']['sha']+':'+pr['base']['sha']
@@ -25,15 +29,19 @@ def decision(pr, policy, attempts, *, clock=None):
     actions, blockers = [], []
     comparison = api('repos/'+repo+'/compare/'+pr['base']['sha']+'...'+pr['head']['sha'])
     if comparison['merge_base_commit']['sha'] != pr['base']['sha']:
-        kind = 'proposal' if automatic else 'refresh'
+        if not (automatic or control or dependabot):
+            return [], ['#'+str(number)+': manual repair branch needs a reviewed rebase; it was not rewritten.']
+        kind = 'proposal' if automatic else 'controls' if control else 'refresh'
         if kind not in used:
             actions.append({'kind': kind, 'pr': number, 'head': pr['head']['sha'], 'subject': subject})
         else:
             blockers.append('#'+str(number)+': branch refresh did not complete; inspect its update conflict.')
         return actions, blockers
     try:
-        checks = validation_runs(repo, pr, manual_validation_policy(repo, number, policy), manual=True)
-    except ValidationPending:
+        validation_runs(repo, pr, manual_validation_policy(repo, number, policy), manual=True)
+    except ValidationPending as waiting:
+        if pr.get('updated_at') and clock-timestamp(pr['updated_at']) > datetime.timedelta(hours=24):
+            return [], ['#'+str(number)+': required qualification has remained incomplete for more than 24 hours: '+str(waiting)]
         return [], []
     except MaintenanceError as failure:
         blockers.append('#'+str(number)+': '+str(failure))
@@ -44,12 +52,12 @@ def decision(pr, policy, attempts, *, clock=None):
                 response = api('repos/'+repo+'/actions/workflows/'+path.rsplit('/', 1)[1]+
                                '/runs?event=pull_request&head_sha='+pr['head']['sha']+'&per_page=100')
                 runs = [r for r in response['workflow_runs'] if r['head_sha'] == pr['head']['sha'] and
-                        r['path'] == path and r['event'] == 'pull_request' and r['status'] == 'completed' and
-                        r['conclusion'] == 'success' and any(p['number'] == number and
+                        r['path'] == path and r['event'] == 'pull_request' and any(p['number'] == number and
                         p['base']['sha'] == pr['base']['sha'] for p in r.get('pull_requests', []))]
-                if runs:
+                latest_run = max(runs, key=lambda r: r['id']) if runs else None
+                if latest_run and latest_run['status'] == 'completed' and latest_run['conclusion'] == 'success':
                     actions.append({'kind': 'validation', 'pr': number, 'head': pr['head']['sha'],
-                                    'run': max(runs, key=lambda r: r['id'])['id'], 'subject': subject})
+                                    'run': latest_run['id'], 'subject': subject})
         return actions, blockers
     response = api('repos/'+repo+'/commits/'+pr['head']['sha']+
                    '/check-runs?check_name=Security%20update%20admission&filter=latest&per_page=100')
@@ -60,6 +68,8 @@ def decision(pr, policy, attempts, *, clock=None):
     if latest and latest.get('conclusion') == 'success':
         if automatic and not pr.get('auto_merge') and 'merge' not in used:
             actions.append({'kind': 'merge', 'pr': number, 'head': pr['head']['sha'], 'subject': subject})
+        elif not automatic and not pr.get('requested_reviewers') and 'notify' not in used:
+            actions.append({'kind': 'notify', 'pr': number, 'head': pr['head']['sha'], 'subject': subject})
         return actions, []
     if latest and clock-timestamp(latest['started_at']) < datetime.timedelta(hours=1):
         return [], []
@@ -136,9 +146,10 @@ def reconcile(repo, output, *, apply=False):
         elif action['kind'] == 'validation':
             api('repos/'+repo+'/actions/runs/'+str(action['run'])+'/rerun', method='POST')
         else:
-            workflow = 'security-review.yml' if action['kind'] == 'review' else 'update-inputs.yml'
+            workflow = {'review': 'security-review.yml', 'notify': 'request-human-review.yml',
+                        'proposal': 'update-inputs.yml', 'controls': 'prepare-workflow-updates.yml'}[action['kind']]
             payload = {'ref': 'main'}
-            if action['kind'] == 'review':
+            if action['kind'] in ('review', 'notify'):
                 payload['inputs'] = {'pr': str(action['pr'])}
             api('repos/'+repo+'/actions/workflows/'+workflow+'/dispatches', method='POST', payload=payload)
     return record

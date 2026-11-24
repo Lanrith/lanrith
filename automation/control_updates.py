@@ -63,7 +63,12 @@ def controller_source(tools, chosen, releases):
             '--source-digest', commit, '--signer-digest', commit, '--source-ref', 'refs/heads/main',
             '--deny-self-hosted-runners', capture_output=True)
         download(publication['tag_name'], ['publication-verification.json'])
-        verification = document((root/'publication-verification.json').read_bytes())
+        verification_raw = (root/'publication-verification.json').read_bytes()
+        require(any(a['name'] == 'publication-verification.json' and a['digest'] == 'sha256:'+digest(verification_raw)
+                    for a in publication['assets']), 'Downloaded controller verification changed after authentication.')
+        verification = document(verification_raw)
+        require(verification['source_commit'] == commit and verification['tag'] == chosen['tag_name'],
+                'Controller publication and selection identify different source.')
         history_raw = (root/'update-record.json').read_bytes()
         require(digest(history_raw) == verification['update_record_sha256'], 'Controller authorization record differs from verified publication.')
         history = document(history_raw)

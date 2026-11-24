@@ -94,8 +94,9 @@ its accepted installation permissions. The specification is
 prepares human-reviewed changes; it has no approval or protection-bypass authority.
 After the reviewed controller release is installed, set
 `LANRITH_WORKFLOW_UPDATES_ENABLED=true` in each participating repository. Keep it
-unset until the permission is accepted. Add `config-template-qualification` to
-the updater's selected repositories when activating the isolated consumer canary.
+unset until the permission is accepted. Add `config-template` and `config-template-qualification` to the updater's
+selected repositories when preparing the template repair and activating the
+isolated consumer canary. The template itself still skips update execution.
 
 From a checkout of this change, run:
 
@@ -295,8 +296,11 @@ twice, and can refresh expired successful validation once. Failed builds are
 reported for repair rather than repeatedly rebuilt. Reservations are recorded
 before dispatch in the reconciliation issue, so an interrupted job cannot reset
 its retry budget. Recovery rechecks the current PR subject before writing or
-dispatching. A failed retained scan also triggers the proposer; the six-hour
-schedule remains a fallback.
+dispatching. A failed retained scan also triggers the proposer. Verified component
+publication sends a signal using a short-lived updater token scoped to the
+platform repository; no release data or code from the signal is trusted. The
+platform re-resolves qualified releases and coalesces pending proposal runs.
+The six-hour schedule remains a fallback.
 
 The isolated `config-template-qualification` repository can call
 `consumer-qualification.yml` after adopting its qualified controller commit.

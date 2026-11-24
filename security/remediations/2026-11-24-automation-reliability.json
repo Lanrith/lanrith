@@ -102,7 +102,7 @@
   "local_validation": {
     "actionlint": "verified v1.7.12; passed",
     "published_alloy_coverage": "all four reachable module/advisory pairs covered by the proposed verified pins",
-    "python_suite": "1395 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
+    "python_suite": "1401 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
     "source_boundary": "passed",
     "workflow_invariants": "passed"
   },
