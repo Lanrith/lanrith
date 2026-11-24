@@ -9,6 +9,7 @@ from .common import api, canonical, contents, digest, document, pages, require, 
 
 REPO = 'Lanrith/lanrith'
 PIN = re.compile(r'(?m)^(\s+(?:- )?uses: )([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@([0-9a-f]{40})( # v([0-9]+\.[0-9]+\.[0-9]+))$')
+CONTROLLER = re.compile(r'Lanrith/lanrith/\.github/workflows/[a-z-]+\.yml@[0-9a-f]{40}')
 
 
 def action_changes(before, after):
@@ -38,6 +39,24 @@ def action_changes(before, after):
                         'review_diff': 'https://github.com/'+upstream+'/compare/'+a[3]+'...'+b[3]})
     require(changes, 'Action update contains no advancement.')
     return changes
+
+
+def merge_action_update(before, proposed, current):
+    """Validate against protected main, then compose only the changed pins."""
+    changes = action_changes(before, proposed)
+    old, new, selected = (list(PIN.finditer(text)) for text in (before, proposed, current))
+    require(len(old) == len(selected), 'Prepared Action pin inventory changed.')
+    replacements = []
+    for a, b, c in zip(old, new, selected):
+        require(a.groups()[:2] == c.groups()[:2], 'Prepared Action execution context changed.')
+        if a.groups()[2:] == b.groups()[2:]:
+            continue
+        require(c.groups()[2:] in (a.groups()[2:], b.groups()[2:]),
+                'Action discovery PRs propose conflicting pins; resolve their upstream version first.')
+        replacements.append((c.start(), c.end(), b[0]))
+    for start, end, replacement in reversed(replacements):
+        current = current[:start]+replacement+current[end:]
+    return current, changes
 
 
 def controller_source(tools, chosen, releases):
@@ -167,13 +186,14 @@ def prepare(root, tools, repo):
         updates, changes = {}, []
         for file in files:
             path = file['filename']
-            old = (root/path).read_text()
+            old = run('git', 'show', base+':'+path, cwd=root, capture_output=True, text=True).stdout
             new = contents(repo, path, pr['head']['sha']).decode()
-            if 'Lanrith/lanrith/.github/workflows/' in new:
+            if CONTROLLER.findall(old) != CONTROLLER.findall(new):
                 # Controller pins are handled by authenticated release selection.
                 continue
-            changes.extend(action_changes(old, new))
-            updates[root/path] = new
+            merged, verified = merge_action_update(old, new, (root/path).read_text())
+            changes.extend(verified)
+            updates[root/path] = merged
         if updates:
             for path, text in updates.items():
                 path.write_text(text)

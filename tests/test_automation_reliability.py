@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -167,6 +168,62 @@ class ReconciliationTests(unittest.TestCase):
 
 
 class ControllerBundleTests(unittest.TestCase):
+    def test_preparation_combines_discovery_prs_with_unchanged_controller_references(self):
+        base, path = 'e'*40, '.github/workflows/check.yml'
+        before = ('    uses: Lanrith/lanrith/.github/workflows/security-review.yml@'+'f'*40+'\n'+
+                  '      - uses: actions/checkout@'+'a'*40+' # v7.0.1\n'+
+                  '      - uses: actions/github-script@'+'b'*40+' # v8.0.0\n')
+        proposed = {'1'*40: before.replace('a'*40, 'c'*40).replace('7.0.1', '7.0.2'),
+                    '2'*40: before.replace('b'*40, 'd'*40).replace('8.0.0', '8.0.1')}
+        pulls = [{'number': n, 'html_url': f'https://github.com/{REPO}/pull/{n}',
+                  'user': {'login': 'dependabot[bot]', 'type': 'Bot'},
+                  'head': {'repo': {'full_name': REPO}, 'sha': str(n)*40}} for n in (1, 2)]
+        def command(*args, **kwargs):
+            if args[:2] == ('git', 'status'):
+                return SimpleNamespace(stdout='')
+            if args[:2] == ('git', 'rev-parse'):
+                return SimpleNamespace(stdout=base)
+            self.assertEqual(args, ('git', 'show', base+':'+path))
+            return SimpleNamespace(stdout=before)
+        def pages(endpoint):
+            return [{'filename': path, 'status': 'modified'}] if '/files?' in endpoint else pulls
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/path).parent.mkdir(parents=True)
+            (root/path).write_text(before)
+            (root/'security').mkdir()
+            with patch.object(control, 'run', side_effect=command), \
+                    patch.object(control, 'pages', side_effect=pages), \
+                    patch.object(control, 'api', return_value={'merge_base_commit': {'sha': base}}), \
+                    patch.object(control, 'contents', side_effect=lambda repo, path, head: proposed[head].encode()), \
+                    patch.object(control, 'action_changes', return_value=[{'verified': True}]) as verify:
+                record = control.prepare(root, root, REPO)
+            self.assertEqual(len(record['updates']), 2)
+            self.assertEqual((root/path).read_text(), proposed['1'*40].replace('b'*40, 'd'*40).replace('8.0.0', '8.0.1'))
+            self.assertEqual([call.args[0] for call in verify.call_args_list], [before, before])
+
+    def test_independent_action_proposals_in_one_workflow_do_not_revert_each_other(self):
+        before = ('      - uses: actions/checkout@'+'a'*40+' # v7.0.1\n'+
+                  '      - uses: actions/github-script@'+'b'*40+' # v8.0.0\n')
+        first = before.replace('a'*40, 'c'*40).replace('7.0.1', '7.0.2')
+        second = before.replace('b'*40, 'd'*40).replace('8.0.0', '8.0.1')
+        with patch.object(control, 'action_changes', return_value=[{'verified': True}]):
+            merged, _ = control.merge_action_update(before, second, first)
+        self.assertEqual(merged, first.replace('b'*40, 'd'*40).replace('8.0.0', '8.0.1'))
+
+    def test_action_merge_rejects_conflicting_pins_without_touching_controller_selection(self):
+        before = ('    uses: Lanrith/lanrith/.github/workflows/security-review.yml@'+'e'*40+'\n'+
+                  '      - uses: actions/checkout@'+'a'*40+' # v7.0.1\n')
+        proposed = before.replace('a'*40, 'b'*40).replace('7.0.1', '7.0.2')
+        current = before.replace('e'*40, 'f'*40)
+        with patch.object(control, 'action_changes', return_value=[{'verified': True}]):
+            merged, _ = control.merge_action_update(before, proposed, current)
+            self.assertIn('f'*40, merged)
+            self.assertIn('b'*40, merged)
+            with self.assertRaisesRegex(MaintenanceError, 'conflicting'):
+                control.merge_action_update(before, proposed,
+                    current.replace('a'*40, 'c'*40).replace('7.0.1', '7.0.3'))
+
     def test_complete_bundle_updates_every_workflow_and_collector_atomically(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

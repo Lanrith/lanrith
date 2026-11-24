@@ -100,9 +100,10 @@
   },
   "kind": "manual-automation-repair",
   "local_validation": {
+    "action_proposal_composition": "Independent Action PRs for one workflow compose without reverting each other; conflicting pins fail closed and qualified controller references remain intact.",
     "actionlint": "verified v1.7.12; passed",
     "published_alloy_coverage": "all four reachable module/advisory pairs covered by the proposed verified pins",
-    "python_suite": "1401 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
+    "python_suite": "1404 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
     "source_boundary": "passed",
     "workflow_invariants": "passed"
   },
