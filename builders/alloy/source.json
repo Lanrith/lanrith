@@ -52,7 +52,7 @@
   ],
   "node_image": "docker.io/library/node@sha256:aca79828f8a4afc627f189387c965625bcc419233946210a3b9522d90a59b5c6",
   "node_version": "24.22.3",
-  "package_version": "1.20.1-1+lanrith6",
+  "package_version": "1.20.1-1+lanrith7",
   "schema": 1,
   "security_modules": {
     "github.com/andybalholm/brotli": {
@@ -64,6 +64,26 @@
       "go_mod_sum": "h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=",
       "sum": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
       "version": "v1.20.2"
+    },
+    "go.opentelemetry.io/otel": {
+      "go_mod_sum": "h1:8wS9O2qfXrYrzp6hIF/HOYJJf/wIhFPhR2xLuP+iXQU=",
+      "sum": "h1:j7ALJ/zgkS7Z6aeJW09p8VC9804bC+PpeTfCD4XPnOM=",
+      "version": "v1.47.0"
+    },
+    "go.opentelemetry.io/otel/sdk": {
+      "go_mod_sum": "h1:VUc24kiOeoGsxG8G9ULx3fWKvB7jMhnGE8Oi607lgR0=",
+      "sum": "h1:zWXEr4j2lFefG87TU6Yg8a7ngfohIKFZHKp0Hf5hC6I=",
+      "version": "v1.47.0"
+    },
+    "go.opentelemetry.io/otel/sdk/log": {
+      "go_mod_sum": "h1:Wu74Z2EmOKXi2FleSNAb0Hyau2G+r5kubSEMJw5aAMs=",
+      "sum": "h1:W4N/ZfgpkRRnmARnqYoQ6BrWA0mrj8IzVDNLlpmUJZY=",
+      "version": "v1.47.0"
+    },
+    "go.opentelemetry.io/otel/trace": {
+      "go_mod_sum": "h1:jNaSLa2PZEYFG6fRjJABAu+bw4FS08uDmPg28lTghu0=",
+      "sum": "h1:JOjX/Oci8K94QHddo+bbfya/Ai/nf6/dt9ZfrFNWSrM=",
+      "version": "v1.47.0"
     }
   },
   "supplemental_notices": {
