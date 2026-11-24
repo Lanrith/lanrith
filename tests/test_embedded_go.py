@@ -42,7 +42,7 @@ class EmbeddedWorkerPinsTests(unittest.TestCase):
         with patch.dict('os.environ', {'GOPROXY': 'https://untrusted.invalid', 'GONOSUMDB': '*'}):
             go_pins.apply(Path('/fixture'), self.pins, self.command)
         self.assertTrue(any('-require=github.com/andybalholm/brotli@v1.2.7' in args for args, _ in self.calls))
-        self.assertEqual(sum(args[1] == 'list' for args, _ in self.calls), 2)
+        self.assertEqual(sum(args[1] == 'list' for args, _ in self.calls), len(self.pins))
         for _, kwargs in self.calls:
             self.assertEqual(kwargs['env']['GOSUMDB'], 'sum.golang.org')
             self.assertEqual(kwargs['env']['GONOSUMDB'], '')
@@ -52,7 +52,7 @@ class EmbeddedWorkerPinsTests(unittest.TestCase):
         for attack in ('new-module', 'replacement', 'downgrade'):
             self.setUp()
             name = next(iter(self.pins))
-            if attack == 'new-module': self.manifest['Require'].pop()
+            if attack == 'new-module': self.manifest['Require'].pop(0)
             elif attack == 'replacement': self.manifest['Replace'] = [{'Old': {'Path': name}, 'New': {'Path': '/untrusted'}}]
             else: self.manifest['Require'][0]['Version'] = 'v99.0.0'
             with self.subTest(attack=attack), self.assertRaises(ReleaseError):
@@ -96,7 +96,7 @@ class EmbeddedProposalTests(unittest.TestCase):
         record = {'id': advisory['id'], 'type': 'security-fix', 'ecosystem': 'Go', 'package': name,
                   'installed': 'v1.2.2', 'fixed': 'v1.2.7'}
         fixed = selected()[name]
-        with patch.object(embedded_go, 'osv_queries', return_value=[{'vulns': [{'id': advisory['id']}]}, {}]), \
+        with patch.object(embedded_go, 'osv_queries', return_value=[{'vulns': [{'id': advisory['id']}]}]+[{} for _ in range(len(selected())-1)]), \
                 patch.object(embedded_go, 'fetch_json', return_value=advisory), \
                 patch.object(embedded_go, 'reason', return_value=record), \
                 patch.object(embedded_go.go_dependencies, 'verified_download', return_value={'Sum': fixed['sum'], 'GoModSum': fixed['go_mod_sum']}) as download, \
@@ -109,7 +109,7 @@ class EmbeddedProposalTests(unittest.TestCase):
         self.assertIn(fixed['sum'].encode(), validate.call_args.args[1][1])
 
     def test_no_findings_cause_no_download_or_candidate(self):
-        with patch.object(embedded_go, 'osv_queries', return_value=[{}, {}]), \
+        with patch.object(embedded_go, 'osv_queries', return_value=[{} for _ in selected()]), \
                 patch.object(embedded_go.go_dependencies, 'verified_download') as download:
             value, reasons = embedded_go.update(selected(), allow_minor=True)
         self.assertEqual(value, selected());self.assertEqual(reasons, []);download.assert_not_called()
@@ -121,7 +121,7 @@ class EmbeddedProposalTests(unittest.TestCase):
             advisory = {'id': 'GO-SYNTHETIC', 'affected': [{'package': {'name': name},
                 'ranges': [{'events': [{'fixed': fixed}] if fixed else [{'introduced': '0'}]}]}]}
             if withdrawn: advisory['withdrawn'] = '2026-11-06T00:00:00Z'
-            with self.subTest(fixed=fixed), patch.object(embedded_go, 'osv_queries', return_value=[{'vulns': [{'id': advisory['id']}]}, {}]), \
+            with self.subTest(fixed=fixed), patch.object(embedded_go, 'osv_queries', return_value=[{'vulns': [{'id': advisory['id']}]}]+[{} for _ in range(len(selected())-1)]), \
                     patch.object(embedded_go, 'fetch_json', return_value=advisory), self.assertRaises(MaintenanceError):
                 embedded_go.update(selected(), allow_minor=allow_minor)
 

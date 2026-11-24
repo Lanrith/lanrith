@@ -18,6 +18,8 @@ REVIEWED_WORKFLOWS = frozenset({
     '.github/workflows/publish-release.yml', '.github/workflows/archive-evidence.yml',
     '.github/workflows/security-review.yml', '.github/workflows/security-proposal.yml',
     '.github/workflows/retry-runner-capacity.yml',
+    '.github/workflows/maintenance-reconcile.yml', '.github/workflows/prepare-workflow-updates.yml',
+    '.github/workflows/consumer-qualification.yml',
 })
 
 

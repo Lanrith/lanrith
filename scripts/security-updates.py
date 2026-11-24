@@ -10,14 +10,14 @@ import sys
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
-from automation import cleanup, evidence, notifications, proposal, releases, review
+from automation import cleanup, evidence, notifications, proposal, releases, review, reconcile
 from automation.common import MaintenanceError, document, metadata_bundle, now, repository
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('propose', 'review', 'approve', 'collect-release',
-                                           'proposal-state', 'blocked-issue', 'cleanup', 'stage', 'apply-proposal', 'bundle', 'review-event', 'track', 'admission', 'complete-release', 'finalize', 'request-review', 'notify-human-event'))
+                                           'proposal-state', 'blocked-issue', 'resolver-recovered', 'reconcile', 'cleanup', 'stage', 'apply-proposal', 'bundle', 'review-event', 'track', 'admission', 'complete-release', 'finalize', 'request-review', 'notify-human-event'))
     parser.add_argument('--owner', type=Path, default=Path('.'))
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'))
     parser.add_argument('--source', default=os.environ.get('LANRITH_TOOLS_SHA', os.environ.get('GITHUB_SHA')))
@@ -99,6 +99,10 @@ def main():
                 stream.write('publish='+str(changed).lower()+'\nrequires-human='+str(record['requires_human']).lower()+'\n')
     elif args.command == 'blocked-issue':
         releases.blocked_issue(repo, args.output)
+    elif args.command == 'resolver-recovered':
+        releases.resolver_recovered(repo, args.output)
+    elif args.command == 'reconcile':
+        reconcile.reconcile(repo, args.output, apply=args.apply)
     elif args.command == 'cleanup':
         record = cleanup.plan(repo)
         evidence.write(args.output, record)

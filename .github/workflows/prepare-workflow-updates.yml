@@ -1,0 +1,76 @@
+name: Prepare complete workflow updates
+on:
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+cache-mode: none
+concurrency:
+  group: complete-workflow-update-proposal
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && vars.LANRITH_WORKFLOW_UPDATES_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: lanrith-updates
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - id: prepare
+        name: Authenticate published inputs and prepare the complete review diff
+        run: python3 tools/scripts/prepare-workflow-updates.py --owner owner --output "$RUNNER_TEMP/workflow-update.json"
+      - id: app-token
+        if: steps.prepare.outputs.changed == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_UPDATE_APP_ID }}
+          private-key: ${{ secrets.LANRITH_UPDATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+      - if: steps.prepare.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
+        with:
+          path: owner
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automation/workflow-updates
+          title: Review complete workflow and controller updates
+          commit-message: Prepare authenticated workflow pins and matching provenance
+          body: |
+            This change pairs workflow pins with their assessed hashes and controller provenance.
+            `security/automation-update.json` records the reason, source PRs, upstream diffs,
+            exact versions and published verification evidence.
+
+            Independent human review is required after current-head CI and qualification pass.
+            This workflow cannot approve or merge its proposal.
+          add-paths: |
+            .github/workflows/
+            security/maintenance-source.json
+            security/slsa-assessment.json
+            security/automation-update.json
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workflow-update-preparation
+          path: ${{ runner.temp }}/workflow-update.json
+          retention-days: 1
+          if-no-files-found: warn

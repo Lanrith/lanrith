@@ -1,0 +1,58 @@
+name: Isolated consumer image qualification
+on:
+  workflow_call:
+permissions:
+  contents: read
+cache-mode: none
+concurrency:
+  group: consumer-canary-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  image:
+    if: github.repository == 'Lanrith/config-template-qualification'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      artifact-id: ${{ steps.report.outputs.artifact-id }}
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - name: Prepare the isolated build runner
+        run: |
+          python3 tools/scripts/prepare-runner.py
+          sudo apt-get update -qq
+          sudo apt-get install --yes python3-yaml openssl
+      - name: Assemble and verify the canary with disposable credentials
+        env:
+          LANRITH_WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: python3 tools/scripts/qualify-consumer.py --owner owner --output "$RUNNER_TEMP/consumer-qualification.json"
+      - id: report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: consumer-qualification
+          path: ${{ runner.temp }}/consumer-qualification.json
+          retention-days: 1
+          if-no-files-found: error
+  archive:
+    needs: image
+    if: github.ref == 'refs/heads/main' && github.repository == 'Lanrith/config-template-qualification'
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/archive-evidence.yml
+    with:
+      artifact-id: ${{ needs.image.outputs.artifact-id }}
+      topic: consumer-qualification

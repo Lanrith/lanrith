@@ -254,6 +254,9 @@ def propose(root, tools, repo, producer):
     require(not run('git', 'status', '--porcelain', cwd=root, capture_output=True).stdout, 'Proposals need a clean checkout.')
     before = {name: (root/name).read_bytes() for name in run('git', 'ls-files', '-z', cwd=root, capture_output=True, text=True).stdout.split('\0') if name}
     reasons = []
+    if (root/'requirements.txt').exists():
+        from .python_dependencies import update as update_python
+        reasons.extend(update_python(root, allow_minor=policy.get('automatic_minor_security_updates', False)))
     if (root/'go.mod').exists():
         from .go_dependencies import update
         reasons.extend(update(root, allow_minor=policy.get('automatic_minor_security_updates', False)))
@@ -343,6 +346,8 @@ def propose(root, tools, repo, producer):
             security['required_exact_packages'][name] = value
             security['local_package_sources'][name]['version'] = value
         security_path.write_bytes(canonical(security))
+        from .published_go import reconcile
+        reconcile(root, tools, document(before['build-inputs.json']))
     if (root/'go.mod').exists():
         # A new advisory without an eligible fix still needs an actionable failure.
         scan_go(root, before['.go-version'].decode().strip(), reasons, policy)

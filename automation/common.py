@@ -126,7 +126,7 @@ def contents(repo, path, ref):
 def fetch(url, *, data=None, maximum=8*1024*1024):
     parsed = urllib.parse.urlsplit(url)
     require(parsed.scheme == 'https' and parsed.hostname in {
-        'api.osv.dev', 'go.dev', 'nodejs.org', 'registry.npmjs.org',
+        'api.osv.dev', 'go.dev', 'nodejs.org', 'registry.npmjs.org', 'pypi.org',
         'snapshot.debian.org', 'security-tracker.debian.org', 'proxy.golang.org',
         'security.debian.org', 'nlnetlabs.nl',
         'registry-1.docker.io', 'auth.docker.io'}, 'Unapproved maintenance metadata origin.')

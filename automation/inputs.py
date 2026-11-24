@@ -224,6 +224,11 @@ def ui_manifests(pin, patch):
 def validate_changes(before, after, reasons, policy, read_before, read_after):
     manual_findings = []
     require(set(before) == set(after) and len(before) <= policy['maximum_changes'], 'Unexpected update file coverage.')
+    if {'pyproject.toml', 'requirements.txt'} & set(before):
+        from .python_dependencies import validate as validate_python
+        validate_python((read_before('pyproject.toml'), read_before('requirements.txt')),
+                        (read_after('pyproject.toml'), read_after('requirements.txt')), reasons,
+                        allow_minor=policy.get('automatic_minor_security_updates', False))
     if {'go.mod', 'go.sum'} & set(before):
         from .go_dependencies import validate
         validate((read_before('go.mod'), read_before('go.sum')),
@@ -231,7 +236,7 @@ def validate_changes(before, after, reasons, policy, read_before, read_after):
                  allow_minor=policy.get('automatic_minor_security_updates', False))
     for path in sorted(before):
         old_raw, new_raw = before[path], after[path]
-        if path in ('go.mod', 'go.sum'):
+        if path in ('go.mod', 'go.sum', 'pyproject.toml', 'requirements.txt'):
             continue
         elif path == '.go-version':
             validate_go(old_raw.decode().strip(), new_raw.decode().strip(), reasons, policy)

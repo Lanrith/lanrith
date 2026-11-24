@@ -19,9 +19,11 @@ jobs:
       - name: Install test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install --yes python3-yaml nftables unbound kea-dhcp4-server chrony
+          sudo apt-get install --yes python3-yaml python3-venv nftables unbound kea-dhcp4-server chrony
+          python3 -m venv "$RUNNER_TEMP/test-env"
+          "$RUNNER_TEMP/test-env/bin/pip" install --only-binary=:all: --require-hashes -r requirements.txt
       - name: Unit and contract tests
-        run: python3 -m unittest discover -s tests -v
+        run: '"$RUNNER_TEMP/test-env/bin/python" -m unittest discover -s tests -v'
       - name: Source checks and native service parsers
         run: |
           python3 scripts/check-source.py
