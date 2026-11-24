@@ -109,6 +109,12 @@
     "source_boundary": "passed",
     "workflow_invariants": "passed"
   },
+  "module_download_recovery": {
+    "change": "Node exporter and Alloy/Beyla module downloads retry at most three times, with 2s/5s backoff, only when every reported error is an explicitly recognized transport failure. Original diagnostics remain in the job log. Module checksums, compiler tests, security scans and the admission gate remain blocking.",
+    "failure_run": "https://github.com/Lanrith/lanrith/actions/runs/45446677129",
+    "reason": "Node exporter module acquisition stopped on an HTTP/2 INTERNAL_ERROR from proxy.golang.org while downloading github.com/mattn/go-xmlrpc@v0.0.3, before compilation.",
+    "validation": "Six targeted tests cover the actual transport error, bounded retries, checksum and mixed-error rejection, JSON module failures, timeout/kill rejection, and no retry of tests/builds/scans. A clean-cache download of the exact failed module passes Go checksum authentication."
+  },
   "qualification_repair": {
     "change": "Authenticate every existing security root against both published checksums, resolve only those exact versions with go get, then recheck the selected unreplaced pins. Apply the existing x/net pin before resolution. No broad upgrade flag or unrelated dependency pruning is used.",
     "failure_run": "https://github.com/Lanrith/lanrith/actions/runs/45431564359",

@@ -14,10 +14,12 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
-from lanrith import go_pins
+from lanrith import go_download, go_pins
 
 
 def run(*arguments, **kwargs):
+    if arguments[:3] == ('go', 'mod', 'download'):
+        return go_download.download(*arguments[3:], **kwargs)
     return subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, **kwargs)
 
 
