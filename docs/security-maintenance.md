@@ -306,10 +306,15 @@ The isolated `config-template-qualification` repository can call
 `consumer-qualification.yml` after adopting its qualified controller commit.
 It validates configuration and assembles/verifies factory and update payloads
 with disposable per-run keys. It uploads no images or private keys. Successful
-main runs retain a signed immutable qualification report through the maintenance
-archive. This canary requires no production signing secrets, paid agents or
-private-repository branch protection. The ordinary configuration template keeps
-its separate owner deployment and signing behavior.
+main runs retain an immutable operational report bound to the source commit,
+controller commit, run identity and input/output digests. The archive verifies
+the published asset digest and rejects mutable releases. GitHub requires
+[Enterprise Cloud for private-repository attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations),
+so this private canary report explicitly carries no hosted attestation or
+production release authorization. Production approval continues to require its
+independent reviewer and attested evidence. The canary uses no production signing
+secrets, paid agents or private-repository branch protection. The ordinary
+configuration template keeps its separate owner deployment and signing behavior.
 
 The watchdog reports the latest failed assessment, proposal or release immediately
 on workflow completion and checks scan freshness every six hours. It alerts at

@@ -48,11 +48,24 @@ jobs:
   archive:
     needs: image
     if: github.ref == 'refs/heads/main' && github.repository == 'Lanrith/config-template-qualification'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
-      attestations: write
-      id-token: write
-    uses: ./.github/workflows/archive-evidence.yml
-    with:
-      artifact-id: ${{ needs.image.outputs.artifact-id }}
-      topic: consumer-qualification
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.image.outputs.artifact-id }}
+          path: evidence
+          merge-multiple: true
+      - name: Retain a bounded immutable operational report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANRITH_WORKFLOW_COMMIT: ${{ job.workflow_sha }}
+        run: python3 tools/scripts/archive-consumer-qualification.py --report evidence/consumer-qualification.json
