@@ -75,7 +75,7 @@
     ".github/workflows/consumer-qualification.yml": "cf8054ee708a2c525c9ffc8fe61de5c37dcb736f9b1c7d65440a4cc36b2e46d8",
     ".github/workflows/maintenance-reconcile.yml": "00a2230a273afcfc250fa6da15707e505994bf46d55413b71371cc9033d0d955",
     ".github/workflows/prepare-workflow-updates.yml": "85c6838ee6bfd83411e55b21246c6c074876441b5cfab8fab1dd435b44ac7173",
-    ".github/workflows/publish-release.yml": "4fae9a0557abab94a12a16a031db4c04329aa9c971fe19864da32dca0b61e891",
+    ".github/workflows/publish-release.yml": "f16e4089d1b4cf388de1c2f986e7444d858d2eb6b23abbb1e4d275cfd8940d0c",
     ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
     ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
     ".github/workflows/retry-runner-capacity.yml": "b56905df0de7db9afb0b489cd094cdcb7a76dab42853965bd05fc481c6487dff",

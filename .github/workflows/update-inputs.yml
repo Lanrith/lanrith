@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: '23 */6 * * *'
   workflow_dispatch:
+  repository_dispatch:
+    types: [qualified-component-published]
   workflow_run:
     workflows: [Retained release security, Release]
     types: [completed]
