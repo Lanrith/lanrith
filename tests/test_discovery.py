@@ -94,6 +94,13 @@ class DiscoveryContractTests(unittest.TestCase):
         self.assertIn('ip6 hoplimit 255 udp dport 5353 accept', firewall)
         self.assertIn('tcp dport { 9443, 9444 } accept', firewall)
         self.assertNotIn('chain mdns_reflector', firewall)
+        publisher = [line for line in firewall.splitlines() if 'meta skuid "discovery-bridge-publisher"' in line]
+        self.assertEqual(publisher, [
+            '  meta skuid "discovery-bridge-publisher" oifname "lan" fib saddr type local '
+            + destination+' udp sport 5353 udp dport 5353 accept'
+            for destination in ('ip saddr { 192.168.10.1 } ip daddr 224.0.0.251 ip ttl 255',
+                                'ip6 saddr { fd42:1234:5678:10::1, fd42:1234:5678:ffff::61, fe80::/10 } '
+                                'ip6 daddr ff02::fb ip6 hoplimit 255')])
         namespace = files['etc/lanrith/services.nft']
         self.assertIn('ip daddr { 10.255.254.12 } tcp dport 53 accept', namespace)
         self.assertIn('meta skuid "discovery-bridge-dns"', namespace)

@@ -25,6 +25,29 @@ def fixture():
 
 
 class DirectoryTests(unittest.TestCase):
+    def test_shared_radius_source_is_opt_in_and_limited_to_the_directory_tuple(self):
+        from test_radius import declaration as with_radius
+        value = with_radius()
+        settings = value['identity']['directories']['directory']
+        self.assertNotIn('chain directory_source', config.render(value)['etc/nftables.conf'])
+        settings['url'] = 'ldap+starttls://directory.example.test'
+        settings['addresses'] = ['192.168.10.30', 'fd42:1234:5678:10::30']
+        settings['source_service'] = 'radius'
+        rules = config.render(value)['etc/nftables.conf']
+        self.assertEqual([s.strip() for s in rules.splitlines() if 'meta iif 0' in s], [
+            f'meta iif 0 meta skuid "router-policy-reader" oifname "lan.1" {family} saddr {{ {gateway} }} '
+            f'{family} daddr {dest} tcp dport 389 snat {family} to {source}'
+            for family, gateway, dest, source in (
+                ('ip', '192.168.10.1', '192.168.10.30', '10.255.254.30'),
+                ('ip6', 'fd42:1234:5678:10::1', 'fd42:1234:5678:10::30', 'fd42:1234:5678:fe02::30'))])
+        settings['source_service'] = 'dns'
+        with self.assertRaisesRegex(ReleaseError, 'directory source service'):
+            config.render(value)
+        settings['source_service'] = 'radius'
+        value['identity']['radius'] = {'enabled': False}
+        with self.assertRaisesRegex(ReleaseError, 'directory source service'):
+            config.render(value)
+
     def test_exact_host_reader_path_and_separate_credential_free_observer(self):
         files = config.render(fixture())
         rule = next(line for line in files['etc/nftables.conf'].splitlines() if 'meta skuid' in line)
