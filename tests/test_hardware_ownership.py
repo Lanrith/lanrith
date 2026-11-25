@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -49,6 +50,12 @@ class OwnershipTests(unittest.TestCase):
             overlay = workspace/'mkosi.extra'
             unit = 'lanrith-hardware-ownership.service'
             self.assertTrue((overlay/'etc/systemd/system'/unit).is_symlink())
+            command = next(line.removeprefix('ExecStart=').split() for line in
+                           (overlay/'usr/lib/systemd/system'/unit).read_text().splitlines() if line.startswith('ExecStart='))
+            help_result = subprocess.run([*command, '--help'], cwd=root,
+                                    env={'PYTHONPATH': str(overlay/'usr/lib/lanrith')},
+                                    check=True, capture_output=True, text=True)
+            self.assertIn('bind-owned', help_result.stdout)
             self.assertIn(unit, (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
             self.assertEqual(json.loads((overlay/'usr/share/lanrith/ownership.json').read_bytes()),
                              hardware_config.ownership_manifest(value, facts))
@@ -66,13 +73,15 @@ class OwnershipTests(unittest.TestCase):
     def test_binding_rechecks_memory_identity_and_isolation_before_mutation(self):
         value, facts = declaration()
         manifest = hardware_config.ownership_manifest(value, facts)
-        for failure in ('memory', 'mac', 'shared-group', 'manifest'):
+        for failure in ('memory', 'excess-memory', 'mac', 'shared-group', 'manifest'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 device, pages = self.fixture(root)
                 selected = copy.deepcopy(manifest)
                 if failure == 'memory':
                     pages.write_text('1\n')
+                elif failure == 'excess-memory':
+                    pages.write_text('3\n')
                 elif failure == 'mac':
                     (root/'class/net/port0/address').write_text('02:00:00:00:05:02\n')
                 elif failure == 'shared-group':

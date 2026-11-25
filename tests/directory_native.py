@@ -20,16 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lanrith import config, directory_runtime
 from test_directory import fixture
+from test_radius import declaration as radius_fixture
 
 
 CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
           'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
-          'reader-and-observer-exact-egress', 'other-identities-destination-port-source-interface-denied',
+          'reader-and-observer-exact-egress', 'managed-source-return', 'other-identities-destination-port-source-interface-denied',
           'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
 IMPLEMENTATION = ('lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
                   'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
                   'lanrith/config.py', 'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
-                  'tests/test_directory.py', 'tests/test_policy_agent.py', 'tests/test_intent.py')
+                  'tests/test_directory.py', 'tests/test_radius.py', 'tests/test_policy_agent.py', 'tests/test_intent.py')
 SUCCESS = bytes.fromhex('300c02010178070a010004000400')
 CONNECT = '''
 import socket,sys
@@ -184,9 +185,14 @@ def qualify(result):
                 env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=4)
             assert completed.returncode == expected, 'Unexpected host directory egress result.'
 
-        def install(*, mode='ldaps', addresses=None, literal=False, metrics=True, enabled=True):
+        def install(*, mode='ldaps', addresses=None, literal=False, metrics=True, enabled=True, managed=False):
             value = fixture()
             settings = value['identity']['directories']['directory']
+            if managed:
+                radius_value = radius_fixture()
+                value['identity']['radius'] = radius_value['identity']['radius']
+                value['networks']['devices'] = radius_value['networks']['devices']
+                settings['source_service'] = 'radius'
             addresses = addresses or ['192.168.10.30', 'fd42:1234:5678:10::30']
             host = addresses[0] if literal else 'directory.example.test'
             settings['url'] = ('ldaps' if mode == 'ldaps' else 'ldap+starttls')+'://'+('['+host+']' if ':' in host else host)
@@ -240,6 +246,21 @@ def qualify(result):
                 observe(True)
             install(mode='starttls')
             observe(True, mode='starttls')
+            peer_run('route', 'add', '10.255.254.30/32', 'via', '192.168.10.1')
+            peer_run('-6', 'route', 'add', 'fd42:1234:5678:fe02::30/128', 'via', 'fd42:1234:5678:10::1')
+            peer_filter = ['nsenter', '--net=/run/netns/directory-peer', '--', 'nft']
+            run(*peer_filter, 'add', 'table', 'inet', 'acl')
+            run(*peer_filter, 'add chain inet acl input { type filter hook input priority filter; policy accept; }')
+            for family, source in (('ip', '10.255.254.30'), ('ip6', 'fd42:1234:5678:fe02::30')):
+                run(*peer_filter, f'add rule inet acl input {family} saddr != {source} tcp dport 389 drop')
+            observe(False, mode='starttls')
+            install(mode='starttls', managed=True)
+            observe(True, mode='starttls')
+            for address in ('192.168.10.30', 'fd42:1234:5678:10::30'):
+                connect(address, 389)
+                connect(address, 389, account=pwd.getpwnam('nobody'), expected=10)
+            run(*peer_filter, 'delete', 'table', 'inet', 'acl')
+            install(mode='starttls')
             observe(False, mode='starttls', certificate='wrong-name')
             observe(False, mode='starttls', certificate='expired')
             authority.write_bytes((root/'other.crt').read_bytes())

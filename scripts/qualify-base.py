@@ -40,13 +40,13 @@ LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-jo
     'local-bounded-rotation', 'local-filesystem-failure-independent-delivery', 'local-producer-restart-identity'}
 DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
     'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
-    'reader-and-observer-exact-egress', 'other-identities-destination-port-source-interface-denied',
+    'reader-and-observer-exact-egress', 'managed-source-return', 'other-identities-destination-port-source-interface-denied',
     'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
 DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
     'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
     'lanrith/config.py',
     'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
-    'tests/test_directory.py', 'tests/test_policy_agent.py', 'tests/test_intent.py'}
+    'tests/test_directory.py', 'tests/test_radius.py', 'tests/test_policy_agent.py', 'tests/test_intent.py'}
 CREDENTIAL_CHECKS = {
     'basic-router-no-credential-requirement',
     'dns-authority-without-writer-credentials',

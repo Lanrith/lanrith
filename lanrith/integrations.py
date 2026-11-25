@@ -204,9 +204,16 @@ def identity(value):
     identity = value.get('identity', {})
     intent.fields(identity, {'directories', 'radius', 'policy'})
     directories = intent.named(identity.get('directories', {}), 16)
-    for directory in directories.values():
-        intent.fields(directory, {'enabled', 'url', 'addresses', 'base_dn', 'bind_dn', 'credential', 'ca_file'},
+    for name, directory in directories.items():
+        intent.fields(directory, {'enabled', 'url', 'addresses', 'base_dn', 'bind_dn', 'credential', 'ca_file',
+                                  'source_service'},
                       {'url', 'base_dn', 'bind_dn', 'credential', 'ca_file'})
+        if 'source_service' in directory:
+            radius = identity.get('radius', {})
+            require(directory['source_service'] == 'radius' and isinstance(radius, dict) and
+                    radius.get('enabled') is True and isinstance(radius.get('admission'), dict) and
+                    radius['admission'].get('directory') == name,
+                    'A directory source service must be an enabled RADIUS service using that directory.')
         enabled(directory)
         url = urlsplit(text(directory['url']))
         require(url.scheme in ('ldap+starttls', 'ldaps') and url.hostname and not url.username and
