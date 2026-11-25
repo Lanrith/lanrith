@@ -63,7 +63,7 @@
       "result": "satisfied-by-design"
     },
     "security-practices": {
-      "evidence": "Pinned actions, source/tool/image/patch hashes, protected main review/checks, least job permissions, fresh Debian/custom advisory scans, native negative-path checks, retained rescans and a separate freshness watchdog. Trusted administrators retain the documented bootstrap bypass; no claim of third-party certification is made. Security maintenance uses separate author/reviewer Apps, explicit report-only rollout, commit-bound decisions, immutable release publication and durable attested audit records.",
+      "evidence": "Pinned actions, source/tool/image/patch hashes, protected main review/checks, least job permissions, fresh Debian/custom advisory scans, native negative-path checks, retained rescans and a separate freshness watchdog. Trusted administrators retain the documented bootstrap bypass; no claim of third-party certification is made. Security maintenance uses separate author/reviewer Apps, explicit report-only rollout, commit-bound decisions, immutable release publication and durable attested audit records. Maintenance reconciliation retries only bounded current-head operations. Controller and Action updates include matching provenance and workflow assessment files and still require human review. The isolated consumer canary uses disposable per-run keys, uploads only a qualification report, and has no deployment signing authority.",
       "result": "satisfied-by-design"
     }
   },
@@ -71,13 +71,16 @@
   "reviewed_workflows": {
     ".github/workflows/archive-evidence.yml": "ff35419f72bc68c83cb579b4a990e22ca03410c2a65db3843ed2cd2b4eedfc5a",
     ".github/workflows/build-base.yml": "1a2b3d28dad72463c1ba171f8178bcca05b3ca49fbf603a74635f7550b1a15bf",
-    ".github/workflows/check.yml": "7080ccc8fb07d620255601100141473bd6359944c8f3c1c882aca1eb02ce142a",
-    ".github/workflows/publish-release.yml": "4fae9a0557abab94a12a16a031db4c04329aa9c971fe19864da32dca0b61e891",
+    ".github/workflows/check.yml": "39a8c62e24577d5d025196f4ff3c33d60466517b79c05720fb9343e118808e0e",
+    ".github/workflows/consumer-qualification.yml": "a1e7554ebeccf3bd50e9f775a4bfba2e9424de79342e19c8ad11f19578fa9915",
+    ".github/workflows/maintenance-reconcile.yml": "00a2230a273afcfc250fa6da15707e505994bf46d55413b71371cc9033d0d955",
+    ".github/workflows/prepare-workflow-updates.yml": "85c6838ee6bfd83411e55b21246c6c074876441b5cfab8fab1dd435b44ac7173",
+    ".github/workflows/publish-release.yml": "f16e4089d1b4cf388de1c2f986e7444d858d2eb6b23abbb1e4d275cfd8940d0c",
     ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
     ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
-    ".github/workflows/security-proposal.yml": "6edd9dae53b297be73fb58b8b8933f463cb0c856857d6d5b961801caf69c6f67",
-    ".github/workflows/security-review.yml": "005105d117a1d98dcea3365922c04a1e2ffd6399e436e9979752ebfc489694ea",
-    ".github/workflows/retry-runner-capacity.yml": "b56905df0de7db9afb0b489cd094cdcb7a76dab42853965bd05fc481c6487dff"
+    ".github/workflows/retry-runner-capacity.yml": "b56905df0de7db9afb0b489cd094cdcb7a76dab42853965bd05fc481c6487dff",
+    ".github/workflows/security-proposal.yml": "6abb4d2f8672feb004fd5127a7947fc1f632d69632c9339b783671adaa9d3906",
+    ".github/workflows/security-review.yml": "005105d117a1d98dcea3365922c04a1e2ffd6399e436e9979752ebfc489694ea"
   },
   "schema": 1,
   "specification": "SLSA v1.2",

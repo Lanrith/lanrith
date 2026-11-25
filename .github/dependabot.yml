@@ -13,4 +13,6 @@ updates:
       interval: daily
       time: '04:17'
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    # Advisory-bound Python fixes use the independently reviewed security proposer.
+    # Keep Dependabot alerts, without a competing routine-version PR queue.
+    open-pull-requests-limit: 0

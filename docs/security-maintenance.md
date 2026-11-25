@@ -84,8 +84,19 @@ a GraphQL error keeps the merge gate closed. The signed decision records this
 authority check alongside the actual review ID and commit.
 
 Expand the existing `lanrith-dependency-updater` installation to the same three
-repositories. Its permissions remain Contents write and Pull requests write.
+repositories. Its dependency-only tokens request Contents write and Pull requests write.
 Use an existing local updater key, or generate another key for that same App.
+
+The complete workflow updater additionally needs Workflows write on the App and
+its accepted installation permissions. The specification is
+`.github/apps/dependency-updater.json`. Only the separate
+`prepare-workflow-updates.yml` job requests this permission in its token. It
+prepares human-reviewed changes; it has no approval or protection-bypass authority.
+After the reviewed controller release is installed, set
+`LANRITH_WORKFLOW_UPDATES_ENABLED=true` in each participating repository. Keep it
+unset until the permission is accepted. Add `config-template` and `config-template-qualification` to the updater's
+selected repositories when preparing the template repair and activating the
+isolated consumer canary. The template itself still skips update execution.
 
 From a checkout of this change, run:
 
@@ -149,6 +160,31 @@ source metadata fail the check.
 
 ## Trace a change
 
+Python security fixes now use the same candidate, reviewer and protected merge
+path as Go fixes. The resolver selects the minimum stable advisory fix for an
+existing exact requirement, rejects new dependency graphs and writes published
+wheel hashes. CI installs those exact hashes without source builds. Routine
+Dependabot version PRs are disabled for Python and Go; these settings do not
+disable vulnerability alerts. After the security proposer is deployed in each
+repository, disable GitHub's separate automatic security-PR creation there to
+avoid duplicate proposals. Third-party Actions remain a Dependabot discovery
+source and require human review.
+
+Before reporting the platform current, the proposer authenticates the latest
+published binary bundle and scans every Go binary at symbol level. A reachable
+finding must be covered by a verified proposed fix or a new qualified component.
+Otherwise the resolver records the binary, module and advisory in its assigned
+blocker. An unlisted module cannot silently disappear from coverage. New embedded
+module pins and major migrations remain human-reviewed changes.
+
+The complete workflow updater prepares all controller references, the collector
+checkout and `maintenance-source.json` together. It verifies immutable publication,
+release authorization and a fresh passing retained assessment. Third-party Action
+changes are limited to forward stable pins whose tags match their commits; their
+upstream diffs and source PRs are recorded in `security/automation-update.json`.
+Assessed workflow hashes accompany the changed bytes. The reviewer never approves
+these control changes automatically.
+
 Every candidate records its advisory or qualified-component reasons, base commit,
 policy hash, trusted resolver commit and every changed input's before/after hash.
 An unchanged candidate does not rewrite its open PR. The remediation issue links
@@ -171,6 +207,12 @@ component update record, linking its original fix and approvals into the platfor
 release. The remediation issue closes only after publication verification has
 been archived immutably. Audit release notes and PR text are indexes;
 the signed asset bytes are the evidence.
+
+When the same proposal PR receives a replacement candidate, earlier remediation
+issues are marked **superseded; remediation not yet proven** and linked to the
+replacement. This does not mark their advisories fixed. A recovered resolver
+closes only its operational incident; release completion still needs the exact
+published candidate and immutable verification.
 
 Before publication, a human approval must match the exact PR head and come from
 an independent account with current write or admin access to the repository.
@@ -247,6 +289,32 @@ Scanner failures, unavailable advisory services, unsupported source migrations
 and failed qualification block unattended approval. The resolver opens a tracked
 attention issue when it cannot produce or publish a candidate. Paid AI services
 are not used and workflows never raise spending limits.
+
+Hourly reconciliation inspects bot PRs from trusted main code. It refreshes a
+stale bot branch once per head/base pair, retries unfinished admission at most
+twice, and can refresh expired successful validation once. Failed builds are
+reported for repair rather than repeatedly rebuilt. Reservations are recorded
+before dispatch in the reconciliation issue, so an interrupted job cannot reset
+its retry budget. Recovery rechecks the current PR subject before writing or
+dispatching. A failed retained scan also triggers the proposer. Verified component
+publication sends a signal using a short-lived updater token scoped to the
+platform repository; no release data or code from the signal is trusted. The
+platform re-resolves qualified releases and coalesces pending proposal runs.
+The six-hour schedule remains a fallback.
+
+The isolated `config-template-qualification` repository can call
+`consumer-qualification.yml` after adopting its qualified controller commit.
+It validates configuration and assembles/verifies factory and update payloads
+with disposable per-run keys. It uploads no images or private keys. Successful
+main runs retain an immutable operational report bound to the source commit,
+controller commit, run identity and input/output digests. The archive verifies
+the published asset digest and rejects mutable releases. GitHub requires
+[Enterprise Cloud for private-repository attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations),
+so this private canary report explicitly carries no hosted attestation or
+production release authorization. Production approval continues to require its
+independent reviewer and attested evidence. The canary uses no production signing
+secrets, paid agents or private-repository branch protection. The ordinary
+configuration template keeps its separate owner deployment and signing behavior.
 
 The watchdog reports the latest failed assessment, proposal or release immediately
 on workflow completion and checks scan freshness every six hours. It alerts at

@@ -1,11 +1,15 @@
-"""Apply reviewed checksum pins to existing embedded compression dependencies."""
+"""Apply reviewed checksum pins to existing embedded Go dependencies."""
 import json
 import os
 import re
 
 from .release import require
 
-MODULES = frozenset(('github.com/andybalholm/brotli', 'github.com/klauspost/compress'))
+MODULES = frozenset(('github.com/andybalholm/brotli', 'github.com/klauspost/compress',
+                    'go.opentelemetry.io/otel', 'go.opentelemetry.io/otel/sdk',
+                    'go.opentelemetry.io/otel/sdk/log', 'go.opentelemetry.io/otel/trace'))
+# Beyla does not import the log SDK. Never add it to that graph merely to pin it.
+OPTIONAL_MODULES = frozenset(('go.opentelemetry.io/otel/sdk/log',))
 
 
 def validate(value):
@@ -27,19 +31,25 @@ def apply(root, value, run):
         return run('go', *arguments, cwd=root, env=environment, capture_output=True, text=True).stdout
     manifest = json.loads(command('mod', 'edit', '-json'))
     existing = {r['Path']: r['Version'] for r in manifest['Require']}
-    require(MODULES <= set(existing) and not any(r['Old']['Path'] in MODULES for r in manifest.get('Replace') or []),
-            'Compression pins must update existing unreplaced dependencies, not add or redirect modules.')
+    require(MODULES - OPTIONAL_MODULES <= set(existing) and
+            not any(r['Old']['Path'] in MODULES for r in manifest.get('Replace') or []),
+            'Embedded pins must update existing unreplaced dependencies, not add or redirect modules.')
+    pins = {name: item for name, item in pins.items() if name in existing}
     for name, item in pins.items():
         current = existing[name]
         require(re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', current) and
                 tuple(map(int, current[1:].split('.'))) <= tuple(map(int, item['version'][1:].split('.'))),
                 'Embedded Go pin would downgrade an existing dependency.')
-    command('mod', 'edit', *('-require='+name+'@'+pins[name]['version'] for name in sorted(pins)))
     for name, item in sorted(pins.items()):
         resolved = json.loads(command('mod', 'download', '-json', name+'@'+item['version']))
         require(not resolved.get('Error') and resolved.get('Path') == name and resolved.get('Version') == item['version'] and
                 resolved.get('Sum') == item['sum'] and resolved.get('GoModSum') == item['go_mod_sum'],
                 'Embedded Go module differs from its reviewed checksum-database identity.')
+    # A manifest edit alone does not materialize new indirect requirements.
+    # Resolve only these exact existing roots after authenticating every pin;
+    # Go's minimum-version selection supplies their declared dependencies.
+    command('get', *(name+'@'+pins[name]['version'] for name in sorted(pins)))
+    for name, item in sorted(pins.items()):
         selected = json.loads(command('list', '-mod=mod', '-m', '-json', name))
         require(selected.get('Path') == name and selected.get('Version') == item['version'] and not selected.get('Replace'),
                 'Embedded Go graph did not select the reviewed fixed dependency.')

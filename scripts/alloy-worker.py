@@ -14,10 +14,12 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require
-from lanrith import go_pins
+from lanrith import go_download, go_pins
 
 
 def run(*arguments, **kwargs):
+    if arguments[:3] == ('go', 'mod', 'download'):
+        return go_download.download(*arguments[3:], **kwargs)
     return subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, **kwargs)
 
 
@@ -162,9 +164,9 @@ def main():
         patch(destination, definition/module['patch'])
     # Keep the embedded payload, collector and root-module tests on the same
     # checksum-verified fixes before vendoring or compiling any of them.
+    run('go', 'mod', 'edit', '-require=golang.org/x/net@v0.60.0', cwd=beyla)
     for graph in (beyla, source/'collector', source):
         go_pins.apply(graph, selected['security_modules'], run)
-    run('go', 'mod', 'edit', '-require=golang.org/x/net@v0.60.0', cwd=beyla)
     run('go', 'mod', 'download', 'all', cwd=beyla)
     run('go', 'mod', 'verify', cwd=beyla)
     run('go', 'mod', 'vendor', cwd=beyla)

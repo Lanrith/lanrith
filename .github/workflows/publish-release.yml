@@ -83,3 +83,28 @@ jobs:
         run: |
           python3 tools/scripts/security-updates.py complete-release --source "$GITHUB_SHA" \
             --candidate verification/publication-verification.json --audit-tag "$AUDIT_TAG" --output "$RUNNER_TEMP/completion.json"
+  signal-platform:
+    needs: complete
+    if: github.ref == 'refs/heads/main' && (github.repository == 'Lanrith/discovery-bridge' || github.repository == 'Lanrith/router-policy-agent')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: lanrith-updates
+    permissions:
+      contents: read
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_UPDATE_APP_ID }}
+          private-key: ${{ secrets.LANRITH_UPDATE_APP_PRIVATE_KEY }}
+          owner: Lanrith
+          repositories: lanrith
+          permission-contents: write
+      - name: Wake the platform proposer after verified component publication
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api --method POST repos/Lanrith/lanrith/dispatches \
+            --raw-field event_type=qualified-component-published
+          # The receiver ignores event data and independently resolves immutable
+          # qualified releases. Its concurrency group coalesces pending signals.

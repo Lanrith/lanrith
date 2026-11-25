@@ -1,0 +1,136 @@
+{
+  "approval": "Independent human review must be recorded in GitHub after all current-head checks pass. This document grants no approval.",
+  "artifact_cleanup_recovery": "Completed Check, Package qualification and Release workflows trigger the existing trusted-main cleanup. The archived plan, two-hour retry window, active-run protection and immutable deletion result remain required; the watchdog also reports cleanup failures.",
+  "date": "2026-11-24",
+  "findings": [
+    {
+      "acceptance": "An advisory for a previously unlisted embedded module produces a qualified update PR or a specific human-action issue; the rebuilt immutable release passes a fresh retained scan.",
+      "evidence": [
+        "https://github.com/Lanrith/lanrith/releases/tag/assessment-20261124T002135Z-89f291e9bbb6",
+        "https://github.com/Lanrith/lanrith/actions/runs/45294420293",
+        "https://github.com/Lanrith/lanrith/blob/71aaa38a54c56c485da302753babef263e5ee048/automation/embedded_go.py#L25",
+        "https://github.com/Lanrith/lanrith/blob/71aaa38a54c56c485da302753babef263e5ee048/lanrith/go_pins.py#L8"
+      ],
+      "id": "A01",
+      "reason": "v0.1.31 retained assessment fails alloy and alloy-beyla on GO-2026-6974/6975. The proposer reports no new security input change. Its embedded updater scans only github.com/andybalholm/brotli and github.com/klauspost/compress; OpenTelemetry is outside that list."
+    },
+    {
+      "acceptance": "A transient completion failure recovers without duplicate or orphaned checks; persistent failures produce an actionable status and alert.",
+      "evidence": [
+        "https://github.com/Lanrith/lanrith/pull/97",
+        "https://github.com/Lanrith/lanrith/actions/runs/45326591535"
+      ],
+      "id": "A02",
+      "reason": "PR97 source checks passed. The reviewer created check138217829024, then completion PATCH returned HTTP404 at review.py401. Check remains in_progress. Its owner is the expected App5444158; the underlying GitHub404 cause has not been established."
+    },
+    {
+      "acceptance": "Representative Python and Go security patches proceed from evidence to exact-head validation, independent approval, protected merge and applicable release without human intervention. Unrelated or unverified changes remain blocked.",
+      "evidence": [
+        "https://github.com/Lanrith/discovery-bridge/pull/28",
+        "https://github.com/Lanrith/discovery-bridge/actions/runs/45112905410",
+        "https://github.com/Lanrith/lanrith/pull/97"
+      ],
+      "id": "A03",
+      "reason": "All13 open Dependabot PRs have auto-merge disabled. Discovery28 passes CI and admission but reviewer says outside the automatic security-update lane. Reviewer requires the dedicated updater identity, branch and candidate schema. Python requirements are not handled by the security proposer."
+    },
+    {
+      "acceptance": "A controller release produces one complete PR per consumer repo which passes contract checks without editing or weakening the contract.",
+      "evidence": [
+        "https://github.com/Lanrith/router-policy-agent/pull/28",
+        "https://github.com/Lanrith/discovery-bridge/pull/27",
+        "https://github.com/Lanrith/router-policy-agent/pull/23",
+        "https://github.com/Lanrith/discovery-bridge/pull/22"
+      ],
+      "id": "A04",
+      "reason": "Router25-28 and discovery25-27 each fail TestMaintenanceReferencesMatchReviewedSource. They update individual workflow pins fromv0.1.21 tov0.1.25 while maintenance-source.json and other references remain ondb929. All seven logs inspected. Grouping repairs router23/discovery22 remain unmerged; router23 is behind main."
+    },
+    {
+      "acceptance": "The complete PR passes assessment preflight; tampered or unreviewed workflow bytes still fail.",
+      "evidence": [
+        "https://github.com/Lanrith/lanrith/pull/84",
+        "https://github.com/Lanrith/lanrith/actions/runs/44734804011"
+      ],
+      "id": "A05",
+      "reason": "PR84 changes create-pull-request8.1.1 to8.1.3 in security-proposal.yml but leaves security/slsa-assessment.json inconsistent. Both workflow preflight and source tests fail on the assessed workflow hash."
+    },
+    {
+      "acceptance": "Simulated missed events and interrupted reviewer runs recover or produce a specific assigned blocker. No repeated expensive reruns without a changed input. Human review notifications remain after passing current builds.",
+      "evidence": [
+        "https://github.com/Lanrith/lanrith/pull/70",
+        "https://github.com/Lanrith/router-policy-agent/pull/23",
+        "https://github.com/Lanrith/lanrith/blob/71aaa38a54c56c485da302753babef263e5ee048/scripts/watchdog.py",
+        "https://github.com/Lanrith/lanrith/blob/71aaa38a54c56c485da302753babef263e5ee048/.github/workflows/update-inputs.yml"
+      ],
+      "id": "A06",
+      "reason": "Proposals poll every6hours. Root watchdog monitors assessment/proposer/release, not approval checks or open-PR progress. Security review has no periodic recovery trigger. Router23 is behind; root70 is conflicting and still shows Nov13 failures. Passing older PRs await actual human review. The workflow-grouping repair was prepared Nov14 but remains undeployed."
+    },
+    {
+      "acceptance": "Refreshing a proposal preserves a navigable history and accurate current status; failure followed by recovery does not leave a false active blocker.",
+      "evidence": [
+        "https://github.com/Lanrith/lanrith/issues/92",
+        "https://github.com/Lanrith/lanrith/issues/65",
+        "https://github.com/Lanrith/lanrith/releases/tag/v0.1.31"
+      ],
+      "id": "A07",
+      "reason": "Issue92 links mergedPR94 but retains an older candidate7311d85.../security-2868...; publishedv0.1.31 contains candidatecb4ce204.../security-a3a880.... Exact-match completion does not reconcile older candidates. Issues60,63,64,66,67,73 also remain proposed; issue65 still reports an older picomatch resolver blocker despite successful later proposals."
+    },
+    {
+      "acceptance": "A new qualified platform release creates a proposal in the canary, passes configuration and image validation, and reports traceable promotion or a concrete blocker.",
+      "evidence": [
+        "https://github.com/Lanrith/config-template-qualification/actions/workflows/update.yml",
+        "https://github.com/Lanrith/config-template-qualification/blob/main/platform.lock",
+        "https://github.com/Lanrith/config-template/blob/main/.github/workflows/update.yml"
+      ],
+      "id": "A08",
+      "reason": "The template intentionally skips its own platform-update and image jobs. Qualification repo update workflow is disabled_manually, its lock remainsv0.1.4, and latest build isOct18. Its prior updater dispatch failed. These are not currently failing core dependency PRs, but there is no live downstream upgrade canary."
+    }
+  ],
+  "immediate_patches": {
+    "action": "peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1",
+    "advisories": [
+      "GO-2026-6974",
+      "GO-2026-6975"
+    ],
+    "alloy_embedded_modules": {
+      "go.opentelemetry.io/otel": "v1.47.0",
+      "go.opentelemetry.io/otel/sdk": "v1.47.0",
+      "go.opentelemetry.io/otel/sdk/log": "v1.47.0",
+      "go.opentelemetry.io/otel/trace": "v1.47.0"
+    },
+    "python": "PyYAML 6.0.4 with published wheel hashes"
+  },
+  "kind": "manual-automation-repair",
+  "local_validation": {
+    "action_proposal_composition": "Independent Action PRs for one workflow compose without reverting each other; conflicting pins fail closed and qualified controller references remain intact.",
+    "actionlint": "verified v1.7.12; passed",
+    "private_canary_archive": "Operational report validates exact repository/source/workflow/run/digests and immutable publication; it carries no production authorization and uses no paid private-repository attestation.",
+    "published_alloy_coverage": "all four reachable module/advisory pairs covered by the proposed verified pins",
+    "python_suite": "1408 tests passed in rootless Ubuntu 24.04; 25 environment-dependent skips",
+    "source_boundary": "passed",
+    "workflow_invariants": "passed"
+  },
+  "module_download_recovery": {
+    "change": "Node exporter and Alloy/Beyla module downloads retry at most three times, with 2s/5s backoff, only when every reported error is an explicitly recognized transport failure. Original diagnostics remain in the job log. Module checksums, compiler tests, security scans and the admission gate remain blocking.",
+    "failure_run": "https://github.com/Lanrith/lanrith/actions/runs/45446677129",
+    "reason": "Node exporter module acquisition stopped on an HTTP/2 INTERNAL_ERROR from proxy.golang.org while downloading github.com/mattn/go-xmlrpc@v0.0.3, before compilation.",
+    "validation": "Six targeted tests cover the actual transport error, bounded retries, checksum and mixed-error rejection, JSON module failures, timeout/kill rejection, and no retry of tests/builds/scans. A clean-cache download of the exact failed module passes Go checksum authentication."
+  },
+  "qualification_repair": {
+    "change": "Authenticate every existing security root against both published checksums, resolve only those exact versions with go get, then recheck the selected unreplaced pins. Apply the existing x/net pin before resolution. No broad upgrade flag or unrelated dependency pruning is used.",
+    "failure_run": "https://github.com/Lanrith/lanrith/actions/runs/45431564359",
+    "reason": "Beyla vendoring rejected an incomplete go.mod after exact OpenTelemetry security pins were edited directly. Required indirect modules and minimum-version changes were not materialized.",
+    "validation": "Reproduced the exact vendor failure at Beyla fd4b139d9e899ab1a09b0f0fc006d8b749fd3961 and OBI 861d9070c1ac8e2bccabbbc897e5895b0243c214. The repaired graph passes go mod verify, go mod vendor and the three configuration/exporter package test gates; socket tests pass in isolated rootless Linux. Full hosted qualification remains required."
+  },
+  "requires_human": true,
+  "rollout": [
+    "Merge and publish the qualified shared controller with passing retained assessment.",
+    "Adopt that immutable controller in complete component PRs, including new recovery and workflow-updater callers.",
+    "Accept only the documented updater Workflows-write permission and selected canary repository; enable workflow-update feature flags.",
+    "Update the canary lock and workflow to that qualified release, validate with disposable keys, then enable its schedule.",
+    "Disable duplicate Dependabot security PR creation only after the unified proposer is live; keep alerts enabled.",
+    "Link superseded PRs/issues to verified replacements; confirm fresh component and platform publication and retained scans."
+  ],
+  "schema": 1,
+  "source_base": "71aaa38a54c56c485da302753babef263e5ee048",
+  "state": "prepared; hosted qualification and publication pending"
+}

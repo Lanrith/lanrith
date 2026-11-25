@@ -186,9 +186,43 @@ def track(repo, candidate_path, pr=None):
         lines += ['Pull request: https://github.com/'+repo+'/pull/'+str(pr)]
     value = {'title': title, 'body': '\n'.join(lines)+'\n', 'state': 'open'}
     if matches:
+        previous = matches[0].get('body') or ''
+        if record['candidate_id'] not in previous:
+            api('repos/'+repo+'/issues/'+str(matches[0]['number'])+'/comments', method='POST',
+                payload={'body': 'Previous proposal record (superseded, not proof of a fix):\n\n'+previous})
         api('repos/'+repo+'/issues/'+str(matches[0]['number']), method='PATCH', payload=value)
     else:
         api('repos/'+repo+'/issues', method='POST', payload={k: v for k, v in value.items() if k != 'state'})
+    if pr:
+        # The PR is a mutable proposal slot. Keep prior candidate records, but
+        # never describe their advisories as fixed merely because the slot moved.
+        marker = 'Pull request: https://github.com/'+repo+'/pull/'+str(pr)
+        for issue in existing:
+            body = issue.get('body') or ''
+            if (issue.get('state') == 'open' and issue.get('user', {}).get('login') == 'github-actions[bot]' and
+                    re.fullmatch(r'\[security-[0-9a-f]{20}\] Apply verified security fixes', issue['title']) and
+                    issue['title'] != title and marker in body.splitlines() and
+                    'pull_request' not in issue):
+                api('repos/'+repo+'/issues/'+str(issue['number']), method='PATCH', payload={
+                    'body': body+'\n\nState: **superseded; remediation not yet proven**.\n\n'
+                    'Replacement: `'+record['remediation_id']+'`, candidate `'+record['candidate_id']+'` on '+
+                    'https://github.com/'+repo+'/pull/'+str(pr)+'.\n'
+                    'Follow the replacement through validation, approval, publication and retained scanning.\n',
+                    'state': 'closed', 'state_reason': 'not_planned'})
+
+
+def resolver_recovered(repo, report):
+    """Close only the resolver incident, never the security findings themselves."""
+    value = evidence.read(report)
+    require(value.get('kind') == 'proposal-result' and value.get('state') in ('current', 'proposed'),
+            'Resolver recovery needs a successful complete evaluation.')
+    for issue in pages('repos/'+repo+'/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100'):
+        if issue['title'] == 'Security update automation needs attention' and 'pull_request' not in issue:
+            api('repos/'+repo+'/issues/'+str(issue['number']), method='PATCH', payload={
+                'state': 'closed', 'state_reason': 'completed',
+                'body': (issue.get('body') or '')+'\n\nState: **resolver recovered**.\n\n'
+                'Successful evaluation: https://github.com/'+repo+'/actions/runs/'+os.environ['GITHUB_RUN_ID']+
+                '\n\nThis confirms proposal resolution only; it does not claim a fix was merged, released or scan-passed.\n'})
 
 
 def complete(repo, source, verification, audit_tag=None):

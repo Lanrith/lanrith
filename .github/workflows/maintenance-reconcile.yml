@@ -1,0 +1,51 @@
+name: Reconcile security automation
+on:
+  schedule:
+    - cron: '47 * * * *'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+cache-mode: none
+concurrency:
+  group: maintenance-reconciliation
+  cancel-in-progress: false
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: lanrith-updates
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+      checks: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.LANRITH_UPDATE_APP_ID }}
+          private-key: ${{ secrets.LANRITH_UPDATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Recover interrupted review and stale bot branches within the retry budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANRITH_BRANCH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 scripts/security-updates.py reconcile --apply --output "$RUNNER_TEMP/reconciliation.json"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maintenance-reconciliation
+          path: ${{ runner.temp }}/reconciliation.json
+          retention-days: 1
+          if-no-files-found: error

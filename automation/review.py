@@ -3,7 +3,9 @@
 import datetime
 import json
 from pathlib import Path
+import re
 import subprocess
+import time
 
 from . import evidence, inputs
 from .release_authorization import maintainers
@@ -324,7 +326,7 @@ def finalize(repo, number, decision_path, reviewer_source, enabled, audit_tag):
     current = api('repos/'+repo+'/pulls/'+str(number))
     require(current['head']['sha'] == fresh['head_sha'] and current['base']['sha'] == fresh['base_sha'],
             'PR changed before the final merge gate.')
-    api('repos/'+repo+'/check-runs/'+str(check['id']), method='PATCH', payload={
+    update_check(repo, number, fresh['head_sha'], fresh['base_sha'], check['id'], policy['reviewer_app_id'], {
         'status': 'completed', 'conclusion': 'success', 'completed_at': now(),
         'output': {'title': 'Qualified, independently approved and durably archived',
                    'summary': 'Exact decision and approval evidence: '+archived['html_url']}})
@@ -341,6 +343,30 @@ def event_target(repo, event):
         require(len(matches) <= 1, 'Review trigger has ambiguous PR association.')
         return matches[0] if matches else None
     return None
+
+
+def update_check(repo, number, head, base, check_id, app_id, payload, *, sleep=time.sleep):
+    """Retry only an idempotent update of the same independently owned check."""
+    endpoint = 'repos/'+repo+'/check-runs/'+str(check_id)
+    for attempt in range(3):
+        try:
+            return api(endpoint, method='PATCH', payload=payload)
+        except MaintenanceError as failure:
+            if attempt == 2 or not re.search(r'HTTP (?:404|429|500|502|503|504)\b', str(failure)):
+                raise
+            sleep(2 ** attempt)
+            current = api('repos/'+repo+'/pulls/'+str(number))
+            require(current['state'] == 'open' and current['head']['sha'] == head and
+                    current['base']['sha'] == base, 'PR changed during check publication recovery.')
+            response = api('repos/'+repo+'/commits/'+head+
+                           '/check-runs?check_name=Security%20update%20admission&filter=latest&per_page=100')
+            require(response['total_count'] <= 100, 'Recovery check enumeration is incomplete.')
+            owned = [c for c in response['check_runs'] if c['id'] == check_id and
+                     c['name'] == 'Security update admission' and c['head_sha'] == head and
+                     c['app']['id'] == app_id]
+            require(len(owned) == 1, 'Cannot recover an admission check without exact App and source ownership.')
+            # A lost response may follow a successful write. Reapplying this exact
+            # payload is safe; never replace the check or infer an approval here.
 
 
 def admission(repo, number, decision_path, reviewer_source, app_id, *, notify=False):
@@ -388,8 +414,8 @@ def admission(repo, number, decision_path, reviewer_source, app_id, *, notify=Fa
     if unfinished:
         # Complete the existing waiting check rather than leave an orphaned spinner.
         previous = max(unfinished, key=lambda c: c['id'])
-        check = api('repos/'+repo+'/check-runs/'+str(previous['id']), method='PATCH',
-                    payload={k: v for k, v in payload.items() if k != 'head_sha'})
+        check = update_check(repo, number, record['head_sha'], record['base_sha'], previous['id'], app_id,
+                             {k: v for k, v in payload.items() if k != 'head_sha'})
     else:
         check = api('repos/'+repo+'/check-runs', method='POST', payload=payload)
     require(check['app']['id'] == app_id, 'Check did not come from the configured reviewer App.')
@@ -398,7 +424,7 @@ def admission(repo, number, decision_path, reviewer_source, app_id, *, notify=Fa
     if not error and (pending or automatic and policy['mode'] == 'enforce'):
         conclusion = None
     if conclusion:
-        api('repos/'+repo+'/check-runs/'+str(check['id']), method='PATCH', payload={
+        update_check(repo, number, record['head_sha'], record['base_sha'], check['id'], app_id, {
             'status': 'completed', 'conclusion': conclusion, 'completed_at': now(),
             'output': {'title': 'Qualification '+conclusion,
                        'summary': error or ('Policy-eligible pilot; human approval required.' if automatic else

@@ -36,7 +36,7 @@
     "builders/alloy/patches/github.com_burningalchemist_sql_exporter.patch": "b97a4ee85a12055205cd232b2b6b4ec8b83079a4d2a891a96a20d3cbfe235cec",
     "builders/alloy/patches/github.com_grafana_snowflake-prometheus-exporter.patch": "94fd8d639043bbbcae3880190c02d39542c92074cae0afab735455bde17eb8ba",
     "builders/alloy/patches/github.com_influxdata_telegraf.patch": "f2c83e89048e58e95cf8570f6e6696380c76f477cfa6d4fd1888b8e788bea95b",
-    "builders/alloy/source.json": "ff4aa2a655c9f6f14c1af0320922bb1a55dec6d362bcbaf83bbc621f109a40bc",
+    "builders/alloy/source.json": "bfa37bb924015f7a535b67da7b896010756601f47eaff5c651db242388ad3e0a",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
     "builders/build-inputs.lock": "80a1345be4a44a3e420ce1dcd3e1e480f6df549d60f7c321425b82f9d17ba33d",

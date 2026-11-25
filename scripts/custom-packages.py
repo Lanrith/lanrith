@@ -83,6 +83,7 @@ def main():
         run('git', '-C', str(source), 'apply', '--check', str(ROOT/'builders/node-exporter/dependencies.patch'))
         run('git', '-C', str(source), 'apply', str(ROOT/'builders/node-exporter/dependencies.patch'))
         shutil.copyfile(ROOT/'scripts/collect-notices.py', work/'collect-notices.py')
+        shutil.copyfile(ROOT/'lanrith/go_download.py', work/'go-download.py')
         run('docker', 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--user', str(os.getuid())+':'+str(os.getgid()),
             *build_resources.arguments(),
@@ -91,7 +92,7 @@ def main():
             '--env', 'LANRITH_GO_VERSION='+pin['go_version'],
             '-v', str(work)+':/work', '-v', str(scanner)+':/scanner:ro', '-w', '/work/node-exporter',
             pin['builder'], 'sh', '-ec',
-            'test "$(go env GOVERSION)" = "$LANRITH_GO_VERSION"; go mod download all; go mod verify; '
+            'test "$(go env GOVERSION)" = "$LANRITH_GO_VERSION"; python3 /work/go-download.py all; go mod verify; '
             './ttar -C collector/fixtures -x -f collector/fixtures/sys.ttar; '
             './ttar -C collector/fixtures -x -f collector/fixtures/udev.ttar; '
             'go test ./...; /scanner ./... > /work/exporter-source.txt; '

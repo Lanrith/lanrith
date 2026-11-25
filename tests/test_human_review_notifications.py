@@ -185,7 +185,7 @@ class HumanNotificationTests(unittest.TestCase):
     def test_admission_defers_manual_review_until_ci_passes(self):
         for state in ('completed', 'pending', 'failed'):
             self.setUp()
-            record = {'candidate': {}, 'head_sha': HEAD, 'findings': ['Outside automatic source inputs.'],
+            record = {'candidate': {}, 'head_sha': HEAD, 'base_sha': BASE, 'findings': ['Outside automatic source inputs.'],
                       'eligible': False, 'validation_pending': []}
             def api(endpoint, **kwargs):
                 if '/check-runs?' in endpoint:

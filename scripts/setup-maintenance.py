@@ -16,6 +16,11 @@ import urllib.request
 REPOSITORIES = ('Lanrith/lanrith', 'Lanrith/discovery-bridge', 'Lanrith/router-policy-agent')
 
 
+def updater_permissions(actual):
+    base = {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}
+    return actual in (base, {**base, 'workflows': 'write'})
+
+
 def gh(endpoint, *, method='GET', value=None):
     command = ['gh', 'api', '--method', method, endpoint]
     if value is not None:
@@ -70,8 +75,7 @@ def bind_bootstrap_push(repo, branch, updater_key):
     if not updater_key:
         raise ValueError('Bootstrap PR creation needs the updater key: last-push protection requires an App push before the owner can approve.')
     app = app_request('app', updater_key, 5355607)
-    expected = {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}
-    if app['id'] != 5355607 or app['permissions'] != expected:
+    if app['id'] != 5355607 or not updater_permissions(app['permissions']):
         raise ValueError('Bootstrap writer differs from the restricted updater App.')
     install = app_request('repos/'+repo+'/installation', updater_key, 5355607)
     if install['account']['login'] != 'Lanrith' or install['repository_selection'] != 'selected':
@@ -136,8 +140,7 @@ def main():
                 updater_install = app_request('repos/'+repo+'/installation', args.updater_key, 5355607)
                 if updater_install['account']['login'] != 'Lanrith' or updater_install['repository_selection'] != 'selected':
                     raise ValueError('Updater must use a selected-repository Lanrith installation.')
-                expected_updater = {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'}
-                if updater_install['permissions'] != expected_updater:
+                if not updater_permissions(updater_install['permissions']):
                     raise ValueError('Updater permissions differ from the restricted author policy.')
                 keys.append(('lanrith-updates', 'LANRITH_UPDATE_APP_PRIVATE_KEY', args.updater_key))
             for environment, name, key in keys:

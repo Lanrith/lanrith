@@ -1,0 +1,14 @@
+{
+  "name": "Lanrith Dependency Updater",
+  "description": "Proposes dependency and complete workflow updates. Workflow changes require independent human review. No approval or protection-bypass authority.",
+  "url": "https://github.com/Lanrith/lanrith",
+  "public": false,
+  "default_permissions": {
+    "contents": "write",
+    "metadata": "read",
+    "pull_requests": "write",
+    "workflows": "write"
+  },
+  "default_events": [],
+  "hook_attributes": {"active": false}
+}
