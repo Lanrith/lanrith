@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "kind": "manual-automation-repair",
+  "date": "2026-11-25",
+  "requires_human": true,
+  "reason": "Live recovery trusted the historical base SHA in GitHub PR metadata. PR70 was fifteen commits behind main, but comparing its head against that historical base treated it as current and retried an obsolete successful validation. PR101 and PR102 were also not recognized as behind main.",
+  "evidence": [
+    "https://github.com/Lanrith/lanrith/actions/runs/45634387758",
+    "https://github.com/Lanrith/lanrith/actions/runs/43458769787/attempts/2"
+  ],
+  "observed_main": "119d1c8b69b49bb7dd1e23844fbdab87914a2fe8",
+  "observed_pr70_base": "db92907635ac1d466401aaea9c5bebcb8b5995b6",
+  "changes": [
+    "Bind ancestry checks and retry subjects to the current protected-main commit.",
+    "Keep historical PR base metadata separately for race checks; it cannot authorize stale validation.",
+    "Recheck protected main and the unchanged PR immediately before recovery dispatch.",
+    "Require a reviewed rebase for stale manual repair branches; never rerun their obsolete validation."
+  ],
+  "validation": {
+    "targeted_tests": "63 automation, review-recovery and maintenance tests passed, including five new regression cases.",
+    "live_read_only_replay": "The corrected reconciler proposes bounded branch refreshes for PR101/102 and reports PR70 needs a reviewed rebase. It performs no remote mutations in dry-run mode.",
+    "workflow_and_source_checks": "Passed.",
+    "hosted": "Required before independent human review."
+  },
+  "operation": "Stopped obsolete PR70 Check attempt2 after confirming its stale source. PR99 release45614764084 continues unchanged.",
+  "approval": "Independent current-head human approval required after hosted qualification. This record grants no approval."
+}

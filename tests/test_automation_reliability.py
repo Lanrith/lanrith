@@ -101,6 +101,7 @@ class ReconciliationTests(unittest.TestCase):
         self.subject = '97:'+('a'*40)+':'+('b'*40)
         self.checks = []
         self.base = 'b'*40
+        self.main = 'b'*40
 
     def api(self, endpoint):
         if '/compare/' in endpoint:
@@ -111,7 +112,7 @@ class ReconciliationTests(unittest.TestCase):
         with patch.object(reconcile, 'api', side_effect=self.api), \
                 patch.object(reconcile, 'manual_validation_policy', return_value=self.policy), \
                 patch.object(reconcile, 'validation_runs', return_value=[], side_effect=error):
-            return reconcile.decision(self.pr, self.policy, attempts or {})
+            return reconcile.decision(self.pr, self.policy, attempts or {}, main=self.main)
 
     def test_missing_admission_recovers_at_most_twice_for_same_subject(self):
         actions, blockers = self.decide()
@@ -162,9 +163,83 @@ class ReconciliationTests(unittest.TestCase):
         with patch.object(reconcile, 'api', side_effect=api), \
                 patch.object(reconcile, 'manual_validation_policy', return_value=self.policy), \
                 patch.object(reconcile, 'validation_runs', side_effect=MaintenanceError('Validation is stale')):
-            actions, blockers = reconcile.decision(self.pr, self.policy, {})
+            actions, blockers = reconcile.decision(self.pr, self.policy, {}, main=self.main)
         self.assertEqual(actions, [])
         self.assertTrue(blockers)
+
+    def test_historical_pr_base_cannot_make_an_outdated_branch_appear_current(self):
+        self.main = 'c'*40
+        subject = '97:'+('a'*40)+':'+self.main
+        with patch.object(reconcile, 'api', side_effect=self.api) as api, \
+                patch.object(reconcile, 'validation_runs') as validation:
+            actions, blockers = reconcile.decision(self.pr, self.policy, {}, main=self.main)
+        api.assert_called_once_with('repos/'+REPO+'/compare/'+self.main+'...'+('a'*40))
+        validation.assert_not_called()
+        self.assertEqual(actions, [{'kind': 'refresh', 'pr': 97, 'head': 'a'*40, 'subject': subject}])
+        self.assertEqual(blockers, [])
+        self.assertEqual(self.decide({subject: ['refresh']})[0], [])
+
+    def test_historical_manual_branch_never_retries_its_old_validation(self):
+        self.main = 'c'*40
+        self.pr['user'] = {'login': self.policy['proposer_login'], 'id': self.policy['proposer_user_id'], 'type': 'Bot'}
+        self.pr['head']['ref'] = 'security/manual-repair'
+        with patch.object(reconcile, 'api', side_effect=self.api), \
+                patch.object(reconcile, 'validation_runs') as validation:
+            actions, blockers = reconcile.decision(self.pr, self.policy, {}, main=self.main)
+        self.assertEqual(actions, [])
+        self.assertIn('reviewed rebase', blockers[0])
+        validation.assert_not_called()
+
+    def test_security_and_control_candidates_are_regenerated_against_actual_main(self):
+        self.main = 'c'*40
+        self.pr['user'] = {'login': self.policy['proposer_login'], 'id': self.policy['proposer_user_id'], 'type': 'Bot'}
+        for branch, kind in ((self.policy['proposal_branch'], 'proposal'), ('automation/workflow-updates', 'controls')):
+            self.pr['head']['ref'] = branch
+            with self.subTest(branch=branch):
+                self.assertEqual(self.decide()[0][0]['kind'], kind)
+
+    def test_stale_metadata_never_reuses_validation_even_if_head_contains_main(self):
+        self.main = self.base = 'c'*40
+        with patch.object(reconcile, 'api', side_effect=self.api), \
+                patch.object(reconcile, 'validation_runs') as validation:
+            actions, blockers = reconcile.decision(self.pr, self.policy, {}, main=self.main)
+        self.assertEqual(actions, [])
+        self.assertIn('metadata is stale', blockers[0])
+        validation.assert_not_called()
+
+    def test_main_is_rechecked_before_dispatch_and_reservations_use_current_main(self):
+        self.pr['user'] = {'login': self.policy['proposer_login'], 'id': self.policy['proposer_user_id'], 'type': 'Bot'}
+        self.pr['head']['ref'] = self.policy['proposal_branch']
+        for advanced in (False, True):
+            calls, reads = [], []
+            def api(endpoint, **kwargs):
+                calls.append((endpoint, kwargs))
+                if endpoint.endswith('/commits/main'):
+                    reads.append(True)
+                    return {'sha': ('d' if advanced and len(reads) > 1 else 'c')*40}
+                if '/compare/' in endpoint:
+                    return {'merge_base_commit': {'sha': 'b'*40}}
+                if endpoint.endswith('/issues'):
+                    state = json.loads(kwargs['payload']['body'].split('<!-- recovery-state\n')[1].split('\n-->')[0])
+                    self.assertEqual(state, {'97:'+('a'*40)+':'+('c'*40): ['proposal']})
+                    return {'number': 100}
+                if endpoint.endswith('/pulls/97'):
+                    return {**self.pr, 'state': 'open'}
+                self.assertTrue(endpoint.endswith('/update-inputs.yml/dispatches'))
+                return None
+            def pages(endpoint):
+                return [] if '/issues?' in endpoint else [self.pr]
+            with self.subTest(advanced=advanced), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(reconcile, 'api', side_effect=api), patch.object(reconcile, 'pages', side_effect=pages), \
+                    patch.object(reconcile, 'contents', return_value=json.dumps(self.policy).encode()), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '123'}):
+                if advanced:
+                    with self.assertRaisesRegex(MaintenanceError, 'main advanced'):
+                        reconcile.reconcile(REPO, Path(temporary)/'result.json', apply=True)
+                else:
+                    reconcile.reconcile(REPO, Path(temporary)/'result.json', apply=True)
+            dispatched = [call for call in calls if call[0].endswith('/dispatches')]
+            self.assertEqual(len(dispatched), 0 if advanced else 1)
 
 
 class ControllerBundleTests(unittest.TestCase):
