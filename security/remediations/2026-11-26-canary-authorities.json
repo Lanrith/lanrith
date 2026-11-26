@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "date": "2026-11-26",
+  "requires_human": true,
+  "reason": "The v0.1.33 isolated image passed both disk checks but failed owner assembly because the disposable RSA-3072 boot key was implicitly reused for PCR signing, which requires RSA-2048. Container failure then skipped ownership restoration and temporary cleanup raised PermissionError on root-owned Python bytecode.",
+  "failed_run": "https://github.com/Lanrith/config-template-qualification/actions/runs/45868037662",
+  "observed_disk_budget": {
+    "available_GiB": 36.22,
+    "required_GiB": 24.12,
+    "result": "pass"
+  },
+  "changes": [
+    "Generate a separate disposable RSA-2048 PCR authority for TPM-required canaries, while preserving RSA-3072 boot and evidence authorities.",
+    "Bind the PCR certificate during preflight and pass the matching ephemeral key only to isolated assembly; remove environment values afterward.",
+    "Restore assembly-directory ownership on success and failure without following payload symlinks, before temporary cleanup.",
+    "Disable Python bytecode writes for the isolated assembly entrypoint."
+  ],
+  "validation": [
+    "Use actual OpenSSL keys and the owner PCR admission verifier; check distinct authorities and reject the old RSA-3072 PCR fallback.",
+    "Verify an optional-TPM fixture adds no PCR authority.",
+    "Verify failed container execution still restores ownership and preserves the original build error.",
+    "79 combined targeted tests pass; source/workflow checks and actual hosted qualification are required."
+  ],
+  "activation": "Adopt the newly qualified immutable platform and exact workflow source in the private canary. Require successful actual image qualification, independent current-head human approval, then main image and immutable operational report before enabling its updater schedule.",
+  "approval": "Independent current-head human approval after builds pass. This record grants no approval; canary output remains nondeployable and no production key is used."
+}

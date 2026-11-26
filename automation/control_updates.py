@@ -5,11 +5,26 @@ from pathlib import Path
 import re
 import tempfile
 
-from .common import api, canonical, contents, digest, document, pages, require, run, sha, timestamp, version
+from .common import api, canonical, contents, digest, document, pages, repository, require, run, sha, timestamp, version
 
 REPO = 'Lanrith/lanrith'
 PIN = re.compile(r'(?m)^(\s+(?:- )?uses: )([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@([0-9a-f]{40})( # v([0-9]+\.[0-9]+\.[0-9]+))$')
 CONTROLLER = re.compile(r'Lanrith/lanrith/\.github/workflows/[a-z-]+\.yml@[0-9a-f]{40}')
+
+
+def proposal_paths(root, repo):
+    """Stage the workflow changes and the evidence required by this repository."""
+    repository(repo)
+    paths = ['.github/workflows/', 'security/automation-update.json',
+             'security/slsa-assessment.json' if repo == REPO else 'security/maintenance-source.json']
+    for name in paths:
+        path = root/name
+        require(not path.is_symlink() and not any((root/parent).is_symlink()
+                    for parent in Path(name).parents),
+                'Workflow proposal evidence must not contain symlinks.')
+        require(path.is_dir() if name.endswith('/') else path.is_file(),
+                'Workflow proposal is missing required evidence: '+name)
+    return paths
 
 
 def action_changes(before, after):

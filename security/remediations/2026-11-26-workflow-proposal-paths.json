@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "date": "2026-11-26",
+  "requires_human": true,
+  "reason": "The complete workflow updater authenticated its controller inputs but could not create component PRs: git add included the platform-only security/slsa-assessment.json. The static list also included component-only maintenance-source.json for platform Action proposals.",
+  "failed_runs": [
+    "https://github.com/Lanrith/discovery-bridge/actions/runs/45868252788",
+    "https://github.com/Lanrith/router-policy-agent/actions/runs/45868258688"
+  ],
+  "changes": [
+    "Select the required staging paths for the actual supported repository, rejecting missing or symlinked evidence before minting a publishing token.",
+    "Use the validated path output in PR creation and retain it with the preparation result.",
+    "Attribute automated commits to the updater App instead of the triggering human.",
+    "Refresh the exact workflow assessment hash."
+  ],
+  "validation": [
+    "Reproduce the old git-add failure and successfully commit the corrected complete proposal in real Git repositories for all three layouts.",
+    "Confirm unrelated files stay uncommitted and missing evidence, symlinks and unsupported repositories fail closed.",
+    "79 targeted maintenance, consumer and staging tests pass. Workflow invariants, source validation, actionlint and full current-head hosted qualification are required."
+  ],
+  "activation": "After independent human review, protected merge and qualified immutable release, deploy the complete authenticated controller update to each component, then re-enable and verify automatic proposal creation.",
+  "approval": "Independent current-head human approval after every build passes. This record grants no approval."
+}

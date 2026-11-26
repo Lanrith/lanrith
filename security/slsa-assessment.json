@@ -74,7 +74,7 @@
     ".github/workflows/check.yml": "39a8c62e24577d5d025196f4ff3c33d60466517b79c05720fb9343e118808e0e",
     ".github/workflows/consumer-qualification.yml": "0a003a231f8ebe23b80cce93ee41b8b6d9e3315d1a988c32a0dc79e51f6d04fe",
     ".github/workflows/maintenance-reconcile.yml": "6db1f9b4e18b224d9ba3c524d361eda8083c76b5a30b6667032d1780f9097903",
-    ".github/workflows/prepare-workflow-updates.yml": "f26957d9f36d36a3b98cdd6a0784aa63f5c349aedef6b6df60e9eba4cfb896af",
+    ".github/workflows/prepare-workflow-updates.yml": "c8bfaeccf432b481c1abb67ffdf68aa789b19af6675e90a2fe74f82817fbd9ee",
     ".github/workflows/publish-release.yml": "4812636e04463b1398a2c2274305a7cf6618786206aa442829bfb26ce148b5c3",
     ".github/workflows/release.yml": "648fc4cac2fd0a10ac9bd4b210d547785688efd23a1bebe29373b10260764063",
     ".github/workflows/restore-cache.yml": "2ff5c22d4572478a15af13d3401c0094a4d96d853607c27d4d19bc3c03ad192f",
