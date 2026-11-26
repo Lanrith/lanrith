@@ -427,6 +427,13 @@ def assembly(value, base, destination, *, version, sequence, certificate=None, p
             '\n[Service]\nType=exec\nExecStart=/usr/lib/lanrith/serial-idle-watchdog\n'
             'Restart=always\nRestartSec=2s\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n')
         unit = 'serial-getty@'+tty+'.service'
+        baud = next(console['baud'] for console in installed['factory_consoles'] if console['tty'] == tty)
+        if baud is not None:
+            # A login-only UART does not inherit a speed from the kernel console.
+            (wants/(unit+'.d/20-lanrith-line.conf')).write_text(
+                '[Service]\nExecStart=\n'
+                r"ExecStart=-/sbin/agetty -o '-- \\u' --noclear --8bits --local-line"
+                f' {baud} - ${{TERM}}\n')
         path = units/'multi-user.target.wants'/unit
         path.symlink_to('/usr/lib/systemd/system/'+unit)
     if certificate is not None:

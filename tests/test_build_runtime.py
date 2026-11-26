@@ -22,6 +22,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CompiledRuntimeTests(unittest.TestCase):
+    def test_finalizer_removes_only_vpp_page_allocation(self):
+        import ast
+        import re
+        source = ROOT/'scripts/finalize-image.py'
+        tree = ast.parse(source.read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'remove_vpp_hugepage_default')
+        namespace = {'re': re}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), namespace)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            conf = root/'etc/sysctl.d/80-vpp.conf'
+            conf.parent.mkdir(parents=True)
+            keep = '# Package settings\nvm.hugetlb_shm_group=0\n'
+            conf.write_text('vm.nr_hugepages='+str(1024)+'\n-vm/nr_hugepages = 8\n'+keep)
+            namespace['remove_vpp_hugepage_default'](root)
+            self.assertEqual(conf.read_text(), keep)
+
     def test_obsolete_helpers_are_removed_without_following_links_or_removing_credential_state(self):
         source = ROOT/'scripts/finalize-image.py'
         import ast

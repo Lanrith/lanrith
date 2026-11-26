@@ -4,28 +4,28 @@
   "component_releases": {
     "discovery-bridge": {
       "files": {
-        "discovery-bridge_0.1.9_amd64.deb": "ced7752a534f9b2fee508621d398c2a62674c29e3c499fcd525865c036e618ce",
-        "release.json": "c155482595bdbf171dd141092ca0903ba18d308c367d80e6badb2638d696d44d",
-        "update-record.json": "37b6b8403ac51396e1e06bcc85d13712fbca87bc643739088c0f4a03b3d44713"
+        "discovery-bridge_0.1.10_amd64.deb": "c3a1a770c7cc34869e32a8a2db3f295b0fc880c4e57d9437e7dbb1552e9d860d",
+        "release.json": "925758132b6296414eb2d3b4da1fc2a8876b431fdd4f11c89e396d1fb671c95f",
+        "update-record.json": "05311b4e26e5856f1305f7261da25288363f5fdd04d1ad24f360d3c52f2cea94"
       },
       "repository": "Lanrith/discovery-bridge",
-      "source_commit": "574c2236378012575aa4ad7d801098c3e1785820",
-      "tag": "v0.1.9",
-      "workflow_commit": "574c2236378012575aa4ad7d801098c3e1785820"
+      "source_commit": "639ac50058c95ac73f877a869ea346c91fcd7df6",
+      "tag": "v0.1.10",
+      "workflow_commit": "639ac50058c95ac73f877a869ea346c91fcd7df6"
     },
     "router-policy-agent": {
       "files": {
-        "component-release.json": "65a81de7cf4b6ac3107c8df9fed51e65c752afefef177740680092409fd58397",
-        "router-policy-collector_0.1.14_amd64.deb": "45d5dbbd7b534e1302efcf2596a353552d0951d4b450570156697e321e7e3cf0",
-        "router-policy-helper_0.1.14_amd64.deb": "70039ce505776770e6fa3483180200908af8814230a1e591a85deadfb3f9e07d",
-        "router-policy-reader_0.1.14_amd64.deb": "4f06f0a27849f50a7655a16e3e9c98c5e442b7c628900850514cf61e44679b06",
-        "security.txt": "bb3482cd0ab0f536a030132415214b8b7c6d101e1b9149e2bb6e6ad2c6c583ce",
-        "update-record.json": "b520e38012f619f8d05122a730c4e4e54497b5b79e8c0801bc13d3bf889b3edc"
+        "component-release.json": "d0ed06d99cebb14daa45858fa6bce67acc562cd6423ed4a3d908970e06b3c1c4",
+        "router-policy-collector_0.1.15_amd64.deb": "20c8447855fda40980091b1cfe17130bffa8e330c79ab6d50ff6d56478ae23b8",
+        "router-policy-helper_0.1.15_amd64.deb": "0fc0d0051c838df70ba4ad39680e49c25b8bee9107979ea62ddec7c42430f164",
+        "router-policy-reader_0.1.15_amd64.deb": "36080c99e5d465f092eb342be267bf0f8854fa91a1dec592e3793ef04c14c3a1",
+        "security.txt": "c9a55c89e478f560248d1762b12d2028d8554bd5809b5dfad77b3a8c83092518",
+        "update-record.json": "4b660554c67c56e9952be07026dcaacc9743fac3cdeb572a474bd30b8aad6ef5"
       },
       "repository": "Lanrith/router-policy-agent",
-      "source_commit": "b1c82449f52b2565301710de9c568e8965be0ec5",
-      "tag": "v0.1.14",
-      "workflow_commit": "b1c82449f52b2565301710de9c568e8965be0ec5"
+      "source_commit": "b766524fbda5cc4e46a4b353a19784a2c6fa85ab",
+      "tag": "v0.1.15",
+      "workflow_commit": "b766524fbda5cc4e46a4b353a19784a2c6fa85ab"
     }
   },
   "custom_package_inputs": {
@@ -39,7 +39,7 @@
     "builders/alloy/source.json": "bfa37bb924015f7a535b67da7b896010756601f47eaff5c651db242388ad3e0a",
     "builders/alloy/ui-dependencies.patch": "6e4c59d8b8908ffc5bd42ab7b25061cdaf22317e2629f0baffa57499c59d4635",
     "builders/apt-security.json": "328cd550f3270b439a83b19cd93b3adf9353a5edd8b9c6b4a2fd6318cd9dfb01",
-    "builders/build-inputs.lock": "80a1345be4a44a3e420ce1dcd3e1e480f6df549d60f7c321425b82f9d17ba33d",
+    "builders/build-inputs.lock": "7c4a3bca989f0aeece4573571a7c627f1f2ed710912ba1032fcdcf86296e416f",
     "builders/configure-apt-snapshots.sh": "651d153c8fd55ef69021499c714082ccd974b001672758a8b8b715ff9d72efce",
     "builders/install-apt-security.sh": "5cb8a3f3bfde639d1fc0f6dd2713b77508c1cd634164d590ff2d5b8993c76b4e",
     "builders/mkosi/Containerfile": "1a5d9b5172c7ae79db77580383fc7b7d735e920d8e24d4c2dddae05e85f5e73d",
@@ -62,10 +62,10 @@
     "builders/vpp/Containerfile": "3897684ce4bee00fc2d1e7792e8e3a1fa2115aa5e0a42d39223ba05edffe3040"
   },
   "debian_release_sha256": "4a04448a82727a76452dbe2473b50f3d1f9ec5421fe7f3457b2b03b8673b1e8d",
-  "debian_snapshot": "20261123T070000Z",
+  "debian_snapshot": "20261125T220000Z",
   "distribution": "debian",
   "release": "trixie",
   "schema": 1,
-  "security_release_sha256": "576dd1345fbe0c1d961583091f7d999312a94e153385548161ebc071a67ef49e",
-  "security_snapshot": "20261123T070000Z"
+  "security_release_sha256": "bd6281b40f044b9c573d591e1c3f54a0a9f41e1deaefa373b06af573f4b9bf9f",
+  "security_snapshot": "20261125T220000Z"
 }

@@ -271,6 +271,14 @@ def firewall_rules(value, direction):
                 result.append(f'  meta skuid {{ "{COLLECTOR}", "avahi" }} oifname "{interface}" '
                               f'{spelling} saddr {values(local)} {spelling} daddr '
                               f'{values([multicast, *sources])} {spelling} {ttl} 255 udp sport 5353 accept')
+                # The publisher's raw UDP socket emits multicast announcements and goodbyes.
+                link_sources = [str(ip.ip_interface(a).ip) for a in intent.gateway_addresses(network)
+                                if ip.ip_interface(a).version == family]
+                if family == 6:
+                    link_sources.append('fe80::/10')
+                result.append(f'  meta skuid "{PUBLISHER}" oifname "{interface}" fib saddr type local '
+                              f'{spelling} saddr {values(link_sources)} {spelling} daddr {multicast} {spelling} {ttl} 255 '
+                              'udp sport 5353 udp dport 5353 accept')
     publisher = _publisher(value)
     if direction == 'input' and publisher:
         family = ip.ip_address(publisher['host']).version

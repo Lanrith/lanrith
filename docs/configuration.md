@@ -198,7 +198,15 @@ An IP-literal directory URL uses that address directly. A named URL requires
 `addresses` with one to eight unique IP pins. Lanrith emits the corresponding
 host entries at build time and retains the URL hostname for TLS verification.
 This avoids a dependency on DNS while enforcing exact destinations. Changing a
-pin requires a new image. For example, with matching declared networks:
+pin requires a new image.
+
+The directory server normally sees a router address on its outgoing network.
+If the server only admits the managed RADIUS address, set `source_service: radius`
+on the directory used by RADIUS admission. The policy reader and the optional TLS
+probe then use the managed IPv4 or ULA source for connections to that directory's
+pinned addresses and TCP port. The server needs a return route to the service range.
+
+For example, with matching declared networks:
 
 ```yaml
 identity:

@@ -134,6 +134,38 @@ class AssemblyTests(unittest.TestCase):
             self.assertIn(unit, (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
             self.assertIn('After=lanrith-recovery-key.service', (overlay/'usr/lib/systemd/system'/unit).read_text())
 
+    def test_serial_login_sets_the_selected_uart_speed(self):
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic-test-input')
+            provision = root/'serial.hash'
+            provision.write_text('scrypt:32768:8:1:'+'1'*32+':'+'2'*64+'\n')
+            provision.chmod(0o600)
+            for tty, console, enabled, baud in (
+                ('ttyUSB2', 'tty0', True, 115200),
+                ('ttyS2', 'ttyS2,57600n8', True, 57600),
+                ('hvc0', 'tty0', True, None),
+                ('ttyS0', 'tty0', False, None),
+            ):
+                with self.subTest(tty=tty, enabled=enabled):
+                    value['hardware']['boot'] = {'console': console, 'recovery_console': 'ttyS0'}
+                    value['administration']['serial'] = {'enabled': enabled, 'tty': tty}
+                    work = root/tty
+                    build.assembly(value, base, work, version='0.1.0', sequence=9,
+                                   serial_hash=provision if enabled else None)
+                    units = work/'mkosi.extra/etc/systemd/system'
+                    lines = list(units.glob('*/20-lanrith-line.conf'))
+                    if baud is None:
+                        self.assertEqual(lines, [])
+                    else:
+                        self.assertEqual(lines, [units/('serial-getty@'+tty+'.service.d/20-lanrith-line.conf')])
+                        text = lines[0].read_text()
+                        self.assertIn('ExecStart=\nExecStart=-/sbin/agetty ', text)
+                        self.assertIn(f'--8bits --local-line {baud} - ', text)
+                        self.assertNotIn('--keep-baud', text)
+
     def test_root_access_policy_is_embedded_in_finalizer_not_read_from_owner_yaml(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
         value['administration']['root_access'] = 'disabled'
