@@ -49,6 +49,19 @@ def disposable_serial_hash():
     return 'scrypt:32768:8:1:'+salt.hex()+':'+derived.hex()
 
 
+def disposable_authorities(owner, keys, *, tpm_required):
+    authorities = {'boot': 3072, 'evidence': 3072}
+    if tpm_required:
+        authorities['pcr'] = 2048
+    for name, bits in authorities.items():
+        key = keys/(name+'.key')
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:'+str(bits), '-nodes', '-sha256', '-days', '1',
+            '-subj', '/CN=Lanrith disposable canary '+name, '-keyout', str(key),
+            '-out', str(owner/'trust'/(name+'.crt'))], check=True, capture_output=True)
+        key.chmod(0o600)
+    return authorities
+
+
 def qualification(owner, output):
     release.require(os.environ.get('GITHUB_REPOSITORY') == 'Lanrith/config-template-qualification',
                     'Disposable image qualification is restricted to the isolated canary repository.')
@@ -65,10 +78,8 @@ def qualification(owner, output):
         copied = work/'owner'
         shutil.copytree(owner, copied, symlinks=True, ignore=shutil.ignore_patterns('.git'))
         release.require(not any(p.is_symlink() for p in copied.rglob('*')), 'Canary configuration contains a symlink.')
-        for name in ('boot', 'evidence'):
-            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-sha256', '-days', '1',
-                '-subj', '/CN=Lanrith disposable canary '+name, '-keyout', str(keys/(name+'.key')),
-                '-out', str(copied/'trust'/(name+'.crt'))], check=True, capture_output=True)
+        authorities = disposable_authorities(copied, keys,
+            tpm_required=config.load(copied/'config.yaml')['hardware']['boot'].get('tpm', 'required') == 'required')
         # These keys are generated for this test only. No image or private key is
         # uploaded, and this code cannot authorize a deployable owner release.
         os.environ['LANRITH_SIGNING_PROFILE'] = 'repository'
@@ -85,6 +96,9 @@ def qualification(owner, output):
                 if (bundle/'security-assessment.json').exists() else None}))
         os.environ['LANRITH_BOOT_KEY'] = (keys/'boot.key').read_text()
         os.environ['LANRITH_BOOT_CERTIFICATE'] = (copied/'trust/boot.crt').read_text()
+        if 'pcr' in authorities:
+            os.environ['LANRITH_PCR_KEY'] = (keys/'pcr.key').read_text()
+            os.environ['LANRITH_PCR_CERTIFICATE'] = (copied/'trust/pcr.crt').read_text()
         if config.load(copied/'config.yaml')['administration']['serial']['enabled']:
             os.environ['LANRITH_SERIAL_PASSPHRASE_HASH'] = disposable_serial_hash()
         try:
@@ -92,7 +106,8 @@ def qualification(owner, output):
             # needs their deployment record, so avoid duplicating large archives.
             consumer.assemble(copied, bundle, request_path, work/'image', archive_images=False)
         finally:
-            for name in ('LANRITH_BOOT_KEY', 'LANRITH_BOOT_CERTIFICATE', 'LANRITH_SERIAL_PASSPHRASE_HASH'):
+            for name in ('LANRITH_BOOT_KEY', 'LANRITH_BOOT_CERTIFICATE', 'LANRITH_SERIAL_PASSPHRASE_HASH',
+                         'LANRITH_PCR_KEY', 'LANRITH_PCR_CERTIFICATE'):
                 os.environ.pop(name, None)
         deployment = release.read(work/'image/deployment.json', 1024*1024)
         output.write_bytes(release.canonical({'schema': 1, 'kind': 'isolated-consumer-qualification', 'result': 'pass',

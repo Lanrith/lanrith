@@ -13,6 +13,27 @@ from lanrith import local, release
 
 
 class ConsumerSigningTests(unittest.TestCase):
+    def test_failed_container_restores_cleanup_ownership_and_keeps_original_error(self):
+        consumer = local.consumer()
+        failure = subprocess.CalledProcessError(17, ['docker', 'run'])
+        root = Path('/tmp/lanrith-assembly.fixture')
+        with patch.object(consumer, 'run', side_effect=[failure, None]) as invoke:
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                consumer.run_assembly(['docker', 'run'], root)
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(invoke.call_args_list[-1].args,
+            ('sudo', 'chown', '--recursive', '--no-dereference',
+             str(os.getuid())+':'+str(os.getgid()), '--', str(root)))
+
+    def test_successful_container_also_restores_cleanup_ownership(self):
+        consumer = local.consumer()
+        with patch.object(consumer, 'run') as invoke:
+            consumer.run_assembly(['docker', 'run'], Path('/tmp/lanrith-assembly.fixture'))
+        self.assertEqual(len(invoke.call_args_list), 2)
+        self.assertEqual(invoke.call_args_list[0].args, ('docker', 'run'))
+        self.assertEqual(invoke.call_args_list[1].args[:4],
+                         ('sudo', 'chown', '--recursive', '--no-dereference'))
+
     def setUp(self):
         self.consumer = local.consumer()
         self.context = patch.dict(os.environ, {'GITHUB_REF': 'refs/heads/main',

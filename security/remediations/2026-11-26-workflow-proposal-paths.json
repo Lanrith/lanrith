@@ -16,7 +16,7 @@
   "validation": [
     "Reproduce the old git-add failure and successfully commit the corrected complete proposal in real Git repositories for all three layouts.",
     "Confirm unrelated files stay uncommitted and missing evidence, symlinks and unsupported repositories fail closed.",
-    "63 maintenance and staging regression tests pass. Workflow invariants, source validation, actionlint and full current-head hosted qualification are required."
+    "79 targeted maintenance, consumer and staging tests pass. Workflow invariants, source validation, actionlint and full current-head hosted qualification are required."
   ],
   "activation": "After independent human review, protected merge and qualified immutable release, deploy the complete authenticated controller update to each component, then re-enable and verify automatic proposal creation.",
   "approval": "Independent current-head human approval after every build passes. This record grants no approval."

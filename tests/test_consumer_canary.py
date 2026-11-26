@@ -23,6 +23,33 @@ spec.loader.exec_module(archive)
 
 
 class CanaryBoundaryTests(unittest.TestCase):
+    def test_disposable_pcr_authority_passes_real_owner_admission(self):
+        from lanrith import boot_policy, build_inputs, release
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/'trust').mkdir()
+            keys = root/'keys'
+            keys.mkdir(mode=0o700)
+            authorities = canary.disposable_authorities(root, keys, tpm_required=True)
+            self.assertEqual(set(authorities), {'boot', 'evidence', 'pcr'})
+            public = boot_policy.public_key(keys/'pcr.key', root/'trust/pcr.crt')
+            self.assertNotEqual(public, release.public_key(root/'trust/boot.crt'))
+            self.assertNotEqual(public, release.public_key(root/'trust/evidence.crt'))
+            with self.assertRaisesRegex(ReleaseError, 'RSA-2048'):
+                boot_policy.public_key(keys/'boot.key', root/'trust/boot.crt')
+            record = build_inputs.record({'pcr_key': keys/'pcr.key', 'pcr_certificate': root/'trust/pcr.crt'},
+                certificate=root/'trust/boot.crt', image_id='lanrith', sequence=1, tpm_required=True)
+            self.assertEqual(record['pcr_public_key_sha256'], hashlib.sha256(public).hexdigest())
+
+    def test_optional_tpm_does_not_generate_an_unexpected_pcr_authority(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/'trust').mkdir()
+            (root/'keys').mkdir(mode=0o700)
+            authorities = canary.disposable_authorities(root, root/'keys', tpm_required=False)
+            self.assertEqual(set(authorities), {'boot', 'evidence'})
+            self.assertFalse((root/'trust/pcr.crt').exists())
+
     def test_disk_budget_uses_expanded_authenticated_inputs_and_configured_image_bounds(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -92,7 +119,8 @@ class CanaryBoundaryTests(unittest.TestCase):
             canary.qualification(Path('/unused'), Path('/unused'))
 
     def test_deployment_secrets_are_rejected_before_any_build_or_key_generation(self):
-        for name in ('LANRITH_BOOT_KEY', 'LANRITH_EVIDENCE_KEY', 'LANRITH_SERIAL_PASSPHRASE_HASH'):
+        for name in ('LANRITH_BOOT_KEY', 'LANRITH_EVIDENCE_KEY', 'LANRITH_SERIAL_PASSPHRASE_HASH',
+                     'LANRITH_PCR_KEY', 'LANRITH_PCR_CERTIFICATE'):
             with self.subTest(name=name), patch.dict(os.environ,
                     {'GITHUB_REPOSITORY': 'Lanrith/config-template-qualification', name: 'fixture'}, clear=True), \
                     self.assertRaisesRegex(ReleaseError, 'must not receive deployment credentials'):

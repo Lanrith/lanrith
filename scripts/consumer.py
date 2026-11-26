@@ -131,6 +131,16 @@ def preflight(owner, bundle):
     return result
 
 
+def run_assembly(command, assembly_root):
+    try:
+        run(*command)
+    finally:
+        # A failed container can leave root-owned trees too. Restore ownership
+        # before TemporaryDirectory cleanup, without following payload symlinks.
+        run('sudo', 'chown', '--recursive', '--no-dereference',
+            str(os.getuid())+':'+str(os.getgid()), '--', str(assembly_root))
+
+
 def assemble(owner, bundle, request, output, *, archive_images=True):
     expected = json.loads(release.read(request, 65536), object_pairs_hook=release.unique)
     receipt = json.loads(release.read(bundle/'signing-admission.json', 65536), object_pairs_hook=release.unique)
@@ -215,7 +225,7 @@ def assemble(owner, bundle, request, output, *, archive_images=True):
                    '-v', str(private)+':'+str(private)+':ro', '-v', str(assembly_root)+':'+str(assembly_root),
                    '-v', str(owner)+':/owner:ro',
                    '-v', str(bundle)+':/platform:ro', '-w', str(tools), reference,
-                   'python3', 'scripts/assemble-offline.py', '--owner', '/owner', '--platform', '/platform',
+                   'python3', '-B', 'scripts/assemble-offline.py', '--owner', '/owner', '--platform', '/platform',
                    '--private', str(private), '--workspace', str(workspace), '--output', str(payload),
                    '--sequence', str(sequence)]
         # This receipt is made only by the trusted host after maintained verifier checks.
@@ -236,8 +246,7 @@ def assemble(owner, bundle, request, output, *, archive_images=True):
             **({'owner_inputs': owner_records} if owner_records else {}),
             'boot_inputs': boot_record}))
         (private/'admitted.json').chmod(0o600)
-        run(*command)
-        run('sudo', 'chown', '--recursive', str(os.getuid())+':'+str(os.getgid()), str(assembly_root))
+        run_assembly(command, assembly_root)
         verified = release.verify(payload, private/'boot.crt', purpose='update',
             image_id=value.get('release', {}).get('image_id', 'lanrith'),
             expected_version=selection['version'][1:], expected_configuration=effective_digest,
