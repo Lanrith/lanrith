@@ -98,6 +98,12 @@ for path in (root/'.github/workflows').glob('*.yml'):
                         assert job_name == 'sign' and 'consumer.py assemble' in step.get('run', ''), path.name
                     if name.startswith('LANRITH_EVIDENCE_'):
                         assert job_name == 'evidence' and 'private-evidence.py' in step.get('run', ''), path.name
+    if path.name == 'consumer-qualification.yml':
+        image = value['jobs']['image']
+        assert image['if'] == "github.repository == 'Lanrith/config-template-qualification'", path.name
+        assert image['permissions'] == {'contents': 'read'}, path.name
+        preparation = next(s for s in image['steps'] if s.get('name') == 'Prepare the isolated build runner')
+        assert preparation['run'].splitlines()[0] == 'python3 tools/scripts/prepare-runner.py --profile isolated-consumer', path.name
     for action in re.findall(r'^\s+(?:-\s+)?uses:\s+(\S+)', text, re.MULTILINE):
         assert action.startswith('./.github/workflows/') or re.fullmatch(r'[^@ ]+@[0-9a-f]{40}', action), (path.name, action)
     for name, job in value.get('jobs', {}).items():

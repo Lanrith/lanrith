@@ -2,9 +2,13 @@
 import importlib.util
 import hashlib
 import json
+import io
 import os
 from pathlib import Path
 import unittest
+import tarfile
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from lanrith.release import ReleaseError
@@ -19,6 +23,30 @@ spec.loader.exec_module(archive)
 
 
 class CanaryBoundaryTests(unittest.TestCase):
+    def test_disk_budget_uses_expanded_authenticated_inputs_and_configured_image_bounds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('lanrith-base.tar.gz', 'lanrith-initrd-base.tar.gz'):
+                with tarfile.open(root/name, 'w:gz') as archive:
+                    member = tarfile.TarInfo('usr/lib/sample')
+                    member.size = 4096
+                    archive.addfile(member, io.BytesIO(b'a'*4096))
+            value = {'hardware': {'storage': {'root_mib': 4096, 'esp_mib': 1024, 'state_mib': 65536}}}
+            with patch.object(canary.config, 'load', return_value=value), \
+                    patch.object(canary.shutil, 'disk_usage', return_value=SimpleNamespace(free=38*1024**3)):
+                result = canary.require_assembly_space(root, root, root)
+            self.assertEqual(result['expanded_input_bytes'], 8192)
+            self.assertLess(result['required_bytes'], result['available_bytes'])
+            with patch.object(canary.config, 'load', return_value=value), \
+                    patch.object(canary.shutil, 'disk_usage', return_value=SimpleNamespace(free=result['required_bytes']-1)), \
+                    self.assertRaisesRegex(ReleaseError, 'Insufficient disk'):
+                canary.require_assembly_space(root, root, root)
+            value['hardware']['storage']['root_mib'] = 32768
+            with patch.object(canary.config, 'load', return_value=value), \
+                    patch.object(canary.shutil, 'disk_usage', return_value=SimpleNamespace(free=38*1024**3)), \
+                    self.assertRaisesRegex(ReleaseError, 'Insufficient disk'):
+                canary.require_assembly_space(root, root, root)
+
     def report(self):
         context = {'GITHUB_REPOSITORY': archive.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
                    'GITHUB_SHA': 'a'*40, 'LANRITH_WORKFLOW_COMMIT': 'b'*40, 'GITHUB_RUN_ID': '123'}

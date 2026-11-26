@@ -109,6 +109,9 @@ def main():
         print(str(len(record['artifacts']))+' completed artifacts; '+str(record['bytes'])+' bytes.')
         caches = record.get('build_caches', {}).get('caches', [])
         print(str(len(caches))+' obsolete build caches; '+str(sum(c['size_in_bytes'] for c in caches))+' bytes.')
+        deferred = record.get('build_caches', {}).get('inventory_deferred')
+        if deferred:
+            print('Cache pruning deferred; all caches retained: '+deferred)
         if os.environ.get('GITHUB_OUTPUT'):
             with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
                 stream.write('has-artifacts='+str(bool(record['artifacts'] or caches)).lower()+'\n')
