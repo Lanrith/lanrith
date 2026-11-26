@@ -55,6 +55,8 @@ jobs:
           branch: automation/workflow-updates
           title: Review complete workflow and controller updates
           commit-message: Prepare authenticated workflow pins and matching provenance
+          author: lanrith-dependency-updater[bot] <343878804+lanrith-dependency-updater[bot]@users.noreply.github.com>
+          committer: lanrith-dependency-updater[bot] <343878804+lanrith-dependency-updater[bot]@users.noreply.github.com>
           body: |
             This change pairs workflow pins with their assessed hashes and controller provenance.
             `security/automation-update.json` records the reason, source PRs, upstream diffs,
@@ -62,11 +64,7 @@ jobs:
 
             Independent human review is required after current-head CI and qualification pass.
             This workflow cannot approve or merge its proposal.
-          add-paths: |
-            .github/workflows/
-            security/maintenance-source.json
-            security/slsa-assessment.json
-            security/automation-update.json
+          add-paths: ${{ steps.prepare.outputs.paths }}
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

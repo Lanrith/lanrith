@@ -195,6 +195,12 @@ for path in (root/'.github/workflows').glob('*.yml'):
         checkout = next(s['with'] for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@'))
         assert checkout == {'repository': '${{ job.workflow_repository }}', 'ref': '${{ job.workflow_sha }}',
                             'path': 'tools', 'persist-credentials': False}, 'Notification must run only its trusted workflow source'
+    if path.name == 'prepare-workflow-updates.yml':
+        publisher = next(step for step in value['jobs']['prepare']['steps']
+                         if step.get('uses', '').startswith('peter-evans/create-pull-request@'))['with']
+        assert publisher['add-paths'] == '${{ steps.prepare.outputs.paths }}', 'Stage only the complete repository-specific proposal paths'
+        identity = 'lanrith-dependency-updater[bot] <343878804+lanrith-dependency-updater[bot]@users.noreply.github.com>'
+        assert publisher['author'] == publisher['committer'] == identity, 'Automated commits must name the updater App'
     if path.name == 'publish-release.yml':
         assert value['jobs']['publish']['if'] == ("github.ref == 'refs/heads/main' && "
             "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"), 'Publication must be trusted Main only'
