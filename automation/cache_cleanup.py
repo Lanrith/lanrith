@@ -2,8 +2,9 @@
 
 import datetime
 import re
+import time
 
-from .common import api, canonical, digest, now, repository, require, timestamp
+from .common import MaintenanceError, api, canonical, digest, now, repository, require, timestamp
 
 
 REPOSITORY = 'Lanrith/lanrith'
@@ -16,17 +17,28 @@ RUN_FIELDS = ('id', 'run_attempt', 'name', 'path', 'event', 'head_branch', 'head
               'status', 'conclusion', 'updated_at')
 
 
+class InventoryChanged(MaintenanceError):
+    """A bounded inventory read could not establish a stable snapshot."""
+
+
 def rows(get, endpoint, field):
-    pages = get(endpoint, paginate=True)
-    require(isinstance(pages, list) and pages and all(isinstance(p, dict) and
-            isinstance(p.get(field), list) and type(p.get('total_count')) is int and
-            0 <= p['total_count'] <= POLICY['maximum_inventory'] for p in pages),
-            'Build-cache inventory is incomplete or exceeds its review bound.')
-    result = [r for p in pages for r in p[field]]
-    require(all(p['total_count'] == len(result) for p in pages) and
-            all(isinstance(r, dict) and type(r.get('id')) is int and r['id'] > 0 for r in result) and
-            len({r['id'] for r in result}) == len(result), 'Build-cache inventory changed or contains duplicate identities.')
-    return result
+    # GitHub's count and paginated rows can observe different instants while
+    # runs transition or caches expire. Retry the complete read, never a delete.
+    for attempt in range(3):
+        pages = get(endpoint, paginate=True)
+        require(isinstance(pages, list) and pages and all(isinstance(p, dict) and
+                isinstance(p.get(field), list) and type(p.get('total_count')) is int and
+                0 <= p['total_count'] <= POLICY['maximum_inventory'] for p in pages),
+                'Build-cache inventory is incomplete or exceeds its review bound.')
+        result = [r for p in pages for r in p[field]]
+        require(len(result) <= POLICY['maximum_inventory'] and
+                all(isinstance(r, dict) and type(r.get('id')) is int and r['id'] > 0 for r in result),
+                'Build-cache inventory identities are malformed or exceed their bound.')
+        if all(p['total_count'] == len(result) for p in pages) and len({r['id'] for r in result}) == len(result):
+            return result
+        if attempt < 2:
+            time.sleep(0.5*(attempt+1))
+    raise InventoryChanged('Build-cache inventory changed or contains duplicate identities after three bounded reads.')
 
 
 def inventory(repo, get):
@@ -81,7 +93,14 @@ def plan(repo, *, get=api, clock=None):
     if len(caches) <= POLICY['successful_sources']:
         record['retained'] = [{'cache': c, 'reason': 'within-retained-generation-floor'} for c in caches]
         return record
-    record['blocked_by_runs'] = active(repo, get)
+    try:
+        record['blocked_by_runs'] = active(repo, get)
+    except InventoryChanged as error:
+        # Uncertain cache consumers protect every cache. Independent completed
+        # artifact handoffs can still be reclaimed through their own checks.
+        record['inventory_deferred'] = str(error)
+        record['retained'] = [{'cache': c, 'reason': 'active-workflow-inventory-unstable'} for c in caches]
+        return record
     if record['blocked_by_runs']:
         record['retained'] = [{'cache': c, 'reason': 'workflows-active'} for c in caches]
         return record
@@ -145,7 +164,12 @@ def execute(record, *, request=api, progress=None, clock=None):
         for index, cache in enumerate(record['caches']):
             require(repo == REPOSITORY and KEY.fullmatch(cache['key']) and cache['ref'] == 'refs/heads/main',
                     'Cache cleanup cannot address another namespace or branch.')
-            blockers = active(repo, request)
+            try:
+                blockers = active(repo, request)
+            except InventoryChanged:
+                result['deferred'].extend({'id': c['id'], 'reason': 'active-workflow-inventory-unstable'}
+                                          for c in record['caches'][index:])
+                break
             if blockers:
                 result['deferred'].extend({'id': c['id'], 'reason': 'workflows-became-active'} for c in record['caches'][index:])
                 break

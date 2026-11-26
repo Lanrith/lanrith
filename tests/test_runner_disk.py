@@ -30,14 +30,14 @@ class RunnerDiskTests(unittest.TestCase):
                 'RUNNER_TEMP':str(temporary),'ImageVersion':'synthetic-image',
                 'GH_TOKEN':'private-canary-must-not-appear-in-diagnostics'}
 
-    def evaluate(self, temporary, after, *, command_error=None):
+    def evaluate(self, temporary, after, *, command_error=None, profile='platform'):
         usage = lambda free: SimpleNamespace(total=100*GIB,used=100*GIB-free,free=free)
         with patch.dict(os.environ,self.environment(temporary)), \
                 patch.object(runner.shutil,'disk_usage',side_effect=[usage(18*GIB),usage(after)]), \
                 patch.object(runner.subprocess,'run',side_effect=command_error) as command, \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             try:
-                value = runner.prepare()
+                value = runner.prepare(profile)
                 return value,command,output.getvalue()
             finally:
                 self.last_command=command
@@ -72,6 +72,27 @@ class RunnerDiskTests(unittest.TestCase):
                     self.assertEqual(self.evaluate(temporary,available)[0]['result'],'pass')
                 else:
                     with self.assertRaises(RuntimeError): self.evaluate(temporary,available)
+
+    def test_private_canary_uses_its_bounded_assembly_profile(self):
+        context = {'GITHUB_REPOSITORY': 'Lanrith/config-template-qualification', 'GITHUB_JOB': 'image'}
+        with patch.dict(os.environ, context), tempfile.TemporaryDirectory() as temporary:
+            value, _, _ = self.evaluate(temporary, 38*GIB, profile='isolated-consumer')
+            self.assertEqual(value['minimum_free_bytes'], 32*GIB)
+            with self.assertRaises(RuntimeError):
+                self.evaluate(temporary, 32*GIB-1, profile='isolated-consumer')
+            with self.assertRaises(RuntimeError):
+                self.evaluate(temporary, 38*GIB)
+
+    def test_consumer_profile_cannot_lower_platform_or_compiler_requirements(self):
+        for repository, job in [('Lanrith/lanrith', 'image'),
+                                ('Lanrith/config-template-qualification', 'packages')]:
+            with self.subTest(repository=repository, job=job), tempfile.TemporaryDirectory() as temporary, \
+                    patch.dict(os.environ, self.environment(temporary) | {
+                        'GITHUB_REPOSITORY': repository, 'GITHUB_JOB': job}), \
+                    patch.object(runner.subprocess, 'run') as command:
+                with self.assertRaisesRegex(RuntimeError, 'restricted to the isolated image'):
+                    runner.prepare('isolated-consumer')
+                command.assert_not_called()
 
     def test_cleanup_failure_does_not_claim_space_reclaimed_or_pass(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -131,7 +131,7 @@ def preflight(owner, bundle):
     return result
 
 
-def assemble(owner, bundle, request, output):
+def assemble(owner, bundle, request, output, *, archive_images=True):
     expected = json.loads(release.read(request, 65536), object_pairs_hook=release.unique)
     receipt = json.loads(release.read(bundle/'signing-admission.json', 65536), object_pairs_hook=release.unique)
     actual = receipt['request']
@@ -251,12 +251,13 @@ def assemble(owner, bundle, request, output):
             {item['role']: item for item in verified_factory['artifacts'] if item['role'] in release.ROLES['update']} ==
             {item['role']: item for item in verified['artifacts']}, 'Signed factory and update payloads differ.')
         output.mkdir(mode=0o700)
-        with tarfile.open(output/'update.tar.gz', 'w:gz', format=tarfile.PAX_FORMAT) as archive:
-            for path in sorted(payload.iterdir()):
-                archive.add(path, arcname=path.name)
-        with tarfile.open(output/'factory.tar.gz','w:gz',format=tarfile.PAX_FORMAT) as archive:
-            for path in sorted(factory.iterdir()):
-                archive.add(path,arcname=path.name)
+        if archive_images:
+            with tarfile.open(output/'update.tar.gz', 'w:gz', format=tarfile.PAX_FORMAT) as archive:
+                for path in sorted(payload.iterdir()):
+                    archive.add(path, arcname=path.name)
+            with tarfile.open(output/'factory.tar.gz','w:gz',format=tarfile.PAX_FORMAT) as archive:
+                for path in sorted(factory.iterdir()):
+                    archive.add(path,arcname=path.name)
         (output/'deployment.json').write_bytes(release.canonical({**actual,
             'effective_configuration_sha256': effective_digest, 'serial_provisioning_sha256': serial_digest,
             'credential_digest': credential_digest,

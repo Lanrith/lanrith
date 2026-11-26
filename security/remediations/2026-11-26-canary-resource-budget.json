@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "manual-canary-resource-repair",
+  "requires_human": true,
+  "failure_run": "https://github.com/Lanrith/config-template-qualification/actions/runs/45780251543",
+  "reason": "Private hosted image runner has 38.26 GiB free after SDK cleanup; canary inherited the full platform compiler 60 GiB requirement. It also compressed two large image archives despite retaining only a report.",
+  "changes": [
+    "Keep the 60 GiB platform compiler/native budget. Permit the isolated image job only to select a 32 GiB initial consumer budget.",
+    "After authenticating and fetching the platform and builder, require a measured budget for expanded input staging, raw image and verified payload copies, plus a 4 GiB reserve.",
+    "Assemble and verify both signed payloads, then retain their deployment record without producing unused compressed image archives. Production owner assembly keeps its archives."
+  ],
+  "validation": "Boundary regressions and workflow invariants are required; actual canary qualification will run against the resulting immutable qualified platform before activation."
+}

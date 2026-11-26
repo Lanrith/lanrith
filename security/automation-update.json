@@ -1,0 +1,135 @@
+{
+  "base_sha": "ec7481231b31f7f0f98cfcad5d267b4e6fbf17f4",
+  "reason": "Prepare workflow pins and their complete provenance/assessment companions together.",
+  "repository": "Lanrith/lanrith",
+  "requires_human": true,
+  "schema": 1,
+  "updates": [
+    {
+      "changes": [
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        },
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        },
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        },
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        },
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        },
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        },
+        {
+          "from": "64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+          "repository": "actions/create-github-app-token",
+          "review_diff": "https://github.com/actions/create-github-app-token/compare/64ab729a6294000f5aa4a4bc0b73d1f32bc45510...f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "to": "f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc",
+          "version": "v3.4.0"
+        }
+      ],
+      "kind": "action-pin-update",
+      "source_head": "d5f2b5bc15998c906455a62c04fe897a5968f88a",
+      "source_pr": "https://github.com/Lanrith/lanrith/pull/102"
+    },
+    {
+      "changes": [
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        },
+        {
+          "from": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+          "repository": "actions/setup-go",
+          "review_diff": "https://github.com/actions/setup-go/compare/b7ad1dad31e06c5925ef5d2fc7ad053ef454303e...d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "to": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
+          "version": "v7.1.0"
+        }
+      ],
+      "kind": "action-pin-update",
+      "source_head": "aad89338f79b792e65bf6c41357ec4c2540aa7e6",
+      "source_pr": "https://github.com/Lanrith/lanrith/pull/101"
+    }
+  ]
+}
