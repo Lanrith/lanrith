@@ -21,14 +21,20 @@ def assess(repo, releases, clock):
     findings = []
     for workflow in ('security-audit.yml', 'update-inputs.yml', 'release.yml',
                      'maintenance-reconcile.yml', 'prepare-workflow-updates.yml', 'cleanup-artifacts.yml'):
-        rows = api('repos/'+repo+'/actions/workflows/'+workflow+'/runs?branch=main&per_page=5')['workflow_runs']
-        finished = [r for r in rows if r['status'] == 'completed']
+        rows = api('repos/'+repo+'/actions/workflows/'+workflow+'/runs?branch=main&per_page=100')['workflow_runs']
+        # Healthy retained scans intentionally skip the failure-triggered proposer.
+        # They neither fail maintenance nor replace evidence of an actual scan.
+        finished = [r for r in rows if r['status'] == 'completed' and not (
+            workflow == 'update-inputs.yml' and r.get('event') == 'workflow_run' and r['conclusion'] == 'skipped')]
         latest = max(finished, key=lambda r: r['id']) if finished else None
         if latest and latest['conclusion'] != 'success':
             findings.append(workflow+': '+str(latest['conclusion'])+' — '+latest['html_url'])
         if workflow == 'security-audit.yml' and stable:
             if not latest or not datetime.timedelta(0) <= clock-timestamp(latest['updated_at']) <= datetime.timedelta(hours=18):
                 findings.append('No completed security assessment within 18 hours. Production admission expires at 24 hours.')
+        if workflow == 'update-inputs.yml' and (not latest or not
+                datetime.timedelta(0) <= clock-timestamp(latest['updated_at']) <= datetime.timedelta(hours=8)):
+            findings.append('No completed dependency evaluation within 8 hours; the six-hour proposal schedule needs attention.')
     return findings, max(stable, key=lambda r: tuple(map(int, r['tag_name'][1:].split('.')))) if stable else None
 
 

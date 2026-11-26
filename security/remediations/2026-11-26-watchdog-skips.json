@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "kind": "manual-maintenance-watchdog-repair",
+  "requires_human": true,
+  "evidence": "https://github.com/Lanrith/lanrith/issues/96",
+  "reason": "A healthy retained scan intentionally skips its failure-only proposer trigger, but the watchdog reports the skipped run as a maintenance failure.",
+  "change": "Ignore only skipped workflow_run entries for update-inputs.yml when finding the latest actual evaluation. Require a completed dependency evaluation within8 hours. Failed actual evaluations and skipped scheduled/manual/dispatch evaluations remain blocking.",
+  "validation": "Five focused regressions cover healthy conditional skips, underlying real failures, scheduled/manual skips, stale/missing/future evaluation and skips in other workflows.64 maintenance/automation tests pass."
+}
