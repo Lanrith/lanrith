@@ -1,24 +1,20 @@
 {
-  "base_sha": "83209b0b76bf7c763205d6bd4348fc63f9905b5e",
-  "candidate_id": "0b1335293d1259f56188a4ea604af0ec838f3e261541166a49dad4468db5ea13",
+  "base_sha": "4b4a2f5db11d86a05f8eb783cd67a98573823235",
+  "candidate_id": "9ee3c357b2f2224c07d32f67a5388769199006db1de4c1c01b0f9158c38c7708",
   "changes": {
     "build-inputs.json": {
-      "after_sha256": "66eae16c40dcd26bdf40d0b239a715aa5470b9fd7b8afdd651395e9b0524897b",
-      "before_sha256": "b87c472be47bd0427360b9e2b126fad7ac64bf9a61ba6dc22dd001de1372eec7"
+      "after_sha256": "510759387778551ad78668ad159746616a7ef2f1aefd44eea8f6f89ff3e6c76e",
+      "before_sha256": "66eae16c40dcd26bdf40d0b239a715aa5470b9fd7b8afdd651395e9b0524897b"
     },
     "builders/build-inputs.lock": {
-      "after_sha256": "6b46d30c561df66601649170c09b0dce906207f25f5cde8dc4391995171c3881",
-      "before_sha256": "80a1345be4a44a3e420ce1dcd3e1e480f6df549d60f7c321425b82f9d17ba33d"
-    },
-    "security/policy.json": {
-      "after_sha256": "3927334c00e13279e6bfaa73ec059214982e6f611cdffc6db5bbb169a4c3daa9",
-      "before_sha256": "2cf5ac07ffd509b6725d43daf5e21484ec7b377d94fdb151c55268346548d3c3"
+      "after_sha256": "7c4a3bca989f0aeece4573571a7c627f1f2ed710912ba1032fcdcf86296e416f",
+      "before_sha256": "6b46d30c561df66601649170c09b0dce906207f25f5cde8dc4391995171c3881"
     }
   },
-  "created_at": "2026-11-25T09:23:20.759961+00:00",
+  "created_at": "2026-11-25T22:02:44.795868+00:00",
   "kind": "security-update-candidate",
   "policy_sha256": "bd7278f8871a9d9ff91442f88fd1b0b40af39457e71c62fb91699d9c1fd9afa1",
-  "producer_sha": "83209b0b76bf7c763205d6bd4348fc63f9905b5e",
+  "producer_sha": "4b4a2f5db11d86a05f8eb783cd67a98573823235",
   "reasons": [
     {
       "ecosystem": "Debian",
@@ -31,27 +27,17 @@
       "type": "debian-security-fix"
     },
     {
-      "ecosystem": "Lanrith",
-      "evidence_sha256": "9e9419b0b3bce7e0982bee2dc502c86597b5bdf64275f2146d09278a5537b831",
-      "fixed": "v0.1.10",
-      "id": "Lanrith/discovery-bridge@v0.1.10",
-      "installed": "v0.1.9",
-      "package": "discovery-bridge",
-      "source": "https://github.com/Lanrith/discovery-bridge/releases/tag/v0.1.10",
-      "type": "qualified-component-update"
-    },
-    {
-      "ecosystem": "Lanrith",
-      "evidence_sha256": "ed920050ee33d55ef768cf8e1f00a6b6ce594923a13638f859cad58ed62fd726",
-      "fixed": "v0.1.15",
-      "id": "Lanrith/router-policy-agent@v0.1.15",
-      "installed": "v0.1.14",
-      "package": "router-policy-agent",
-      "source": "https://github.com/Lanrith/router-policy-agent/releases/tag/v0.1.15",
-      "type": "qualified-component-update"
+      "ecosystem": "Debian",
+      "evidence_sha256": "45d8a56c0b41068adc9614e774ce0946542b3c089755c57f3a34965a719642ce",
+      "fixed": "1:4.17.4-2+deb13u1",
+      "id": "CVE-2026-135901",
+      "installed": "1:4.17.4-2",
+      "package": "shadow",
+      "source": "https://security-tracker.debian.org/tracker/data/json",
+      "type": "debian-security-fix"
     }
   ],
-  "remediation_id": "security-7a3d4823bffeec628d1d",
+  "remediation_id": "security-e38b1f362910b4df542c",
   "repository": "Lanrith/lanrith",
   "requires_human": false,
   "schema": 1
