@@ -44,6 +44,19 @@ def remove_obsolete_helpers(root):
             path.unlink()
 
 
+def remove_vpp_hugepage_default(root):
+    # Kernel boot arguments own the allocation, including on older package trees.
+    path = root/'etc/sysctl.d/80-vpp.conf'
+    if path.is_symlink():
+        raise ValueError('Unexpected VPP sysctl symlink.')
+    if path.exists():
+        before = path.read_text()
+        after = ''.join(line for line in before.splitlines(keepends=True)
+                        if not re.match(r'^\s*-?vm[./]nr_hugepages\s*=', line))
+        if after != before:
+            path.write_text(after)
+
+
 def policy_compiler_dependencies(root):
     """Allow Debian's versioned interpreter link within the image's bin directory."""
     for relative in ('usr/bin/router-policy-profile', 'usr/sbin/nft', 'usr/bin/python3'):
@@ -152,6 +165,7 @@ root.chmod(0o755)
 # Assembly embeds the build-owned boundary function in this script. mkosi
 # remounts a finalize script as /work/finalize, without its siblings.
 remove_obsolete_helpers(root)
+remove_vpp_hugepage_default(root)
 finalize_policy(root)
 check(root)
 administration = json.loads((root/'usr/share/lanrith/administration.json').read_text())

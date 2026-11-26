@@ -229,8 +229,9 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
         lines.append(f'  oifname "{wan}" ip6 hoplimit 255 icmpv6 type nd-router-solicit icmpv6 code 0 accept')
     lines += routing.control_rules(value, 'output')
     lines += discovery.firewall_rules(value, 'output')
-    from .directory_config import output_rules as directory_output
-    lines += directory_output(value)
+    from . import directory_config
+    directory_output, directory_source = directory_config.firewall_rules(value)
+    lines += directory_output
     for network in networks.values():
         if network.get('ra'):
             lines.append(f'  oifname "{network["name"]}" ip6 saddr fe80::/10 ip6 hoplimit 255 '
@@ -238,7 +239,7 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
         if 'dhcp4' in network:
             lines.append(f'  oifname "{network["name"]}" ip saddr {values(address.ip for address in addresses(network, 4))} '
                          f'ip daddr {values(["255.255.255.255", *prefixes(network, 4)])} udp sport 67 udp dport 68 accept')
-    lines += [' }', *extension_network.output_chain(extension_rules), '}', 'table ip lanrith_nat {',
+    lines += [' }', *extension_network.output_chain(extension_rules), *directory_source, '}', 'table ip lanrith_nat {',
               ' chain postrouting { type nat hook postrouting priority srcnat; policy accept;']
     if plane['endpoints'] and uplink.get('ipv4', 'dhcp') != 'disabled':
         sources = [a for addresses in plane['endpoints'].values() for a in addresses if ':' not in a]

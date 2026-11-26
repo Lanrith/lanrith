@@ -45,7 +45,7 @@ def check_ownership_manifest(manifest):
 def ownership_memory(ownership, *, sysfs=Path('/sys')):
     pages = ownership['hugepages']
     available = sysfs/f'kernel/mm/hugepages/hugepages-{pages["page_size_mib"]*1024}kB/nr_hugepages'
-    require(int(available.read_text()) >= pages['pages'], 'Declared hugepage allocation is unavailable.')
+    require(int(available.read_text()) == pages['pages'], 'Declared hugepage allocation differs.')
 
 
 def ownership_status(manifest, *, sysfs=Path('/sys')):
@@ -143,8 +143,8 @@ def network_status(value, *, sysfs=Path('/sys'), run=subprocess.run):
             for bdf in acceleration['pci']:
                 vfio_device(bdf, sysfs=sysfs)
         pages = sysfs/'kernel/mm/hugepages/hugepages-2048kB/nr_hugepages'
-        require(int(pages.read_text()) >= acceleration['hugepages_mib']//2,
-                'Declared hugepage allocation is unavailable.')
+        require(int(pages.read_text()) == acceleration['hugepages_mib']//2,
+                'Declared hugepage allocation differs.')
 
 
 def main(arguments=None):
@@ -177,3 +177,7 @@ def main(arguments=None):
         print('Declared router hardware verification failed.', file=sys.stderr)
         return 1
     return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

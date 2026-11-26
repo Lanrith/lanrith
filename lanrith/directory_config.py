@@ -74,15 +74,30 @@ def paths(value):
     return result
 
 
-def output_rules(value):
+def firewall_rules(value):
+    """Admit host clients first and optionally select their on-wire service address."""
+    from . import intent
     from .firewall import values
     identities = ('{ "router-policy-reader", "lanrith-directory-health" }'
                   if value.get('observability', {}).get('metrics', {}).get('enabled', False)
                   else '"router-policy-reader"')
-    return [f'  meta skuid {identities} oifname "{p["interface"]}" '
-            f'{"ip6" if ":" in p["address"] else "ip"} saddr {values(p["sources"])} '
-            f'{"ip6" if ":" in p["address"] else "ip"} daddr {p["address"]} tcp dport {p["port"]} accept'
-            for p in paths(value)]
+    output, translations = [], []
+    for path in paths(value):
+        family = ip.ip_address(path['address']).version
+        spelling = 'ip6' if family == 6 else 'ip'
+        match = (f'meta skuid {identities} oifname "{path["interface"]}" '
+                 f'{spelling} saddr {values(path["sources"])} {spelling} daddr {path["address"]} '
+                 f'tcp dport {path["port"]}')
+        output.append(f'  {match} accept')
+        service = selected(value).get('source_service')
+        if service:
+            # Managed IPv6 identities use their stable private address for internal dependencies.
+            source = next(a for a in intent.service_addresses(value, service) if ip.ip_address(a).version == family)
+            translations.append(f'  meta iif 0 {match} snat {spelling} to {source}')
+    if translations:
+        translations = [' chain directory_source { type nat hook postrouting priority srcnat; policy accept;',
+                        *translations, ' }']
+    return output, translations
 
 
 def hosts(value):
