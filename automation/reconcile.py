@@ -3,14 +3,14 @@ import datetime
 import json
 import os
 
-from .common import api, canonical, contents, document, now, pages, require, timestamp
+from .common import api, canonical, contents, document, now, pages, require, sha, timestamp
 from .review import ValidationPending, manual_validation_policy, validation_runs
 from .common import MaintenanceError
 
 TITLE = 'Security automation reconciliation'
 
 
-def decision(pr, policy, attempts, *, clock=None):
+def decision(pr, policy, attempts, *, main, clock=None):
     """Return only safe recovery actions; a failed build is never blindly rerun."""
     clock = clock or datetime.datetime.now(datetime.timezone.utc)
     repo, number = policy['repository'], pr['number']
@@ -24,11 +24,14 @@ def decision(pr, policy, attempts, *, clock=None):
     bot = proposer or dependabot
     if not bot:
         return [], []
-    subject = str(number)+':'+pr['head']['sha']+':'+pr['base']['sha']
+    # GitHub can retain the PR's historical base SHA after main advances.
+    # Recovery and its retry budget must bind to the actual protected branch.
+    main = sha(main)
+    subject = str(number)+':'+pr['head']['sha']+':'+main
     used = attempts.get(subject, [])
     actions, blockers = [], []
-    comparison = api('repos/'+repo+'/compare/'+pr['base']['sha']+'...'+pr['head']['sha'])
-    if comparison['merge_base_commit']['sha'] != pr['base']['sha']:
+    comparison = api('repos/'+repo+'/compare/'+main+'...'+pr['head']['sha'])
+    if comparison['merge_base_commit']['sha'] != main:
         if not (automatic or control or dependabot):
             return [], ['#'+str(number)+': manual repair branch needs a reviewed rebase; it was not rewritten.']
         kind = 'proposal' if automatic else 'controls' if control else 'refresh'
@@ -37,6 +40,8 @@ def decision(pr, policy, attempts, *, clock=None):
         else:
             blockers.append('#'+str(number)+': branch refresh did not complete; inspect its update conflict.')
         return actions, blockers
+    if pr['base']['sha'] != main:
+        return [], ['#'+str(number)+': PR base metadata is stale; current-main validation is not established.']
     try:
         validation_runs(repo, pr, manual_validation_policy(repo, number, policy), manual=True)
     except ValidationPending as waiting:
@@ -81,7 +86,7 @@ def decision(pr, policy, attempts, *, clock=None):
 
 
 def reconcile(repo, output, *, apply=False):
-    main = api('repos/'+repo+'/commits/main')['sha']
+    main = sha(api('repos/'+repo+'/commits/main')['sha'])
     policy = document(contents(repo, 'security/update-policy.json', main))
     issues = pages('repos/'+repo+'/issues?state=all&creator=github-actions%5Bbot%5D&per_page=100')
     matches = [i for i in issues if i['title'] == TITLE and 'pull_request' not in i]
@@ -93,11 +98,13 @@ def reconcile(repo, output, *, apply=False):
         attempts = document(body.split('<!-- recovery-state\n', 1)[1].split('\n-->', 1)[0])
     pulls = pages('repos/'+repo+'/pulls?state=open&per_page=100')
     require(len(pulls) <= 100, 'Too many open PRs for bounded maintenance reconciliation.')
-    subjects = {str(p['number'])+':'+p['head']['sha']+':'+p['base']['sha'] for p in pulls}
+    subjects = {str(p['number'])+':'+p['head']['sha']+':'+main for p in pulls}
     attempts = {k: v for k, v in attempts.items() if k in subjects}
     actions, blockers = [], []
     for pr in pulls:
-        proposed, failed = decision(pr, policy, attempts)
+        proposed, failed = decision(pr, policy, attempts, main=main)
+        for action in proposed:
+            action['pr_base_sha'] = pr['base']['sha']
         actions.extend(proposed)
         blockers.extend(failed)
     require(len(actions) <= 30, 'Recovery action budget exceeded.')
@@ -122,9 +129,12 @@ def reconcile(repo, output, *, apply=False):
         from .notifications import assign_attention
         assign_attention(repo, issue['number'])
     for action in actions:
+        require(api('repos/'+repo+'/commits/main')['sha'] == main,
+                'Protected main advanced before recovery dispatch.')
         current = api('repos/'+repo+'/pulls/'+str(action['pr']))
         require(current['state'] == 'open' and current['head']['sha'] == action['head'] and
-                current['base']['sha'] == action['subject'].rsplit(':', 1)[1], 'PR changed before recovery dispatch.')
+                current['base']['ref'] == 'main' and current['base']['sha'] == action['pr_base_sha'],
+                'PR changed before recovery dispatch.')
         if action['kind'] in ('refresh', 'merge'):
             # This API operation uses the updater App, so subsequent PR CI runs.
             previous = os.environ.get('GH_TOKEN')

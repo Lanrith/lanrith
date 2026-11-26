@@ -142,6 +142,72 @@ class BuildCacheCleanupTests(unittest.TestCase):
         self.github.runs = {100+n: self.github.run(n) for n in range(1, 41)}
         self.assertEqual(len(self.plan()['caches']), 20)
 
+    def test_count_race_restarts_the_whole_read_and_keeps_active_consumers(self):
+        changed = [{'total_count': 2, 'workflow_runs': [{'id': 900}]}]
+        stable = [{'total_count': 1, 'workflow_runs': [{'id': 901, 'status': 'in_progress'}]}]
+        with patch.object(cache_cleanup.time, 'sleep') as sleep, \
+                patch.object(self, 'github', side_effect=[changed, stable]) as get:
+            rows = cache_cleanup.rows(get, 'repos/'+REPO+'/actions/runs?status=in_progress&per_page=100', 'workflow_runs')
+        self.assertEqual(rows, stable[0]['workflow_runs'])
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(sleep.call_args.args, (0.5,))
+        self.assertTrue(all(c.kwargs == {'paginate': True} for c in get.call_args_list))
+
+    def test_unstable_inventory_exhausts_three_reads_without_deleting(self):
+        original = self.github
+        count = 0
+        def unstable(endpoint, **kwargs):
+            nonlocal count
+            if '/actions/runs?status=' in endpoint:
+                count += 1
+                return [{'total_count': 1, 'workflow_runs': []}]
+            return original(endpoint, **kwargs)
+        with patch.object(cache_cleanup.time, 'sleep'):
+            result = cache_cleanup.plan(REPO, get=unstable, clock=CLOCK)
+        self.assertEqual(count, 3)
+        self.assertEqual(result['caches'], [])
+        self.assertIn('three bounded reads', result['inventory_deferred'])
+        self.assertEqual(len(result['retained']), len(original.caches))
+        self.assertEqual(original.deleted, [])
+
+    def test_unstable_cache_consumers_do_not_block_independent_completed_artifact_cleanup(self):
+        def get(endpoint, **kwargs):
+            if '/actions/artifacts?' in endpoint:
+                return [{'artifacts': [{'id': 1, 'name': 'untrusted-build-cache-1', 'size_in_bytes': 1000,
+                                       'expired': False, 'workflow_run': {'id': 101}}]}]
+            if '/actions/runs?status=' in endpoint:
+                return [{'total_count': 1, 'workflow_runs': []}]
+            return self.github(endpoint, **kwargs)
+        with patch.object(cache_cleanup.time, 'sleep'):
+            record = cleanup.plan(REPO, get=get, clock=CLOCK)
+        self.assertEqual([a['id'] for a in record['artifacts']], [1])
+        self.assertEqual(record['build_caches']['caches'], [])
+        self.assertIn('inventory_deferred', record['build_caches'])
+
+    def test_inventory_becoming_unstable_during_execution_defers_remaining_cache_deletes(self):
+        record = self.plan()
+        original = cache_cleanup.active
+        observations = 0
+        def active(repo, get):
+            nonlocal observations
+            observations += 1
+            if observations > 2:
+                raise cache_cleanup.InventoryChanged('changing')
+            return original(repo, get)
+        with patch.object(cache_cleanup, 'active', side_effect=active):
+            result = self.execute(record)
+        self.assertEqual(result['deleted'], [1])
+        self.assertEqual([c['id'] for c in result['deferred']], [2, 3, 4, 5])
+        self.assertTrue(all(c['reason'] == 'active-workflow-inventory-unstable' for c in result['deferred']))
+
+    def test_malformed_inventory_is_not_retried(self):
+        with patch.object(cache_cleanup.time, 'sleep') as sleep, \
+                patch.object(self, 'github', return_value=[{'total_count': 1, 'workflow_runs': [{'id': '900'}]}]) as get:
+            with self.assertRaisesRegex(MaintenanceError, 'identities are malformed'):
+                cache_cleanup.rows(get, 'repos/'+REPO+'/actions/runs?status=queued', 'workflow_runs')
+        self.assertEqual(get.call_count, 1)
+        sleep.assert_not_called()
+
     def test_exact_revalidated_plan_deletes_only_obsolete_caches_and_records_bytes(self):
         result = self.execute(self.plan())
         self.assertEqual(self.github.deleted, [1, 2, 3, 4, 5])
