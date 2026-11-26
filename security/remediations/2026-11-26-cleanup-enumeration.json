@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "manual-cleanup-inventory-repair",
+  "requires_human": true,
+  "failure_run": "https://github.com/Lanrith/lanrith/actions/runs/45782433068",
+  "reason": "A workflow-status count/list race aborted the whole artifact cleanup plan while cache pruning checked for active consumers.",
+  "changes": [
+    "Read the complete bounded inventory up to3 times when counts or duplicate identities disagree; malformed data still fails immediately.",
+    "If active-consumer enumeration remains unstable, retain every cache and record explicit deferral while allowing independently validated completed artifact handoffs to proceed.",
+    "Recheck active consumers before each cache deletion and defer remaining deletions on an unstable inventory. Do not retry mutations or weaken source/retention checks."
+  ],
+  "validation": "86 maintenance/recovery/cache/watchdog tests pass; live read-only cleanup planning passed while preserving the active qualification workflow."
+}
