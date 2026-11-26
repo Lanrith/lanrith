@@ -10,11 +10,36 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lanrith import config, release, trust
+
+
+def require_assembly_space(owner, bundle, work):
+    """Budget authenticated expanded inputs and verified outputs after the pull."""
+    expanded = 0
+    entries = 0
+    for name in ('lanrith-base.tar.gz', 'lanrith-initrd-base.tar.gz'):
+        with tarfile.open(bundle/name, 'r|gz') as archive:
+            for member in archive:
+                entries += 1
+                release.require(member.size >= 0 and entries <= 200000, 'Canary filesystem inventory exceeds its bound.')
+                expanded += member.size
+                release.require(expanded <= 16*1024**3, 'Canary expanded filesystems exceed their disk budget.')
+    storage = config.load(owner/'config.yaml')['hardware']['storage']
+    # mkosi staging trees, raw disk plus its two verified split-payload copies,
+    # and 4 GiB for metadata, initrd scratch and the runner. Installed /var and
+    # the spare slot are provisioned on hardware, not in the factory image.
+    payload = (storage['root_mib'] + max(64, storage['root_mib']//16) + storage['esp_mib'])*1024**2
+    required = 3*expanded + 3*payload + 4*1024**3
+    available = shutil.disk_usage(work).free
+    print(f'Consumer assembly disk: {available/1024**3:.2f} GiB free; {required/1024**3:.2f} GiB required.', flush=True)
+    release.require(available >= required, 'Insufficient disk for authenticated consumer inputs and output bounds.')
+    return {'expanded_input_bytes': expanded, 'payload_bound_bytes': payload,
+            'required_bytes': required, 'available_bytes': available}
 
 
 def disposable_serial_hash():
@@ -53,6 +78,7 @@ def qualification(owner, output):
         request_path.write_bytes(release.canonical(request))
         selection = trust.lock(copied/'platform.lock')
         subprocess.run(['docker', 'pull', selection['builder']+'@sha256:'+selection['builder_digest']], check=True)
+        require_assembly_space(copied, bundle, work)
         (bundle/'signing-admission.json').write_bytes(release.canonical({
             'request': request, 'admitted_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'assessment_sha256': release.file_record(bundle/'security-assessment.json')['sha256']
@@ -62,7 +88,9 @@ def qualification(owner, output):
         if config.load(copied/'config.yaml')['administration']['serial']['enabled']:
             os.environ['LANRITH_SERIAL_PASSPHRASE_HASH'] = disposable_serial_hash()
         try:
-            consumer.assemble(copied, bundle, request_path, work/'image')
+            # Both signed payloads are assembled and verified. The canary only
+            # needs their deployment record, so avoid duplicating large archives.
+            consumer.assemble(copied, bundle, request_path, work/'image', archive_images=False)
         finally:
             for name in ('LANRITH_BOOT_KEY', 'LANRITH_BOOT_CERTIFICATE', 'LANRITH_SERIAL_PASSPHRASE_HASH'):
                 os.environ.pop(name, None)
