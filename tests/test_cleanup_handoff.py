@@ -13,6 +13,35 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CacheHandoffCleanupTests(unittest.TestCase):
+    def test_maintenance_completion_recovers_handoffs_after_missed_cleanup_schedule(self):
+        workflow = yaml.safe_load((ROOT/'.github/workflows/cleanup-artifacts.yml').read_text())
+        trigger = workflow[True]['workflow_run']
+        completed = datetime.datetime(2026, 11, 27, 1, 50, 15, tzinfo=datetime.timezone.utc)
+        artifact = {'id': 1, 'name': 'untrusted-build-cache-1', 'size_in_bytes': 2*1024**3,
+                    'expired': False, 'workflow_run': {'id': 45914589328}}
+
+        def get(endpoint, **kwargs):
+            if '/actions/caches?' in endpoint:
+                return [{'total_count': 0, 'actions_caches': []}]
+            if kwargs.get('paginate'):
+                return [{'artifacts': [artifact]}]
+            return {'name': 'Release', 'status': 'completed', 'updated_at': completed.isoformat()}
+
+        # The 02:50 cleanup correctly retained the 01:50 release handoff.
+        early = cleanup.plan('Lanrith/lanrith', get=get, clock=completed+datetime.timedelta(hours=1))
+        self.assertEqual(early['artifacts'], [])
+        # Any surviving maintenance schedule can wake cleanup after the grace
+        # period, even when no more builds or hourly cleanup runs arrive.
+        for source in ('security-audit.yml', 'update-inputs.yml', 'maintenance-reconcile.yml'):
+            with self.subTest(source=source):
+                maintenance = yaml.safe_load((ROOT/'.github/workflows'/source).read_text())
+                self.assertTrue(maintenance[True]['schedule'])
+                self.assertIn(maintenance['name'], trigger['workflows'])
+                self.assertEqual(trigger['types'], ['completed'])
+                recovered = cleanup.plan('Lanrith/lanrith', get=get, clock=completed+datetime.timedelta(hours=7))
+                self.assertEqual([a['id'] for a in recovered['artifacts']], [artifact['id']])
+                self.assertEqual(recovered['bytes'], artifact['size_in_bytes'])
+
     def test_workflow_cache_handoff_keeps_active_and_recent_consumers(self):
         workflow = yaml.safe_load((ROOT/'.github/workflows/restore-cache.yml').read_text())
         upload = next(step for step in workflow['jobs']['restore']['steps'] if step.get('id') == 'upload')

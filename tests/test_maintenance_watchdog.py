@@ -23,7 +23,34 @@ class MaintenanceWatchdogTests(unittest.TestCase):
         def api(endpoint):
             return {'workflow_runs': proposer if '/update-inputs.yml/' in endpoint else (other or [self.row()])}
         with patch.object(watchdog, 'api', side_effect=api):
-            return watchdog.assess('Lanrith/lanrith', [], self.clock)[0]
+            return watchdog.assess('Lanrith/lanrith', [], clock=lambda: self.clock)[0]
+
+    def test_completion_during_each_api_read_is_not_future_dated(self):
+        observation = self.clock
+        stable = [{'draft': False, 'prerelease': False, 'tag_name': 'v0.1.36'}]
+
+        def api(endpoint):
+            nonlocal observation
+            # Reproduce the overnight race: completion is seven seconds after
+            # the request starts and visible by the time its response arrives.
+            completed = observation+datetime.timedelta(seconds=7)
+            observation += datetime.timedelta(seconds=12)
+            return {'workflow_runs': [{**self.row(), 'updated_at': completed.isoformat()}]}
+
+        with patch.object(watchdog, 'api', side_effect=api):
+            findings, latest = watchdog.assess('Lanrith/lanrith', stable, clock=lambda: observation)
+        self.assertEqual(findings, [])
+        self.assertEqual(latest, stable[0])
+
+    def test_security_freshness_still_rejects_missing_stale_and_future_runs(self):
+        stable = [{'draft': False, 'prerelease': False, 'tag_name': 'v0.1.36'}]
+        for runs in ([], [self.row(age=19)], [self.row(age=-1)]):
+            with self.subTest(runs=runs):
+                def api(endpoint):
+                    return {'workflow_runs': runs if '/security-audit.yml/' in endpoint else [self.row()]}
+                with patch.object(watchdog, 'api', side_effect=api):
+                    findings, _ = watchdog.assess('Lanrith/lanrith', stable, clock=lambda: self.clock)
+                self.assertTrue(any('within 18 hours' in item for item in findings))
 
     def test_healthy_scan_skip_preserves_recent_actual_success(self):
         self.assertEqual(self.findings([self.row(2, 'skipped', 'workflow_run'), self.row()]), [])

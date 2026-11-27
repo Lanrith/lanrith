@@ -144,7 +144,11 @@ for path in (root/'.github/workflows').glob('*.yml'):
         assert "LANRITH_SECURITY_APPROVALS_ENABLED == 'true'" in approval['if'], path.name
         assert approval['permissions'] == {'contents': 'read'}, path.name
     if path.name == 'cleanup-artifacts.yml':
-        assert value[True]['workflow_run'] == {'workflows': ['Package qualification', 'Release', 'Check'], 'types': ['completed']}, 'Cleanup recovery must follow completed build workflows without triggering itself'
+        assert value[True]['workflow_run'] == {'workflows': ['Package qualification', 'Release', 'Check',
+            'Retained release security', 'Propose dependency updates', 'Reconcile security automation'],
+            'types': ['completed']}, 'Cleanup must recover on independent maintenance completions without triggering itself'
+        assert value['concurrency'] == {'group': 'completed-artifact-cleanup', 'cancel-in-progress': False}, \
+            'Cleanup wakeups must serialize without cancelling an audited deletion'
         assert value['jobs']['plan']['if'] == "github.ref == 'refs/heads/main'", 'Cleanup must use trusted main workflow source'
         assert value['jobs']['archive']['if'] == "needs.plan.outputs.has-artifacts == 'true'", 'Empty cleanup must not generate audit releases'
         upload = next(s for s in value['jobs']['plan']['steps'] if s.get('id') == 'upload')

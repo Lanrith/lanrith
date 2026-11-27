@@ -15,13 +15,17 @@ TITLE = 'Security maintenance requires attention'
 OLD_TITLE = 'Security assessment has not succeeded within 48 hours'
 
 
-def assess(repo, releases, clock):
+def assess(repo, releases, *, clock=None):
+    clock = clock or (lambda: datetime.datetime.now(datetime.timezone.utc))
     stable = [r for r in releases if not r['draft'] and not r['prerelease'] and
               re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', r['tag_name'])]
     findings = []
     for workflow in ('security-audit.yml', 'update-inputs.yml', 'release.yml',
                      'maintenance-reconcile.yml', 'prepare-workflow-updates.yml', 'cleanup-artifacts.yml'):
         rows = api('repos/'+repo+'/actions/workflows/'+workflow+'/runs?branch=main&per_page=100')['workflow_runs']
+        # A run can finish while the API request is in flight. Compare its
+        # completion with observation time, never with the start of this audit.
+        observed_at = clock()
         # Healthy retained scans intentionally skip the failure-triggered proposer.
         # They neither fail maintenance nor replace evidence of an actual scan.
         finished = [r for r in rows if r['status'] == 'completed' and not (
@@ -30,10 +34,10 @@ def assess(repo, releases, clock):
         if latest and latest['conclusion'] != 'success':
             findings.append(workflow+': '+str(latest['conclusion'])+' — '+latest['html_url'])
         if workflow == 'security-audit.yml' and stable:
-            if not latest or not datetime.timedelta(0) <= clock-timestamp(latest['updated_at']) <= datetime.timedelta(hours=18):
+            if not latest or not datetime.timedelta(0) <= observed_at-timestamp(latest['updated_at']) <= datetime.timedelta(hours=18):
                 findings.append('No completed security assessment within 18 hours. Production admission expires at 24 hours.')
         if workflow == 'update-inputs.yml' and (not latest or not
-                datetime.timedelta(0) <= clock-timestamp(latest['updated_at']) <= datetime.timedelta(hours=8)):
+                datetime.timedelta(0) <= observed_at-timestamp(latest['updated_at']) <= datetime.timedelta(hours=8)):
             findings.append('No completed dependency evaluation within 8 hours; the six-hour proposal schedule needs attention.')
     return findings, max(stable, key=lambda r: tuple(map(int, r['tag_name'][1:].split('.')))) if stable else None
 
@@ -68,9 +72,8 @@ def verified_publication(repo, releases, stable):
 
 def main():
     repo = os.environ['GITHUB_REPOSITORY']
-    clock = datetime.datetime.now(datetime.timezone.utc)
     releases = pages('repos/'+repo+'/releases?per_page=100')
-    findings, stable = assess(repo, releases, clock)
+    findings, stable = assess(repo, releases)
     issues = [i for i in pages('repos/'+repo+'/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100')
               if i['title'] in (TITLE, OLD_TITLE) and 'pull_request' not in i]
     if findings:
