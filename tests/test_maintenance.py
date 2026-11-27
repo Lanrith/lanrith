@@ -387,7 +387,7 @@ class WatchdogTests(unittest.TestCase):
                 {'id': 2, 'status': 'completed', 'conclusion': conclusion, 'updated_at': clock.isoformat(), 'html_url': 'https://example.test/run/2'},
                 {'id': 1, 'status': 'completed', 'conclusion': 'success', 'updated_at': clock.isoformat(), 'html_url': 'https://example.test/run/1'}]}
         with patch.object(watchdog, 'api', side_effect=get):
-            findings, _ = watchdog.assess('Lanrith/lanrith', [], clock)
+            findings, _ = watchdog.assess('Lanrith/lanrith', [], clock=lambda: clock)
         self.assertEqual(len(findings), 1)
         self.assertIn('security-audit.yml: failure', findings[0])
 

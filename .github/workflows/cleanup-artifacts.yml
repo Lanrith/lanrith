@@ -1,7 +1,15 @@
 name: Clean completed Actions handoffs
 on:
   workflow_run:
-    workflows: ['Package qualification', 'Release', 'Check']
+    # Independent maintenance completions recover missed cron runs after the
+    # two-hour handoff grace period. Cleanup and its archives cannot trigger it.
+    workflows:
+      - Package qualification
+      - Release
+      - Check
+      - Retained release security
+      - Propose dependency updates
+      - Reconcile security automation
     types: [completed]
   schedule:
     - cron: '11 * * * *'
