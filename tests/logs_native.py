@@ -44,6 +44,7 @@ SECRET = b'lanrith-disposable-secret-value'
 UNSELECTED = b'LANRITH_SYNTHETIC_UNSELECTED_FIELD'
 ABSENT_BODY = b'journal message absent'
 REJECTED = 'LANRITH_SYNTHETIC_PERMANENTLY_REJECTED'
+LOCAL_RECOVERY = 'LANRITH_LOCAL_RECOVERY_MARKER'
 RUN = ('import json,sys; from pathlib import Path; from lanrith.logs_runtime import supervise; '
        'supervise(json.loads(sys.argv[1]), startup_seconds=float(sys.argv[2]), interval=.2, observation_path=Path(sys.argv[3]), local=True)')
 
@@ -130,11 +131,7 @@ def embedded(data, field):
         offset += size
 
 
-def check_received_projection(data, stamp, seen):
-    expected = ((b'fixture.service', MARKER+b' password=[REDACTED]'), (b'fixture-missing.service', ABSENT_BODY),
-                (b'fixture-empty.service', ABSENT_BODY))
-    if MARKER not in data and ABSENT_BODY not in data:
-        return
+def check_received_projection(data, stamp, seen, expected):
     for resource in embedded(data, 1):
         labels, = embedded(resource, 1)
         for scope in embedded(resource, 2):
@@ -195,6 +192,40 @@ def local_records():
                 for scope in resource.get('scopeLogs', []):
                     records.extend(scope.get('logRecords', []))
     return records
+
+
+def wait_for_drain(received):
+    smallest = None
+    last_progress = time.monotonic()
+
+    def drained():
+        nonlocal smallest, last_progress
+        size = logs_runtime.health()['queue_size_bytes']
+        if smallest is None or size < smallest:
+            smallest = size
+            last_progress = time.monotonic()
+        assert time.monotonic()-last_progress < 90, 'Persistent queue drain stalled.'
+        return received['marker'] and size == 0
+
+    until(drained, 300)
+
+
+def exercise_file_failure(root):
+    # The file exporter can write to an open file until its next rotation.
+    # Stop feeding it once the fault is observed so recovery has no bulk backlog.
+    initial = logs_runtime.health(local=True)
+
+    def batch_processed():
+        current = logs_runtime.health(local=True)
+        if (current['local_failed_records'] > initial['local_failed_records'] or
+                current['local_sent_records'] >= initial['local_sent_records']+submitted):
+            return current
+
+    for submitted in range(100, 5001, 100):
+        append_journal(root, 100, 'LANRITH_LOCAL_FAILURE_REMOTE_MARKER')
+        if until(batch_processed, 30)['local_failed_records'] > initial['local_failed_records']:
+            return
+    raise AssertionError('File exporter never rejected a record during the filesystem fault.')
 
 
 def unauthenticated_delivery(binary, *, message='LANRITH_NO_AUTH_SYNTHETIC_RECORD', unit='fixture.service',
@@ -461,7 +492,12 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                 # Search every accepted payload, including batches after restart.
                 received['unselected'] = received.get('unselected', False) or UNSELECTED in data
                 received['replayed_rejection'] = received.get('replayed_rejection', False) or REJECTED.encode() in data
-                check_received_projection(data, journal_stamp, observed_bodies)
+                if MARKER in data or ABSENT_BODY in data:
+                    check_received_projection(data, journal_stamp, observed_bodies,
+                        ((b'fixture.service', MARKER+b' password=[REDACTED]'), (b'fixture-missing.service', ABSENT_BODY),
+                         (b'fixture-empty.service', ABSENT_BODY)))
+                if LOCAL_RECOVERY.encode() in data:
+                    received.setdefault('local_recovery_payload', data)
                 for heartbeat_body in heartbeats:
                     if heartbeat_body.encode() in data and b'lanrith-telemetry-heartbeat.service' in data:
                         accepted_heartbeats.add(heartbeat_body)
@@ -550,7 +586,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                     response.begin()
                     assert response.status == 403
                     response.close()
-            until(lambda: received['marker'] and metric(metrics(), 'otelcol_exporter_queue_size') == 0, 90)
+            wait_for_drain(received)
             assert observed_bodies == {0, 1, 2} and not received['unselected']
             assert received['redacted'] and not received['secret'] and not received['self']
             assert received['authenticated'] and received['sni'] and received['path']
@@ -588,14 +624,13 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             try:
                 os.chown(logs_runtime.LOCAL, 0, 0)
                 logs_runtime.LOCAL.chmod(0o500)
-                append_journal(root, 5000, 'LANRITH_LOCAL_FAILURE_REMOTE_MARKER')
-                until(lambda: logs_runtime.observation(metrics(), local=True)['local_failed_records'] > 0, 30)
+                exercise_file_failure(root)
                 until(lambda: received['local_failure_marker'], 30)
                 assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
             finally:
                 os.chown(logs_runtime.LOCAL, account.pw_uid, 58010)
                 logs_runtime.LOCAL.chmod(0o2750)
-            stamp = append_journal(root, 1, 'LANRITH_LOCAL_RECOVERY_MARKER')
+            stamp = append_journal(root, 1, LOCAL_RECOVERY)
             def recovered():
                 for row in local_records():
                     attributes = {item['key']: item['value'].get('stringValue') for item in row.get('attributes', [])}
@@ -605,6 +640,11 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                         return True
                 return False
             until(recovered, 15)
+            recovered_bodies = set()
+            recovery_payload = until(lambda: received.get('local_recovery_payload'), 30)
+            check_received_projection(recovery_payload, stamp, recovered_bodies,
+                ((b'fixture.service', LOCAL_RECOVERY.encode()+b' password=[REDACTED]'),))
+            assert recovered_bodies == {0}, 'Collector missed the redacted recovery record at its journal timestamp.'
             local_health = until(lambda: (item if (item := logs_runtime.read_observation(
                 logs_runtime.LOCAL/'health.json', owner=account.pw_uid))['local_failed_records'] > 0 else None), 10)
             assert local_health['local_sent_records'] > 0
