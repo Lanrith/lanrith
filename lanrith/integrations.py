@@ -6,8 +6,8 @@ from pathlib import PurePosixPath
 import re
 from urllib.parse import urlsplit
 
-from . import bindings, intent
-from .release import canonical, require
+from . import bindings, directory_settings, intent
+from .release import ReleaseError, canonical, require
 
 
 def text(value, maximum=512):
@@ -256,7 +256,7 @@ def identity(value):
     directories = intent.named(identity.get('directories', {}), 16)
     for name, directory in directories.items():
         intent.fields(directory, {'enabled', 'url', 'addresses', 'base_dn', 'bind_dn', 'credential', 'ca_file',
-                                  'source_service'},
+                                  'source_service', 'search_mode', 'mapping'},
                       {'url', 'base_dn', 'bind_dn', 'credential', 'ca_file'})
         if 'source_service' in directory:
             radius = identity.get('radius', {})
@@ -272,6 +272,10 @@ def identity(value):
         integer(url.port if url.port is not None else (636 if url.scheme == 'ldaps' else 389), 1, 65535)
         from .directory_config import endpoint
         endpoint(directory)
+        try:
+            directory_settings.reader_options(directory)
+        except ValueError as error:
+            raise ReleaseError(str(error)) from error
         text(directory['base_dn'])
         text(directory['bind_dn'])
         credential(directory['credential'])

@@ -144,14 +144,22 @@ def load_contract(path=CONTRACT, *, owner=0):
         if (not isinstance(guards, list) or not guards or guards != sorted(set(guards)) or len(guards) > 128 or
                 any(not isinstance(name, str) or not IFNAME.fullmatch(name) for name in guards)):
             raise PolicyRuntimeError('TUN guard interface inventory differs.')
-    directory = exact(value['directory'], {'url', 'base_dn', 'bind_dn', 'credential_name', 'ca_file'},
-                      'Directory runtime')
+    directory = value['directory']
+    fields = {'url', 'base_dn', 'bind_dn', 'credential_name', 'ca_file'}
+    if not isinstance(directory, dict) or set(directory) - {'search_mode', 'mapping'} != fields:
+        raise PolicyRuntimeError('Directory runtime structure differs.')
     if (not all(isinstance(directory[key], str) and 0 < len(directory[key]) <= 2048
-                for key in directory) or not NAME.fullmatch(directory['credential_name']) or
+                for key in fields) or not NAME.fullmatch(directory['credential_name']) or
             not directory['url'].startswith(('ldaps://', 'ldap+starttls://')) or
             not directory['ca_file'].startswith('/usr/share/lanrith/trust/') or
             not directory['ca_file'].endswith('.pem')):
         raise PolicyRuntimeError('Directory runtime value differs.')
+    if 'search_mode' in directory or 'mapping' in directory:
+        from .directory_settings import reader_options
+        try:
+            reader_options(directory)
+        except ValueError as error:
+            raise PolicyRuntimeError(str(error)) from error
     translations = value['translation_manifests']
     if not isinstance(translations, list) or len(translations) > 3:
         raise PolicyRuntimeError('Translation runtime inventory differs.')
@@ -288,6 +296,21 @@ def credential(contract):
         raise PolicyRuntimeError('Directory credential encoding differs.') from error
 
 
+def reader_configuration(directory):
+    return {
+        'schema_version': 1, 'directory_url': directory['url'], 'base_dn': directory['base_dn'],
+        'helper_socket': '/run/router-policy-ipc/requests.sock', 'custom_ca': True,
+        **{key: directory[key] for key in ('search_mode', 'mapping') if key in directory},
+    }
+
+
+def check_reader_configuration(directory):
+    """Check custom LDAP settings with the image's reader before the image is signed."""
+    if 'mapping' in directory or 'search_mode' in directory:
+        subprocess.run(['/usr/bin/router-policy-reader', '-check-config', '-check-bind-dn', directory['bind_dn']],
+                       input=json.dumps(reader_configuration(directory)).encode(), check=True, timeout=10)
+
+
 def prepare_reader(contract, password):
     account = pwd.getpwnam('router-policy-reader')
     if account.pw_uid == 0:
@@ -305,9 +328,7 @@ def prepare_reader(contract, password):
     private_directory(READER, owner=account.pw_uid, group=account.pw_gid)
     source = Path(contract['directory']['ca_file'])
     ca = read(source, 64*1024)
-    reader = {'schema_version': 1, 'directory_url': contract['directory']['url'],
-              'base_dn': contract['directory']['base_dn'],
-              'helper_socket': '/run/router-policy-ipc/requests.sock', 'custom_ca': True}
+    reader = reader_configuration(contract['directory'])
     atomic(READER/'reader.json', reader, owner=account.pw_uid, group=account.pw_gid)
     atomic(READER/'credentials.json', {'bind_dn': contract['directory']['bind_dn'],
                                       'password': password}, owner=account.pw_uid, group=account.pw_gid)

@@ -9,10 +9,11 @@ import ssl
 import subprocess
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from lanrith import build, config, directory_config, directory_runtime as runtime, metrics, router_metrics_runtime
+from lanrith import build, config, directory_config, directory_runtime as runtime, metrics, policy_runtime, router_metrics_runtime
 from lanrith.release import ReleaseError
 from test_policy_agent import declaration
 
@@ -28,6 +29,68 @@ def fixture():
 
 
 class DirectoryTests(unittest.TestCase):
+    def test_custom_directory_options_reach_the_unprivileged_reader(self):
+        raw = fixture()
+        source = raw['identity']['directories']['directory']
+        source['search_mode'] = 'unpaged'
+        source['mapping'] = {
+            'users_base_dn': 'ou=Devices,'+source['base_dn'], 'groups_base_dn': 'ou=Roles,'+source['base_dn'],
+            'user_object_class': 'inetOrgPerson', 'group_object_class': 'groupOfNames',
+            'user_id': 'entryUUID', 'group_id': 'entryUUID', 'user_rdn': 'uid', 'group_rdn': 'cn',
+            'device_mac': 'macAddress', 'group_name': 'cn', 'device_active': 'employeeType',
+            'active_value': 'enabled', 'inactive_value': 'disabled', 'group_member': 'member',
+            'group_policy': 'description',
+        }
+        compiled = config.render(raw)
+        path = 'etc/router-policy-agent/runtime/runtime.json'
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            contract_path = root/'contract.json'
+            contract_path.write_text(compiled[path])
+            contract_path.chmod(0o600)
+            contract = policy_runtime.load_contract(contract_path, owner=os.getuid())
+            with (mock.patch.object(policy_runtime, 'READER', root),
+                  mock.patch.object(policy_runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=400, pw_gid=400)),
+                  mock.patch.object(policy_runtime, 'private_directory'),
+                  mock.patch.object(policy_runtime, 'read', return_value=b'fixture CA'),
+                  mock.patch.object(policy_runtime, 'atomic') as publish):
+                policy_runtime.prepare_reader(contract, 'fixture only')
+            outputs = {call.args[0].name: call.args[1] for call in publish.call_args_list}
+            self.assertEqual(outputs['reader.json']['mapping'], source['mapping'])
+            self.assertEqual(outputs['reader.json']['search_mode'], 'unpaged')
+            self.assertNotIn('fixture only', json.dumps(outputs['reader.json']))
+            self.assertEqual(outputs['credentials.json']['bind_dn'], source['bind_dn'])
+            with mock.patch.object(policy_runtime.subprocess, 'run') as check:
+                policy_runtime.check_reader_configuration(contract['directory'])
+            self.assertEqual(check.call_args.args[0], ['/usr/bin/router-policy-reader', '-check-config',
+                                                       '-check-bind-dn', source['bind_dn']])
+            self.assertEqual(json.loads(check.call_args.kwargs['input']), outputs['reader.json'])
+
+        alternate = dict(source['mapping'], device_active='userAccountControl', disabled_bit=2,
+                         user_scope='subtree', group_scope='one', user_id='objectGUID', user_id_encoding='hex')
+        del alternate['active_value'], alternate['inactive_value']
+        source['mapping'] = alternate
+        self.assertEqual(json.loads(config.render(raw)[path])['directory']['mapping'], alternate)
+        for change in ({'disabled_bit': True}, {'disabled_bit': 3}, {'disabled_bit': 1 << 32},
+                       {'active_value': 'yes'}, {'user_scope': 'outside'}, {'group_id_encoding': 'base64'},
+                       {'user_id': 'macAddress'}, {'member_of': 'member'}, {'group_policy': 'Member'},
+                       {'device_mac': 'cn;binary'}, {'device_active': 'objectClass'},
+                       {'user_object_class': '(objectClass=*)'}, {'group_name': None}):
+            source['mapping'] = {**alternate, **change}
+            with self.subTest(change=change), self.assertRaises(ReleaseError):
+                config.render(raw)
+        del source['mapping']
+        source['search_mode'] = 'fallback-on-any-error'
+        with self.assertRaises(ReleaseError):
+            config.render(raw)
+        del source['search_mode']
+        directory = json.loads(config.render(raw)[path])['directory']
+        self.assertNotIn('mapping', directory)
+        self.assertNotIn('search_mode', directory)
+        with mock.patch.object(policy_runtime.subprocess, 'run') as check:
+            policy_runtime.check_reader_configuration(directory)
+        check.assert_not_called()
+
     def test_shared_radius_source_is_opt_in_and_limited_to_the_directory_tuple(self):
         from test_radius import declaration as with_radius, provider_export
         value = with_radius()
