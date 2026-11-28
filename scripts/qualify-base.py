@@ -87,6 +87,7 @@ CREDENTIAL_IMPLEMENTATION = {
     'lanrith/extensions.py',
     'lanrith/image_operation.py',
     'lanrith/integrations.py',
+    'lanrith/directory_settings.py',
     'lanrith/local.py',
     'lanrith/logs.py',
     'lanrith/logs_runtime.py',

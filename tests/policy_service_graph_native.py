@@ -91,10 +91,14 @@ def entry(message_id, dn, attributes):
 
 
 def search_page(connection, unit, expected_cookie):
-    message_id, search, controls = receive(connection)
+    message_id, search, *rest = receive(connection)
     require(search[0] == 0x63 and fields(search[1])[:3] == [
         (4, ('ou='+unit+',dc=example,dc=test').encode()), (10, b'\1'), (10, b'\0')],
         'Unexpected search namespace or scope.')
+    if not rest:
+        require(not expected_cookie, 'Reader resumed a continuation without paging.')
+        return message_id[1], None
+    controls, = rest
     control, = fields(controls[1])
     oid, critical, value = fields(control[1])
     require(controls[0] == 0xa0 and control[0] == 0x30 and oid == (4, b'1.2.840.113556.1.4.319')
@@ -128,11 +132,25 @@ def directory_rows(mode):
 
 
 def serve_searches(connection, mode, event):
-    for unit, rows in directory_rows(mode).items():
+    for unit, rows in directory_rows(mode.removeprefix('unpaged-')).items():
         cookie = b''
         offset = 0
         while offset < len(rows):
             message_id, size = search_page(connection, unit, cookie)
+            if mode.startswith('unpaged-'):
+                require(size is None, 'Unpaged fixture received a paging control.')
+                for dn, attributes in rows:
+                    connection.sendall(entry(message_id, dn, attributes))
+                if unit == 'users' and mode == 'unpaged-interrupted':
+                    return
+                limited = unit == 'users' and mode == 'unpaged-limited'
+                connection.sendall(result(message_id, 0x65, code=4 if limited else 0))
+                break
+            if size is None:
+                # This directory requires paging for the full search. A standard
+                # size-limit result makes the auto reader restart with paging.
+                connection.sendall(result(message_id, 0x65, code=4))
+                continue
             require(size in (1, 256), 'Unexpected page size.')
             if cookie and mode == 'interrupted' and unit == 'users':
                 event('withheld-users-continuation')
@@ -190,8 +208,9 @@ def serve():
 
 
 class ServiceGraph:
-    def __init__(self, check_provider=False):
+    def __init__(self, check_provider=False, check_unpaged=False):
         self.check_provider = check_provider
+        self.check_unpaged = check_unpaged
         self.provider_results = []
         self.server = None
         self.samples = 0
@@ -325,6 +344,25 @@ class ServiceGraph:
                 'Membership restoration failed to issue a fresh grant.')
         checks.append('provider-single-and-multi-page-receipts-withdrawal-and-interrupted-continuation-expiry')
 
+        if self.check_unpaged:
+            (DIRECTORY/'mode').write_text('unpaged-valid')
+            require(self.provider_check('unpaged', 'applied', passes=True)['grant_count'] > 0 and kernel_grants(),
+                    'Complete ordinary searches did not grant access.')
+            before = observe()['snapshot']
+            for mode in ('unpaged-limited', 'unpaged-interrupted'):
+                (DIRECTORY/'mode').write_text(mode)
+                self.provider_check('unpaged', 'collection_failed', passes=False)
+                after = observe()['snapshot']
+                require(after['generation'] == before['generation'] and after['grants'] == before['grants'],
+                        'An incomplete ordinary search changed the applied grant or expiry.')
+            (DIRECTORY/'mode').write_text('unpaged-withdrawn')
+            require(self.provider_check('unpaged-withdrawn', 'applied', passes=True)['grant_count'] == 0 and not kernel_grants(),
+                    'An ordinary search failed to withdraw the direct grant.')
+            (DIRECTORY/'mode').write_text('valid')
+            require(self.provider_check('multi-page', 'applied', passes=True)['grant_count'] > 0 and kernel_grants(),
+                    'Fresh directory data did not restore the grant.')
+            checks.append('unpaged-provider-application-withdrawal-and-incomplete-search-expiry')
+
     def qualify(self, checks, observed, observe, bindings):
         checks.append('generated-reader-setup-loads-systemd-credential-and-real-starttls-reader-without-controller-rules')
         require(policy_runtime.ENROLLMENT.is_file(), 'Generated bootstrap did not enroll persistent state.')
@@ -449,6 +487,7 @@ class ServiceGraph:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check-provider', action='store_true', help='exercise a reader candidate with provider qualification support')
+    parser.add_argument('--check-unpaged', action='store_true', help='also qualify ordinary LDAP searches with a generic reader candidate')
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--candidate', type=Path)
     parser.add_argument('--collector-sha256')
@@ -457,7 +496,7 @@ if __name__ == '__main__':
     if args.serve:
         serve()
     else:
-        graph = ServiceGraph(check_provider=args.check_provider)
+        graph = ServiceGraph(check_provider=args.check_provider or args.check_unpaged, check_unpaged=args.check_unpaged)
         try:
             bindings_test.qualify(args.candidate, args.collector_sha256, args.result,
                 access_backend='tun', configure=graph.configure, prepare_interfaces=graph.interfaces, service_graph=graph)

@@ -185,27 +185,27 @@ The result binds the test, fixture, compiler and runtime digests, and is require
 by base qualification and consumer admission. Actual directory authentication,
 grants and the owner's complete image remain separate qualification work.
 
-For profiles with directory-authorized access rules, qualify an isolated copy
-of the selected provider artifact and search mode against the deployed schema
-and scoped read ACLs. Seed a synthetic device with independent ownership
-evidence and one grant. Require fresh applied helper receipts after single-page
-and multi-page reads of both original groups and accounts. Interrupt an account
-continuation and verify the previous grant keeps its expiry. Restore the
-provider, remove the direct access membership, then require a fresh applied
-receipt with zero grants and confirm withdrawal in the firewall. Record the
-running provider digest, search mode and reader/helper digests with the results.
-Stock Authentik 2026.8.3 direct search and its LDAP response encoder omit the
-terminal paging control required by the pinned reader. [Provider search](https://github.com/goauthentik/authentik/blob/version/2026.8.3/internal/outpost/ldap/search/direct/direct.go#L235-L236) · [Response encoder](https://github.com/beryju/ldap/blob/v0.2.1/server_search.go#L207-L216)
+For profiles with directory-authorized access rules, qualify the intended
+provider version, schema mapping and read permissions in an isolated instance.
+Seed at least two groups and two accounts, including one active device with a
+verified network binding, placement and access. Require a fresh applied grant.
+Remove the device from its access group while preserving placement. Require a
+fresh zero-grant receipt and confirm the firewall has withdrawn access.
 
-The development reader adds `-check-provider single-page|multi-page|withdrawn`
-for this rehearsal. In the disposable systemd component fixture,
-`tests/policy_service_graph_native.py --check-provider` exercises all three
-stages against a synthetic StartTLS server with the reviewed candidate
-binaries. Supply the same `--candidate`, `--collector-sha256` and `--result`
-arguments as for the binding-service fixture. The published v0.1.16 reader
-supports the ordinary polling mode. Use its normal page size of 256 with a
-synthetic dataset exceeding 256 visible entries in **each** OU when rehearsing
-that release and verify the cursor exchange at the directory.
+Use the reader's `-check-provider unpaged` and `unpaged-withdrawn` stages for a
+directory serving ordinary LDAP searches, including the stock Authentik 2026.8.3
+direct outpost. On paging-capable servers, also run `single-page`, `multi-page`
+and `withdrawn` to exercise actual continuation cookies in both searches.
+Interrupt a search before the final response and check that the existing grant
+keeps its expiry. Record the provider artifact, search mode and reader/helper
+digests. A successful TLS bind alone establishes neither membership nor withdrawal.
+
+The offline systemd fixture runs the reader and enforcing helper with synthetic
+StartTLS results. Run `tests/policy_service_graph_native.py --check-unpaged` with
+the same `--candidate`, `--collector-sha256` and `--result` inputs as the
+binding-service fixture. It checks both paging and ordinary searches, including
+limits, interrupted reads, kernel grant expiry and withdrawal. The
+`--check-provider` flag runs the paging checks supported by Policy Agent v0.1.18.
 
 `scripts/qualify-credentials.py` runs the generated credential socket and units
 under systemd in an offline disposable container. It resolves the reviewed local

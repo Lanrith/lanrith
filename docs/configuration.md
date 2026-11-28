@@ -433,7 +433,7 @@ identity:
       url: ldap+starttls://directory.example.test:389
       addresses: [192.0.2.30, 'fd42:1234:5678:10::30']
       base_dn: dc=example,dc=test
-      bind_dn: cn=router,dc=example,dc=test
+      bind_dn: cn=router,ou=users,dc=example,dc=test
       credential: directory_bind  # Protected runtime credential reference.
       ca_file: trust/directory.pem  # Reviewed public CA in runtime.trust.
   policy:
@@ -441,6 +441,53 @@ identity:
     directory: devices
     networks: [devices]
 ```
+
+The default mapping reads Authentik accounts under `ou=users` and groups under
+`ou=groups`. For a different schema, set `mapping` on the directory. This
+example uses OpenLDAP entries with a MAC address, an explicit account state,
+a stable entry UUID and DN-valued direct group membership.
+
+```yaml
+mapping:
+  users_base_dn: ou=devices,dc=example,dc=test
+  groups_base_dn: ou=roles,dc=example,dc=test
+  user_object_class: inetOrgPerson
+  group_object_class: groupOfNames
+  user_id: entryUUID
+  group_id: entryUUID
+  user_rdn: uid
+  group_rdn: cn
+  device_mac: macAddress
+  group_name: cn
+  device_active: employeeType
+  active_value: enabled
+  inactive_value: disabled
+  group_member: member
+  group_policy: description
+```
+
+Both search bases must be within `base_dn`. The reader searches the immediate
+children of each base by default. Set `user_scope` or `group_scope` to
+`subtree` for entries in nested organizational units. In a custom mapping, the bind account can reside
+elsewhere under the same base. Map `group_policy` to an attribute that holds
+one Lanrith policy JSON value on policy groups. Restrict who may write that
+attribute, account state and membership. Add `member_of: memberOf` to require
+agreement between both membership directions when the directory maintains
+backlinks. Otherwise the group's member DNs supply direct membership. Use the
+same spelling for DN values in entries and their membership references.
+
+For a binary stable identifier such as `objectGUID`, set `user_id_encoding`
+or `group_id_encoding` to `hex`. The reader preserves the underlying bytes
+as hexadecimal digits. For an integer account-control attribute such as
+`userAccountControl`, replace `active_value` and `inactive_value` with
+`disabled_bit: 2`. A malformed or missing state on a device prevents renewal.
+
+`search_mode` defaults to `auto`. The reader first requests complete, bounded
+LDAP searches. If the server reports a size limit, the reader discards the
+attempt and starts over with critical RFC 2696 paging. Set `paged` to require
+paging from the first request or `unpaged` for a directory that can return
+both searches in full. Referrals, incomplete reads and timeouts leave the
+previous grant expiry in force.
 
 With metrics enabled, a separate credential-free identity observes verified
 directory TLS. Its results describe transport health; authenticated collection

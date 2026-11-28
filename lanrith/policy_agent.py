@@ -284,6 +284,7 @@ def runtime_contract(value, *, access_backend="tun"):
             'bind_dn': directory['bind_dn'],
             'credential_name': directory['credential'],
             'ca_file': '/usr/share/lanrith/'+directory['ca_file'],
+            **{key: directory[key] for key in ('search_mode', 'mapping') if key in directory},
         },
         'binding_collector': collector,
         'translation_manifests': translations,
