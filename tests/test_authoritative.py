@@ -335,6 +335,11 @@ class AuthoritativeTests(unittest.TestCase):
                 target.unlink()
                 self.assertFalse(list(target.parent.glob('.lanrith-seed-*')))
 
+            # A compact declaration can expand into more than one MiB of zone data.
+            source.write_text(''.join(f'host-{n} IN AAAA 2001:db8::1\n' for n in range(40000)))
+            prepare()
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+
     @unittest.skipUnless(os.geteuid() == 0, 'persistent service state requires package ownership')
     def test_restart_retains_zone_and_journal_and_rejects_bad_credentials(self):
         files = authoritative.render(config.normalize(declaration()))

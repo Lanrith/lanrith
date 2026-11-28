@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shutil
 import stat
 import tempfile
 
@@ -77,11 +78,17 @@ def prepare(manifest, credentials, runtime, *, root=Path('/')):
             raise ValueError('Invalid persistent DNS directory.')
         if not needs_seed(target, bind.pw_uid):
             continue
-        content_zone = read_regular(source, 1024*1024)
         descriptor, temporary = tempfile.mkstemp(prefix='.lanrith-seed-', dir=target.parent)
         try:
             with os.fdopen(descriptor, 'wb') as stream:
-                stream.write(content_zone)
+                source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(source_fd, 'rb') as zone:
+                    info = os.fstat(zone.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+                        raise ValueError('Invalid DNS seed metadata.')
+                    shutil.copyfileobj(zone, stream)
+                    if stream.tell() != info.st_size:
+                        raise ValueError('DNS seed size changed while copying.')
                 stream.flush()
                 os.fchmod(stream.fileno(), 0o640)
                 os.fchown(stream.fileno(), bind.pw_uid, bind.pw_gid)
