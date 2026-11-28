@@ -252,15 +252,21 @@ a thirty-second outer deadline across the DNS64 chain.
 Ordinary DNS clients query Unbound. Add an attachment and source address to
 `services.dns.authoritative.direct_readers` for each client that needs to query
 the primary directly. Configured publishers can query from their declared sources.
-A writer needs a TSIG credential and explicit grants. When upgrading an existing
-writer, list the record types and names its publisher maintains.
-Lanrith accepts any number of writer grants and static record names within the
-overall configuration file size limit of 1 MiB. A publisher with a TXT registry
-also needs grants for its ownership record names.
+Each writer needs a TSIG key and an allowed source on its declared attachment.
+With `grants` omitted, that source and key can publish new names throughout
+the writer’s zone, including TXT ownership records. Zone transfers require
+`zone_transfer: true` and the same source and key. A transfer-only client
+sets `grants: []` and `zone_transfer: true`.
 
 ```yaml
 direct_readers:
   - {network: home, addresses: 192.168.10.23}
+zones:
+  example.test:
+    persistent: true
+    records:
+      controller.lab: {A: 192.168.10.50}
+    fixed_records: [controller.lab]
 writers:
   inventory:
     zone: example.test
@@ -268,15 +274,27 @@ writers:
     key_name: inventory-key
     credential: inventory_tsig
     zone_transfer: true
-    grants:
-      - {subtree: apps, types: [A, AAAA, CNAME, SRV, TXT]}
-      - {name: status, types: [TXT]}
 ```
 
-Names are relative to the writer's zone. A subtree includes its root. Use
-`subtree: '@'` to grant the listed types throughout the zone. The source and
-signing key must belong to the same writer. Zone transfers require
-`zone_transfer: true`. Set `grants: []` for a transfer-only client.
+A publisher can replace or remove ordinary persistent seed records. Mark a
+relative address owner in `fixed_records` to keep the declared A and AAAA
+answers. Use the quoted YAML key `'@'` in `records` and `fixed_records: ['@']`
+to fix the zone apex itself. Writers cannot change any record type at a fixed name or add an NS
+delegation or DNAME redirection above it. BIND also protects the zone apex NS
+and SOA, the built-in service addresses in the primary zone and the path to
+every configured child zone. The parent reserves NS, DS, CNAME and DNAME at
+a locally hosted child’s origin. Fixed names
+use DNS case-insensitive matching. An explicit grant list narrows the writer’s
+authority to particular names, subtrees and record types.
+
+```yaml
+grants:
+  - {subtree: apps, types: [A, AAAA, CNAME, SRV, TXT]}
+  - {name: status, types: [TXT]}
+```
+
+A subtree includes its root. `subtree: '@'` covers the zone. Exact grants and
+static or fixed address names share the overall 1 MiB configuration file limit.
 
 To delegate discovery views, add `discovery_delegation` to the immutable
 authoritative zone matching `services.discovery.domain`. For example,
@@ -318,6 +336,17 @@ health check fails. Assign each managed set with its publisher before upgrading.
 Publishers lose write access to each selected address type and to CNAME at
 that name. A managed CNAME reserves the whole name. Other seed entries continue
 to serve as first-boot defaults.
+
+For an existing zone, startup replays the journal, completes the declared
+`managed_rrsets` transitions and checks each fixed address and its delegation
+path before public DNS starts. A matching address can become fixed in place.
+For a newly fixed name missing from the stored zone, add a transition with
+`previous: []`. To change an existing fixed address, set its new value in
+`records` and list the actual previous RRset under `managed_rrsets`. To retire
+a previously published address family, use `remove: true` for its old RRset.
+A conflicting stored value or existing covering delegation stops public DNS.
+Resolve an unintended NS or DNAME with the previous configuration before
+adopting that name as fixed.
 
 Both image slots share the zone and journal. Check fallback against the
 post-upgrade records. An older slot with a managed declaration needs a matching

@@ -27,6 +27,7 @@ def main():
         assert Path('/run/.containerenv').exists()
     assert {p.name for p in Path('/sys/class/net').iterdir()} == {'lo'}
     value = declaration()
+    del value['services']['dns']['authoritative']['writers']['first']['grants']
     value['services']['dns']['authoritative']['direct_readers'] = [
         {'network': 'home', 'addresses': '192.168.10.23'},
         {'network': 'home', 'addresses': 'fd42:1234:5678:10::20'}]
@@ -212,10 +213,10 @@ def main():
                                             capture_output=True, timeout=5)
                     assert denied.returncode != 0, 'Disabled network reached DNS.'
 
-            def update(source, key, label, allowed, zone='example.test', *, tcp=True):
+            def update(source, key, label, allowed, zone='example.test', *, tcp=True, namespace='lan-test'):
                 request = (f'local {source}\nserver {authority[0]}\nzone {zone}\n'
                            f'update add {label}.{zone}. 300 A 192.0.2.99\nsend\n')
-                argv = ['nsenter', '--net=/run/netns/lan-test', '--', 'nsupdate', '-t', '2']
+                argv = ['nsenter', '--net=/run/netns/'+namespace, '--', 'nsupdate', '-t', '2', '-u', '1', '-r', '0']
                 if tcp:
                     argv.append('-v')
                 if key:
@@ -234,6 +235,12 @@ def main():
             update('192.168.10.20', None, 'unsigned', False)
             update('192.168.10.20', None, 'unsigned-udp', False, tcp=False)
             update('192.168.10.20', 'first', 'wrong-zone', False, 'home.arpa')
+            # The same address on another attachment cannot use the signed writer.
+            ns('guest-test', 'ip', 'addr', 'add', '192.168.10.20/32', 'dev', 'eth0')
+            update('192.168.10.20', 'first', 'other-attachment', False, tcp=False, namespace='guest-test')
+            wrong = ns('lan-test', 'dig', '+time=2', '+tries=1', '-b', '192.168.10.20', '@'+authority[0],
+                       'other-attachment.example.test', 'A').stdout
+            assert 'status: NXDOMAIN' in wrong
             for source, key, allowed in (('192.168.10.20', 'first', True),
                                          ('192.168.10.21', 'second', False),
                                          ('192.168.10.21', 'first', False)):

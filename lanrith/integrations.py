@@ -23,6 +23,16 @@ def domain(value):
     return value
 
 
+def zone_owner(label, zone):
+    """Return an absolute lowercase owner for a relative label or the apex."""
+    if label == '@':
+        return zone.lower()+'.'
+    domain(label)
+    require(not label.endswith('.') and len(label+'.'+zone) <= 253,
+            'Zone records must use relative in-zone labels.')
+    return (label+'.'+zone+'.').lower()
+
+
 def credential(value):
     require(isinstance(value, str) and intent.NAME.fullmatch(value), 'Invalid credential reference.')
 
@@ -146,15 +156,16 @@ def dns_records(value):
     result = {}
     for zone, settings in zones.items():
         domain(zone)
-        intent.fields(settings, {'persistent', 'records', 'records_from', 'managed_rrsets', 'discovery_delegation'})
+        intent.fields(settings, {'persistent', 'records', 'records_from', 'fixed_records', 'managed_rrsets', 'discovery_delegation'})
         intent.boolean(settings.get('persistent', False))
         records = settings.get('records', {})
         require(isinstance(records, dict), 'Invalid DNS records.')
         resolved = {}
         for label, rr in records.items():
-            domain(label)
+            zone_owner(label, zone)
             intent.fields(rr, {'A', 'AAAA', 'CNAME'})
-            require(rr and not ('CNAME' in rr and len(rr) != 1), 'CNAME conflicts with address records.')
+            require(rr and not ('CNAME' in rr and (len(rr) != 1 or label == '@')),
+                    'CNAME conflicts with address records or zone apex authority.')
             resolved[label] = {}
             for kind, entry in rr.items():
                 if kind == 'CNAME':
@@ -195,10 +206,9 @@ def dns_records(value):
         intent.fields(writer, {'zone', 'sources', 'key_name', 'credential', 'zone_transfer', 'grants'},
                       {'zone', 'sources', 'key_name', 'credential'})
         require(writer['zone'] in zones, 'DNS writer references an undeclared zone.')
-        require(not active or 'grants' in writer, 'Specify explicit grants for each authoritative DNS writer.')
         grants = writer.get('grants', [])
         require(isinstance(grants, list), 'DNS writer grants must be a list.')
-        require(not active or grants or writer.get('zone_transfer') is True,
+        require(not active or 'grants' not in writer or grants or writer.get('zone_transfer') is True,
                 'DNS writer needs grants or transfer access.')
         for grant in grants:
             intent.fields(grant, {'name', 'subtree', 'types'}, {'types'})

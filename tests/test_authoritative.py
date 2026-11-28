@@ -10,7 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lanrith import authoritative, config, dns_runtime, service_plane
+from lanrith import authoritative, authoritative_migration, config, dns_migration, dns_runtime, service_plane
 from lanrith.release import ReleaseError
 from test_intent import minimal
 
@@ -149,19 +149,73 @@ class AuthoritativeTests(unittest.TestCase):
         self.assertIn('allow-transfer { "writer-0"; };', transfer_only)
         self.assertNotIn('grant "first-key"', transfer_only)
         del writer['grants']
-        with self.assertRaisesRegex(ReleaseError, 'explicit grants'):
-            config.render(value)
+        self.assertIn('grant "first-key" zonesub ANY;', config.render(value)['etc/bind/named.conf'])
         authority['enabled'] = False
         self.assertNotIn('etc/bind/named.conf', config.render(value))
+
+    def test_fixed_address_owners_and_their_delegation_path_precede_writer_grants(self):
+        value = declaration()
+        authority = value['services']['dns']['authoritative']
+        zone = authority['zones']['example.test']
+        zone['records']['Node.Lab'] = {'AAAA': '2001:db8::1'}
+        zone['fixed_records'] = ['nODE.lab']
+        authority['zones']['child.sub.example.test'] = {}
+        authority['zones']['other.child.sub.example.test'] = {}
+        authority['zones']['home.arpa']['persistent'] = True
+        del authority['writers']['first']['grants']
+        files = config.render(value)
+        policy = files['etc/bind/named.conf']
+        for rule in ('deny "*" name node.lab.example.test. ANY;',
+                     'deny "*" name lab.example.test. DNAME NS;',
+                     'deny "*" name sub.example.test. DNAME NS;',
+                     'deny "*" name child.sub.example.test. CNAME DNAME DS NS;',
+                     'deny "*" name example.test. DNAME NS SOA;'):
+            self.assertLess(policy.index(rule), policy.index('grant "first-key" zonesub ANY;'))
+        expected = json.loads(files['usr/share/lanrith/dns-fixed.json'])
+        checked = {(r['name'], r['type']): r['desired'] for r in expected['example.test']}
+        self.assertEqual(checked['node.lab.example.test.', 'AAAA'], ['2001:db8::1'])
+        self.assertEqual(checked['node.lab.example.test.', 'A'], [])
+        self.assertEqual(checked['lab.example.test.', 'NS'], [])
+        self.assertEqual(checked['example.test.', 'NS'], ['ns1.home.arpa.'])
+        self.assertIn('ns1.home.arpa.', {r['name'] for r in expected['home.arpa']})
+        self.assertNotIn('other.child.sub.example.test.', {r['name'] for r in expected['example.test']})
+        self.assertNotIn('seeded.example.test.', {r['name'] for r in expected['example.test']})
+        for invalid in ('Node.Lab', ['missing'], ['Node.Lab', 'node.lab'], ['@']):
+            zone['fixed_records'] = invalid
+            with self.subTest(fixed_records=invalid), self.assertRaises(ReleaseError):
+                config.render(value)
+        zone['fixed_records'] = ['node.lab']
+        authority['zones']['lab.example.test'] = {}
+        with self.assertRaisesRegex(ReleaseError, 'most specific'):
+            config.render(value)
+
+    def test_fixed_prerequisites_batch_rrsets_and_identify_conflicts(self):
+        addresses = ['2001:db8::10', '2001:db8::11']
+        fixed = {f'host-{n}.example.test.': {'AAAA': addresses} for n in range(500)}
+        expected = authoritative_migration.fixed_prerequisites('example.test', fixed, [], [], 'example.test')
+        with patch.object(dns_migration, 'transaction', return_value=True) as update:
+            dns_migration.check_fixed('example.test', expected, None)
+        requests = [call.args[1] for call in update.call_args_list]
+        self.assertGreater(len(requests), 1)
+        self.assertTrue(all(sum(len(line)+32 for line in request) <= 32768 for request in requests))
+        by_line = {line: index for index, request in enumerate(requests) for line in request}
+        for name in fixed:
+            self.assertEqual(len({by_line[f'prereq yxrrset {name} AAAA {address}'] for address in addresses}), 1)
+        with patch.object(dns_migration, 'transaction',
+                          side_effect=lambda z, c, k: 'prereq nxrrset host-200.example.test. A' not in c):
+            with self.assertRaisesRegex(dns_migration.MigrationError, r'for host-200\.example\.test\. A'):
+                dns_migration.check_fixed('example.test', expected, None)
 
     def test_large_zone_keeps_exact_writer_grants(self):
         value = declaration()
         authority = value['services']['dns']['authoritative']
         records = {f'host-{i}': {'A': '192.0.2.1'} for i in range(4100)}
         authority['zones']['example.test']['records'] = records
+        authority['zones']['example.test']['fixed_records'] = list(records)
         writer = authority['writers']['first']
         writer['grants'] = [{'name': name, 'types': ['TXT']} for name in records]
         files = config.render(value)
+        self.assertEqual(files['etc/bind/named.conf'].count('deny "*" name host-'), len(records))
         grants = [line.strip() for line in files['etc/bind/named.conf'].splitlines()
                   if line.strip().startswith('grant "first-key"')]
         self.assertEqual(grants, [f'grant "first-key" name {name}.example.test. TXT;' for name in records])
@@ -247,7 +301,7 @@ class AuthoritativeTests(unittest.TestCase):
             'example.test': [{'name': 'seeded.example.test.', 'type': 'A',
                               'previous': ['192.0.2.10'], 'desired': ['192.0.2.20']}]})
         policy = files['etc/bind/named.conf']
-        self.assertIn('deny "first-key" name seeded.example.test. A CNAME;', policy)
+        self.assertIn('deny "*" name seeded.example.test. A CNAME;', policy)
         private = files['etc/bind/lanrith-migration.conf']
         self.assertIn('grant "lanrith-migration" name seeded.example.test. A;', private)
         self.assertNotIn('zonesub', private)

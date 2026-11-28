@@ -43,8 +43,12 @@ def main():
     assert suite.returncode == 0, suite.stderr
     print(run('named', '-v').stdout.strip(), suite.stderr, flush=True)
     value = declaration()
-    zone = value['services']['dns']['authoritative']['zones'][ZONE]
-    zone['records'].update({'retired': {'A': '192.0.2.8'}})
+    zones = value['services']['dns']['authoritative']['zones']
+    zones['fresh.test'] = {'persistent': True, 'records': {'@': {'A': '192.0.2.70'}}, 'fixed_records': ['@']}
+    zones['hosted.branch.example.test'] = {'records': {'server': {'A': '192.0.2.71'}}}
+    zone = zones[ZONE]
+    zone['records'].update({'retired': {'A': '192.0.2.8'}, 'host.oldpath': {'A': '192.0.2.80'}})
+    del value['services']['dns']['authoritative']['writers']['first']['grants']
     old = config.normalize(value)
     server = intent.service_addresses(old, 'authoritative')[0]
     resolver = intent.service_addresses(old, 'dns')[0]
@@ -101,6 +105,7 @@ def main():
                    '@'+target, name+'.'+ZONE+'.' if name else ZONE+'.', kind).stdout.strip()
 
     systemctl('start', 'named')
+    assert run(*ns, 'dig', '+short', '-b', clients[0], '@'+server, 'fresh.test.', 'A').stdout.strip() == '192.0.2.70'
     public_pid = run('systemctl', 'show', '-p', 'MainPID', '--value', 'named').stdout.strip()
     status = dict(line.split(':', 1) for line in Path('/proc/'+public_pid+'/status').read_text().splitlines()
                   if ':' in line)
@@ -138,6 +143,7 @@ def main():
     update(['update add publisher.example.test. 60 TXT "retained"',
             'update add alias.example.test. 60 CNAME publisher.example.test.'])
     assert query('alias', 'CNAME') == 'publisher.example.test.'
+    update(['update add oldpath.example.test. 60 NS ns1.home.arpa.'])
     assert JOURNAL.is_file()
     print('named cgroup during publication', run('systemctl', 'show', '-p', 'MemoryCurrent', '-p',
                                                 'MemoryPeak', 'named').stdout.strip(), flush=True)
@@ -145,7 +151,7 @@ def main():
     # journal. Stop the restarting package service before restoring the pair.
     pair = {path: path.read_bytes() for path in (JOURNAL, STATE)}
     assert b'publisher' not in pair[STATE]
-    systemctl('stop', 'named', 'lanrith-dns-state')
+    systemctl('stop', 'named', MIGRATE, 'lanrith-dns-state')
     for path, data in pair.items():
         path.write_bytes(data)
         os.chown(path, bind.pw_uid, bind.pw_gid)
@@ -158,11 +164,32 @@ def main():
     os.chown(STATE, bind.pw_uid, bind.pw_gid)
     STATE.chmod(0o640)
     run('named-checkzone', '-j', ZONE, str(STATE))
+    # A matching address can still be hidden by a delegation in its saved parent.
+    zone['fixed_records'] = ['host.oldpath']
+    install(authoritative.render(config.normalize(value)))
+    systemctl('daemon-reload')
+    assert run('systemctl', 'start', 'named', check=False).returncode
+    assert 'for oldpath.example.test. NS.' in run('journalctl', '-b', '-u', MIGRATE).stdout
+    install(authoritative.render(old))
+    systemctl('daemon-reload')
+    systemctl('start', 'named')
+    update(['update delete oldpath.example.test. NS'])
+    systemctl('stop', 'named', MIGRATE, 'lanrith-dns-state')
+    # A release adopting a previous seed must verify its current journaled value.
+    zone['fixed_records'] = ['SEEDED']
+    zone['records']['seeded'] = {'A': '192.0.2.22'}
+    install(authoritative.render(config.normalize(value)))
+    systemctl('daemon-reload')
+    assert run('systemctl', 'start', 'named', check=False).returncode
+    assert 'Fixed DNS addresses or delegation conflict' in run('journalctl', '-b', '-u', MIGRATE).stdout
+    zone['fixed_records'] += ['service', 'host.lab']
+    zone['records']['host.lab'] = {'A': '192.0.2.45'}
     zone['records'].update({'seeded': {'A': '192.0.2.22'}, 'service': {'AAAA': '2001:db8::53'},
                             'alias': {'AAAA': '2001:db8::99'}})
     zone['records']['owned-alias'] = {'CNAME': 'publisher.example.test.'}
     del zone['records']['retired']
-    zone['managed_rrsets'] = {'owned-alias': {'CNAME': {'previous': []}},
+    zone['managed_rrsets'] = {'host.lab': {'A': {'previous': []}},
+                              'owned-alias': {'CNAME': {'previous': []}},
                               'service': {'AAAA': {'previous': []}},
                               'seeded': {'A': {'previous': ['192.0.2.20']}},
                               'retired': {'A': {'previous': ['192.0.2.8'], 'remove': True}},
@@ -242,12 +269,26 @@ def main():
     assert query('service', 'AAAA') == '2001:db8::53'
     update(['update add owned-alias.example.test. 60 A 192.0.2.66'], allowed=False)
     assert query('owned-alias', 'CNAME') == 'publisher.example.test.'
-    update(['update add denied.example.test. 60 NS ns1.home.arpa.'], allowed=False)
+    for command in ('update delete SeEdEd.example.test.',
+                    'update add seeded.example.test. 60 AAAA 2001:db8::45',
+                    'update add HOST.LAB.example.test. 60 CNAME other.example.test.',
+                    'update add lab.example.test. 60 NS ns1.home.arpa.',
+                    'update add lab.example.test. 60 DNAME other.example.test.',
+                    'update add example.test. 60 NS other.example.test.',
+                    'update add hosted.branch.example.test. 60 NS other.example.test.',
+                    'update add branch.example.test. 60 DNAME other.example.test.'):
+        update(['update add partial.example.test. 60 TXT "partial"', command], allowed=False)
+        assert not query('partial', 'TXT')
+    assert query('host.lab', 'A') == '192.0.2.45'
+    update(['update add brand-new.example.test. 60 CAA 0 issue "example.net"'])
+    assert 'example.net' in query('brand-new', 'CAA')
     update(['update add other.example.test. 60 TXT "no"'], source=resolver, allowed=False)
     update(['update add other.example.test. 60 TXT "no"'], source=clients[1], allowed=False)
     xfr = run(*ns, 'dig', '+time=2', '+tries=1', '-b', clients[0], '-k', str(KEY),
               '@'+server, ZONE, 'AXFR').stdout
     assert 'ordinary.example.test.' in xfr
+    update(['update add example.test. 60 A 192.0.2.40'])
+    assert query('', 'A') == '192.0.2.40'
     serial = query('', 'SOA').split()[2]
     # Abrupt stop after successful changes exercises real BIND journal replay.
     systemctl('kill', '--signal=SIGKILL', '--kill-whom=main', 'named')
@@ -256,6 +297,14 @@ def main():
     assert query('', 'SOA').split()[2] == serial
     assert query('ordinary', 'TXT') == '"ok"' and query('alias', 'CNAME') == 'publisher.example.test.'
     assert query('seeded', 'A') == '192.0.2.22'
+    systemctl('stop', 'named', MIGRATE, 'lanrith-dns-state')
+    zone['records']['@'] = {'A': '192.0.2.41'}
+    zone['fixed_records'].append('@')
+    zone['managed_rrsets']['@'] = {'A': {'previous': ['192.0.2.40']}}
+    install(authoritative.render(config.normalize(value)))
+    systemctl('start', 'named')
+    assert query('', 'A') == '192.0.2.41' and query('', 'NS') == 'ns1.home.arpa.'
+    update(['update add example.test. 60 A 192.0.2.42'], allowed=False)
     value['services']['dns']['authoritative']['writers']['first']['grants'] = []
     install(authoritative.render(config.normalize(value)))
     systemctl('restart', 'named')

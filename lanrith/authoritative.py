@@ -81,12 +81,13 @@ def validate(value):
         require(key not in keys, 'DNS writer key names must be unique.')
         keys.add(key)
     for zone, records in integrations.dns_records(value).items():
-        require(all(not label.endswith('.') and
-                    len(label)+len(zone)+1 <= 253 for label in records),
-                'Zone records must use relative in-zone labels.')
+        for label in records:
+            integrations.zone_owner(label, zone)
         require(len({label.lower() for label in records}) == len(records),
                 'DNS record labels must be unique ignoring case.')
-    authoritative_migration.managed_rrsets(zones, zone_records(value))
+    records = zone_records(value)
+    fixed_addresses(value, records)
+    authoritative_migration.managed_rrsets(zones, records)
 
 
 def service_records(value):
@@ -115,6 +116,34 @@ def zone_records(value):
         if 'discovery_delegation' in entry:
             add_delegation(value, zone, entry, records[zone])
     return records
+
+
+def fixed_addresses(value, records):
+    """Resolve fixed address owners once, using the same data as the zone seed."""
+    configuration = settings(value)
+    result = {}
+    for zone, entry in configuration['zones'].items():
+        selected = entry.get('fixed_records', [])
+        require(isinstance(selected, list), 'Fixed DNS records must be a list of relative address owners.')
+        by_owner = {label.lower(): rr for label, rr in records[zone].items()}
+        labels = set()
+        for label in selected:
+            integrations.zone_owner(label, zone)
+            owner = label.lower()
+            require(owner in by_owner and owner not in labels and set(by_owner[owner]) <= {'A', 'AAAA'},
+                    'Fixed DNS records must name distinct address owners in the zone seed.')
+            labels.add(owner)
+        if zone == configuration['primary_zone']:
+            labels.update(service_records(value))
+        children = tuple('.'+other.lower()+'.' for other in configuration['zones']
+                         if other.lower().endswith('.'+zone.lower()))
+        for label in sorted(labels):
+            name = integrations.zone_owner(label, zone)
+            require(not ('.'+name).endswith(children),
+                    'A fixed DNS address must belong to its most specific authoritative zone.')
+            if entry.get('persistent'):
+                result.setdefault(zone, {})[name] = by_owner[label]
+    return result
 
 
 def add_delegation(value, zone, entry, records):
@@ -212,6 +241,15 @@ def render(value):
     seeds, files = [], {}
     records = zone_records(value)
     plan = authoritative_migration.managed_rrsets(configuration['zones'], records)
+    fixed = fixed_addresses(value, records)
+    cuts = {}
+    persistent = {z for z, e in configuration['zones'].items() if e.get('persistent')}
+    for child in configuration['zones']:
+        parents = [z for z in configuration['zones'] if child.lower().endswith('.'+z.lower())]
+        if parents:
+            parent = max(parents, key=len)
+            if parent in persistent:
+                cuts.setdefault(parent, []).append(child.lower()+'.')
     if writers(value):
         # A signed publisher must pass its own source ACL before any zone
         # can evaluate its update-policy. Unsigned readers use allow-query.
@@ -225,16 +263,19 @@ def render(value):
         target = '/var/cache/bind/db.'+zone if persistent else '/'+seed
         if persistent:
             seeds.append({'source': '/'+seed, 'target': target})
-        publishers = [w for w in writers(value).values() if w['zone'] == zone and w['grants']]
+        publishers = [w for w in writers(value).values() if w['zone'] == zone and ('grants' not in w or w['grants'])]
         transfers = [f'"writer-{i}";' for i, w in enumerate(writers(value).values())
                      if w['zone'] == zone and w.get('zone_transfer', False)]
         lines += [f'zone "{zone}" {{ type primary; file "{target}";']
         if publishers:
             lines.append(' update-policy {')
+            lines.extend(authoritative_migration.publisher_denials(zone, plan.get(zone, []), fixed.get(zone, {}),
+                                                                    cuts.get(zone, [])))
             for writer in publishers:
                 key = writer['key_name']
-                lines.extend(authoritative_migration.publisher_denials(key, plan.get(zone, [])))
-                for grant in writer['grants']:
+                if 'grants' not in writer:
+                    lines.append(f'  grant "{key}" zonesub ANY;')
+                for grant in writer.get('grants', []):
                     rule = 'name' if 'name' in grant else 'subdomain'
                     owner = grant.get('name', grant.get('subtree'))
                     name = zone+'.' if owner == '@' else owner+'.'+zone+'.'
@@ -246,8 +287,8 @@ def render(value):
                   '};']
     if writers(value):
         lines.append('};')
-    if plan:
-        files.update(authoritative_migration.render(plan))
+    if plan or fixed or cuts:
+        files.update(authoritative_migration.render(plan, fixed, cuts, configuration['primary_zone']))
     files['etc/bind/named.conf'] = '\n'.join(lines)+'\n'
     files['usr/share/lanrith/authoritative.json'] = canonical({
         'schema': 1, 'seeds': seeds, 'credentials': credentials}).decode()
