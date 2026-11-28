@@ -20,7 +20,7 @@ import time
 
 
 SERVER = r'''
-import selectors,socket,sys
+import os,selectors,socket,sys
 s=selectors.DefaultSelector()
 for address in sys.argv[2:]:
     family=socket.AF_INET6 if ':' in address else socket.AF_INET
@@ -28,6 +28,8 @@ for address in sys.argv[2:]:
         for port in (11111,22222,33333):
             fd=socket.socket(family,kind);fd.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             if family==socket.AF_INET6:fd.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1)
+            if family==socket.AF_INET and kind==socket.SOCK_DGRAM and os.getenv('LANRITH_TEST_UDP_NO_CHECK'):
+                fd.setsockopt(socket.SOL_SOCKET,11,1)  # Linux SO_NO_CHECK
             fd.bind((address,port))
             if kind==socket.SOCK_STREAM:fd.listen()
             fd.setblocking(False);s.register(fd,selectors.EVENT_READ,('listen' if kind==socket.SOCK_STREAM else 'udp'))

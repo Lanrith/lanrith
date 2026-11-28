@@ -22,6 +22,20 @@ FORMATS = set(FORMAT_UNITS)
 UNITS = set().union(*FORMAT_UNITS.values())
 
 
+def consumer_units(catalog):
+    """Resolve the v1 credential catalog to this image's service layout."""
+    # Pending transactions embed the signed catalog. Preserve its v1 unit
+    # names and hash so either A/B slot can validate the other slot's journal.
+    return sorted('lanrith-policy-reader-setup.service' if unit == 'lanrith-policy-bootstrap.service'
+                  else unit for unit in catalog['units'])
+
+
+# Runtime file readers and the daemons that use their prepared files.
+# The six historical policy units remain in FORMAT_UNITS for wire compatibility.
+STARTUP_UNITS = {**FORMAT_UNITS, 'directory-password': {
+    'lanrith-policy-reader-setup.service', 'lanrith-policy-reader.service'}}
+
+
 def validate_catalog(value):
     require(isinstance(value, dict) and set(value) == {'schema', 'credentials', 'units'} and
             type(value['schema']) is int and value['schema'] == 1 and

@@ -1,20 +1,24 @@
 """Stage only credential-bearing FreeRADIUS fragments from compiled JSON."""
 
 import argparse
+import errno
+import fcntl
 import grp
 import ipaddress as ip
-import json
 import os
 from pathlib import Path
 import re
 import stat
-import tempfile
+import time
 
 from .policy_runtime import decode, exact, read
 
 
 MANIFEST = Path('/usr/share/lanrith/radius.json')
 RUNTIME = Path('/run/lanrith-radius')
+# Leave time within the unit's 30s hard limit for setup and error reporting.
+RETRY_SECONDS = 10
+RETRYABLE = {errno.EAGAIN, errno.EBUSY, errno.EDQUOT, errno.EINTR, errno.EIO, errno.ENOSPC, errno.ESTALE}
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}\Z')
 SECRET = re.compile(r'[A-Za-z0-9+/_=-]{32,256}\Z', re.ASCII)
 
@@ -58,7 +62,13 @@ def load(path=MANIFEST):
             raise RadiusRuntimeError('RADIUS client value differs.')
         names.add(client['name'])
         references.add(client['credential_name'])
-    proxy = exact(value['proxy'], {'address', 'port', 'source', 'credential_name'}, 'RADIUS proxy')
+    proxy_keys = {'address', 'port', 'source', 'credential_name'}
+    if value['fallback_clients']:
+        proxy_keys.add('response_window')
+    proxy = exact(value['proxy'], proxy_keys, 'RADIUS proxy')
+    if 'response_window' in proxy and (type(proxy['response_window']) is not int or
+                                       not 2 <= proxy['response_window'] <= 27):
+        raise RadiusRuntimeError('RADIUS fallback response window differs.')
     try:
         target, source = ip.ip_address(proxy['address']), ip.ip_address(proxy['source'])
     except (TypeError, ValueError) as error:
@@ -96,19 +106,21 @@ def credential(name):
     return text
 
 
-def write(path, data, gid):
-    descriptor, temporary = tempfile.mkstemp(prefix='.'+path.name+'.', dir=path.parent)
-    temporary = Path(temporary)
+def publish(policy, secrets, gid):
+    # The package includes proxy.conf at top level. Both sections share one
+    # inode, which remains readable via any daemon's existing read-only bind.
+    pending = RUNTIME/'.pending'
     try:
-        with os.fdopen(descriptor, 'wb') as stream:
-            os.fchmod(stream.fileno(), 0o640)
-            os.fchown(stream.fileno(), 0, gid)
-            stream.write(data.encode('ascii'))
+        with pending.open('xb') as stream:
+            stream.write(clients_configuration(policy, secrets).encode('ascii'))
+            stream.write(proxy_configuration(policy, secrets).encode('ascii'))
             stream.flush()
+            os.fchown(stream.fileno(), 0, gid)
+            os.fchmod(stream.fileno(), 0o640)
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        os.replace(pending, RUNTIME/'radius.conf')
     finally:
-        temporary.unlink(missing_ok=True)
+        pending.unlink(missing_ok=True)
 
 
 def clients_configuration(policy, secrets):
@@ -125,36 +137,59 @@ def proxy_configuration(policy, secrets):
     proxy = policy['proxy']
     address_field = 'ipv6addr' if ':' in proxy['address'] else 'ipaddr'
     lines = [
-        'proxy server {', '    default_fallback = no', '}',
+        'proxy server {', '    default_fallback = no',
+        *(['    wake_all_if_all_dead = yes'] if policy['fallback_clients'] else []), '}',
         'home_server lanrith_upstream {', '    type = auth',
         '    '+address_field+' = '+proxy['address'], '    port = 1812', '    proto = udp',
         '    secret = "'+secrets[proxy['credential_name']]+'"',
-        '    src_ipaddr = '+proxy['source'], '    require_message_authenticator = yes', '}',
-        'home_server lanrith_fallback {', '    virtual_server = lanrith_mab_fallback', '}',
+        '    src_ipaddr = '+proxy['source'], '    require_message_authenticator = yes',
+        *(['    response_window = '+str(proxy['response_window']), '    status_check = none']
+          if policy['fallback_clients'] else []), '}',
         'home_server_pool lanrith_pool {', '    type = fail-over',
         '    home_server = lanrith_upstream',
     ]
-    if policy['fallback_clients']:
-        lines.append('    home_server = lanrith_fallback')
     lines += ['}', 'realm lanrith {', '    auth_pool = lanrith_pool', '    nostrip', '}',
               'realm NULL {', '    auth_pool = lanrith_pool', '}',
               'realm DEFAULT {', '    auth_pool = lanrith_pool', '}']
     return '\n'.join(lines)+'\n'
 
 
+def stage_once(path):
+    group = grp.getgrnam('freerad').gr_gid
+    descriptor = os.open(RUNTIME, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (0, group, 0o700):
+            raise RadiusRuntimeError('RADIUS runtime directory differs.')
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # A previous process may have been killed before the commit.
+        (RUNTIME/'.pending').unlink(missing_ok=True)
+        policy, references = load(path)
+        secrets = {name: credential(name) for name in references}
+        publish(policy, secrets, group)
+    finally:
+        os.close(descriptor)
+
+
 def stage(path=MANIFEST):
     if os.getuid() != 0 or os.geteuid() != 0:
         raise RadiusRuntimeError('RADIUS staging requires root.')
-    policy, references = load(path)
-    group = grp.getgrnam('freerad').gr_gid
-    info = RUNTIME.lstat()
-    if not stat.S_ISDIR(info.st_mode):
-        raise RadiusRuntimeError('RADIUS runtime directory differs.')
-    os.chown(RUNTIME, 0, group)
-    os.chmod(RUNTIME, 0o750)
-    secrets = {name: credential(name) for name in references}
-    write(RUNTIME/'clients.conf', clients_configuration(policy, secrets), group)
-    write(RUNTIME/'proxy.conf', proxy_configuration(policy, secrets), group)
+    deadline = time.monotonic() + RETRY_SECONDS
+    delay = 0.25
+    while True:
+        try:
+            stage_once(path)
+            return
+        except OSError as error:
+            remaining = deadline - time.monotonic()
+            if error.errno not in RETRYABLE or remaining <= 0:
+                raise
+            if delay == 0.25:
+                print('radius-runtime: retrying staging after '+errno.errorcode[error.errno], file=os.sys.stderr)
+            time.sleep(min(delay, remaining))
+            if time.monotonic() >= deadline:
+                raise
+            delay = min(delay * 2, 2)
 
 
 def main(arguments=None):
@@ -165,7 +200,8 @@ def main(arguments=None):
         if args.operation == 'stage':
             stage()
     except (OSError, KeyError, TypeError, ValueError) as error:
-        print('radius-runtime: '+type(error).__name__+'; service remains closed', file=os.sys.stderr)
+        reason = errno.errorcode.get(error.errno, 'I/O error') if isinstance(error, OSError) else type(error).__name__
+        print('radius-runtime: '+reason+'; service remains closed', file=os.sys.stderr)
         return 1
     return 0
 

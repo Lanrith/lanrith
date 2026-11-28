@@ -6,14 +6,18 @@ from pathlib import PurePosixPath
 import re
 import tarfile
 
+from .ids_package import ENGINE, PACKAGE
 from .release import ReleaseError, file_record, require
 
 
-CHECKS = {'generated-native-configuration', 'generated-command-root-working-directory',
+EXECUTABLE = '2fe72c4bc76f8c51dac8ed5dbad154d9b996ef8ad84287932f3a7cfa685ca08c'
+CHECKS = {'supported-engine-and-debian-package', 'dual-stack-direction-and-rate', 'generated-native-configuration',
+          'generated-command-root-working-directory',
           'dedicated-uid-net-raw', 'wan-only-no-firewall-mutation', 'forwarding-through-detector-outage'}
 IMPLEMENTATION = {'lanrith/ids.py', 'lanrith/ids_qualification.py', 'lanrith/config.py',
     'lanrith/intent.py', 'lanrith/firewall.py', 'lanrith/runtime_plan.py',
-    'tests/ids_native.py', 'tests/packets.py', 'tests/test_intent.py', 'tests/test_ids.py',
+    'tests/ids_native.py', 'tests/ids_rule_fixture.py', 'lanrith/ids_package.py', 'lanrith/ids_observer.py',
+    'tests/packets.py', 'tests/test_intent.py', 'tests/test_ids.py',
     'scripts/qualify-ids.py', 'scripts/build-base.py', 'scripts/qualify-base.py', 'lanrith/admission.py',
     'mkosi/base/mkosi.extra/usr/share/lanrith/suricata.rules'}
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')
@@ -73,7 +77,8 @@ def validate(value, filesystem_sha256, *, project=None, now=None):
             isinstance(filesystem_sha256, str) and SHA256.fullmatch(filesystem_sha256) and
             value.get('filesystem_sha256') == filesystem_sha256 and value.get('base_binary_match') is True and
             isinstance(value.get('binary_sha256'), str) and SHA256.fullmatch(value['binary_sha256']) and
-            value['binary_sha256'] == value.get('base_binary_sha256') and
+            value['binary_sha256'] == value.get('base_binary_sha256') == EXECUTABLE and
+            value.get('engine_version') == ENGINE and value.get('package_version') == PACKAGE and
             value.get('daemon_working_directory') == '/' and value.get('no_new_privileges') is True and
             type(value.get('detector_uid')) is int and 0 < value['detector_uid'] < 65535 and
             type(value.get('effective_capabilities')) is int and value['effective_capabilities'] == 1 << 13 and

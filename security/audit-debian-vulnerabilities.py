@@ -27,7 +27,7 @@ ARCHITECTURE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 SOURCE_RE = re.compile(r"([a-z0-9][a-z0-9+.-]+)(?: \(([^()\s]+)\))?")
 BUILT_USING_RE = re.compile(r"([a-z0-9][a-z0-9+.-]+)\s*\(\s*=\s*([^()\s,]+)\s*\)")
 KERNEL_PAYLOAD_RE = re.compile(r"linux-image-[0-9][a-z0-9.+~:-]*")
-SCANNER_VERSION = "3"
+SCANNER_VERSION = "4"
 
 
 def fail(message: str) -> NoReturn:
@@ -413,6 +413,27 @@ def evaluate(
     return actionable, evaluated, unresolved, undetermined, tracked_sources
 
 
+def sensor_backport_assessment(records, tracker):
+    """Also compare the literal authenticated backport version to Debian source fixes."""
+    sensors = [record for record in records if record["package"] == "suricata" and "~bpo" in record["version"]]
+    if not sensors:
+        return [], 0
+    record = sensors[0]
+    if (len(sensors) != 1 or record["source"] != "suricata" or record["provenance"] != "debian-metadata" or
+            record["version"] != record["source_version"]):
+        fail("Suricata backport requires its authenticated Debian source version")
+    advisories = tracker.get("suricata")
+    if not isinstance(advisories, dict) or not advisories:
+        fail("missing Debian source tracker coverage for the Suricata backport")
+    for entry in advisories.values():
+        if not isinstance(entry, dict) or not isinstance(entry.get("releases"), dict) or "sid" not in entry["releases"]:
+            fail("missing Debian unstable source fix status for a Suricata advisory")
+    # Stable's packet processor can be on an older branch. Keep every stable
+    # finding and separately apply the same severity policy to the source fixes.
+    findings, evaluated, _, _, _ = evaluate(sensors, tracker, "sid")
+    return findings, evaluated
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, type=Path)
@@ -457,6 +478,8 @@ def main() -> None:
     actionable, evaluated, unresolved, undetermined, tracked_sources = evaluate(
         records, tracker, args.suite
     )
+    sensor_findings, sensor_checked = sensor_backport_assessment(records, tracker)
+    actionable += [finding for finding in sensor_findings if finding not in actionable]
     if actionable:
         for cve, source, installed, fixed, reason in actionable:
             if reason == "available-fix":
@@ -501,6 +524,7 @@ def main() -> None:
         f"advisory_source_package_count={len({advisory_source(record)[0] for record in records})}",
         "kernel_advisory_mapping=authenticated-linux-payload-version",
         f"tracked_source_package_count={tracked_sources}",
+        f"suricata_backport_source_advisories_checked={sensor_checked}",
         f"cves_evaluated={evaluated}",
         f"unresolved_tracker_records={sum(unresolved.values())}",
         f"unresolved_high_urgency={unresolved['high']}",

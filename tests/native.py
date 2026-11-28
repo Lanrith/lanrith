@@ -41,7 +41,10 @@ for example in ('minimal.yaml', 'segmented.yaml'):
                 pass
             else:
                 raise AssertionError('Unsafe interface positive control was not detected.')
-            subprocess.run(['/usr/lib/systemd/systemd-sysctl', str(sysctls)], check=True)
+            subprocess.run(['nft', '--check', '--file', str(output/'etc/nftables.conf')], check=True)
+            subprocess.run(['nft', '--file', str(output/'etc/nftables.conf')], check=True)
+            subprocess.run(['/usr/lib/systemd/systemd-sysctl', str(output/'usr/lib/lanrith/firewall-forwarding.conf'),
+                            str(sysctls)], check=True)
             network_hardening()
             for name in names:
                 subprocess.run(['ip', 'link', 'add', name, 'type', 'dummy'], check=True)
@@ -49,8 +52,6 @@ for example in ('minimal.yaml', 'segmented.yaml'):
             # Later links must inherit the safe defaults too. Reading actual
             # procfs values avoids trusting the generated file as its own oracle.
             network_hardening()
-            subprocess.run(['nft', '--check', '--file', str(output/'etc/nftables.conf')], check=True)
-            subprocess.run(['nft', '--file', str(output/'etc/nftables.conf')], check=True)
             subprocess.run(['unbound-checkconf', str(output/'etc/unbound/unbound.conf.d/lanrith.conf')], check=True)
             # No gateway addresses have been assigned yet, as can happen
             # before IPv6 DAD completes during boot. Explicit DNS listeners

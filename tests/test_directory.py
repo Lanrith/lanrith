@@ -1,9 +1,12 @@
 """Directory connectivity and observations stay separate from delegated access."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
 import socket
+import ssl
+import subprocess
 import tempfile
 import time
 import unittest
@@ -26,13 +29,14 @@ def fixture():
 
 class DirectoryTests(unittest.TestCase):
     def test_shared_radius_source_is_opt_in_and_limited_to_the_directory_tuple(self):
-        from test_radius import declaration as with_radius
+        from test_radius import declaration as with_radius, provider_export
         value = with_radius()
         settings = value['identity']['directories']['directory']
         self.assertNotIn('chain directory_source', config.render(value)['etc/nftables.conf'])
         settings['url'] = 'ldap+starttls://directory.example.test'
         settings['addresses'] = ['192.168.10.30', 'fd42:1234:5678:10::30']
         settings['source_service'] = 'radius'
+        value['identity']['radius']['admission']['provider_policy'] = provider_export(directory_url=settings['url'])
         rules = config.render(value)['etc/nftables.conf']
         self.assertEqual([s.strip() for s in rules.splitlines() if 'meta iif 0' in s], [
             f'meta iif 0 meta skuid "router-policy-reader" oifname "lan.1" {family} saddr {{ {gateway} }} '
@@ -65,7 +69,7 @@ class DirectoryTests(unittest.TestCase):
             'mode': 'ldaps', 'addresses': ['fd42:1234:5678:10::30'],
             'ca_file': '/usr/share/lanrith/trust/directory.pem'})
         self.assertNotIn('bind_dn', json.dumps(probe))
-        self.assertIn('lanrith-directory-health.timer', json.loads(files['usr/share/lanrith/health.json'])['units'])
+        self.assertNotIn('lanrith-directory-health.timer', json.loads(files['usr/share/lanrith/health.json'])['units'])
         collector = files['usr/lib/systemd/system/lanrith-router-metrics.service']
         self.assertIn('SupplementaryGroups=lanrith-directory-health _chrony\n', collector)
         self.assertIn('CapabilityBoundingSet=CAP_NET_ADMIN\n', collector)
@@ -181,6 +185,10 @@ class DirectoryTests(unittest.TestCase):
             runtime.publish(value, path)
             self.assertEqual(path.stat().st_mode & 0o777, 0o640)
             self.assertEqual(runtime.read_observation(path, owner=os.getuid()), value)
+            self.assertEqual(runtime.read_observation(path, owner=os.getuid(), now=now+90*10**9), value)
+            for seconds in (91, 181):
+                with self.assertRaises(ValueError):
+                    runtime.read_observation(path, owner=os.getuid(), now=now+seconds*10**9)
             for change in ({'boot_id': 'previous'}, {'observed_monotonic_ns': now-100*10**9},
                            {'observed_monotonic_ns': now+100*10**9}, {'tls_verified': 1},
                            {'endpoints_verified': 0}, {'certificate_not_after_seconds': 0},
@@ -197,6 +205,55 @@ class DirectoryTests(unittest.TestCase):
             alias.symlink_to(path)
             with self.assertRaises(OSError):
                 runtime.read_observation(alias, owner=os.getuid())
+
+    def test_reader_attempt_accepts_only_fresh_journal_records_from_the_service(self):
+        collector = router_metrics_runtime
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', '')
+        mono = time.monotonic_ns()//1000
+        wall = time.time_ns()//1000
+        record = {'_UID': '1701', '_SYSTEMD_UNIT': collector.READER_UNIT, '_TRANSPORT': 'stdout',
+                  '_BOOT_ID': boot, '__MONOTONIC_TIMESTAMP': str(mono), '__REALTIME_TIMESTAMP': str(wall)}
+        event = {'schema_version': 1, 'outcome': 'applied', 'grant_count': 0, 'denial_count': 0}
+        with mock.patch.object(collector.pwd, 'getpwnam', return_value=mock.Mock(pw_uid=1701)), \
+                mock.patch.object(collector, 'command') as command:
+            for outcome in sorted(collector.READER_OUTCOMES):
+                row = {**record, 'MESSAGE': json.dumps({**event, 'outcome': outcome})}
+                command.return_value = json.dumps(row)
+                self.assertEqual(collector.reader_attempt(10), (outcome, wall/1_000_000))
+                self.assertIn('_UID=1701', command.call_args.args[0])
+                self.assertIn('_SYSTEMD_UNIT=lanrith-policy-reader.service', command.call_args.args[0])
+                self.assertEqual(command.call_args.args[-1], 4096)
+            row = {**record, 'MESSAGE': json.dumps(event)}
+            for change in ({'_UID': '0'}, {'_SYSTEMD_UNIT': 'other.service'}, {'_TRANSPORT': 'journal'},
+                           {'_BOOT_ID': '0'*32}, {'__MONOTONIC_TIMESTAMP': str(mono-91_000_000)},
+                           {'__MONOTONIC_TIMESTAMP': str(mono+10_000_000)}, {'__REALTIME_TIMESTAMP': str(wall+60_000_000)},
+                           {'MESSAGE': 'unavailable'}, {'MESSAGE': json.dumps({**event, 'outcome': 'unexpected'})},
+                           {'MESSAGE': json.dumps({**event, 'extra': 'private'})},
+                           {'MESSAGE': json.dumps({**event, 'grant_count': True})}):
+                command.return_value = json.dumps({**row, **change})
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    collector.reader_attempt(10)
+
+    def test_trust_requires_every_bounded_certificate_and_reports_only_its_fingerprint_and_time(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            key = Path(temporary)/'key'
+            cert = subprocess.check_output(['openssl', 'req', '-x509', '-newkey', 'ec',
+                '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '3', '-subj', '/CN=Synthetic',
+                '-keyout', str(key)], stderr=subprocess.DEVNULL)
+        fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.decode())).hexdigest()
+        deadline = time.monotonic()+10
+        with mock.patch.object(runtime, 'load', return_value={'ca_file': '/usr/share/lanrith/trust/test.pem'}), \
+                mock.patch.object(runtime, 'read', return_value=cert+cert) as read:
+            summary = runtime.trust_expiries(deadline)
+            self.assertEqual(list(summary), [fingerprint])
+            self.assertTrue(time.time() < summary[fingerprint] <= time.time()+3*86400)
+            for invalid in (b'', cert*17, cert+b'unexpected', cert+cert.replace(b'MI', b'!!')):
+                read.return_value = invalid
+                with self.assertRaises(ValueError):
+                    runtime.trust_expiries(deadline)
+            read.side_effect = PermissionError
+            with self.assertRaises(OSError):
+                runtime.trust_expiries(deadline)
 
     def test_metrics_distinguish_verified_failure_and_unavailable_or_disabled(self):
         policy = metrics.router_manifest(config.normalize(fixture()))

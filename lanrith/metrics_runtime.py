@@ -1,15 +1,21 @@
 """Fixed-destination, bounded HTTP metrics proxy; never collect host metrics here."""
 
 import asyncio
+from contextlib import suppress
 import ipaddress as ip
 import json
 from pathlib import Path
 import re
 import socket
+import sys
+import tempfile
 
 
+BACKEND_PORT = 9101
 MAXIMUM_CLIENTS = 32
 MAXIMUM_RESPONSE = 16 * 1024 * 1024
+REQUEST_SECONDS = 15
+BLOCK_BYTES = 16384
 FIELD_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
 
@@ -57,39 +63,172 @@ async def close(writer):
             pass
 
 
+class ResponseTooLarge(Exception):
+    pass
+
+
+class ClientClosed(Exception):
+    pass
+
+
+def response_framing(header):
+    """Accept the two HTTP/1.1 response forms used by the fixed Go exporter."""
+    if len(header) > BLOCK_BYTES:
+        raise ValueError('Oversized exporter header')
+    status, *lines = header[:-4].split(b'\r\n')
+    if not re.fullmatch(rb'HTTP/1\.1 200 [\x20-\x7e]*', status):
+        raise ValueError('Exporter unavailable')
+    fields = {}
+    for line in lines:
+        name, colon, value = line.partition(b':')
+        if not colon or not FIELD_NAME.fullmatch(name) or any(c < 32 and c != 9 or c == 127 for c in value):
+            raise ValueError('Invalid exporter header')
+        name = name.lower()
+        if name in (b'content-type', b'content-length', b'transfer-encoding', b'content-encoding', b'trailer'):
+            if name in fields:
+                raise ValueError('Duplicate exporter header')
+            fields[name] = value.strip(b' \t')
+    content_type = fields.get(b'content-type', b'')
+    if content_type.partition(b';')[0].lower() != b'text/plain' or b'content-encoding' in fields or b'trailer' in fields:
+        raise ValueError('Unsupported exporter representation')
+    length = fields.get(b'content-length')
+    encoding = fields.get(b'transfer-encoding')
+    if encoding is not None and encoding.lower() == b'chunked' and length is None:
+        return content_type, None
+    if encoding is not None or length is None or not re.fullmatch(rb'[0-9]{1,16}', length):
+        raise ValueError('Missing or ambiguous exporter framing')
+    if int(length) + len(header) > MAXIMUM_RESPONSE:
+        raise ResponseTooLarge
+    return content_type, int(length)
+
+
+async def body_blocks(reader, length, header_size):
+    total = header_size
+    while True:
+        if length is None:
+            # Go sends plain hexadecimal sizes and an empty trailer section.
+            line = await reader.readuntil(b'\r\n')
+            if not re.fullmatch(rb'[0-9a-fA-F]{1,16}\r\n', line):
+                raise ValueError('Invalid exporter chunk size')
+            size = int(line, 16)
+            total += len(line) + 2  # Count the chunk line and trailing CRLF.
+        else:
+            size = length
+        total += size
+        if total > MAXIMUM_RESPONSE:
+            raise ResponseTooLarge
+        remaining = size
+        while remaining:
+            block = await reader.readexactly(min(remaining, BLOCK_BYTES))
+            remaining -= len(block)
+            yield block
+        if length is not None:
+            return
+        if await reader.readexactly(2) != b'\r\n':
+            raise ValueError('Incomplete exporter chunk')
+        if size == 0:
+            return
+
+
+async def send(writer, data):
+    try:
+        writer.write(data)
+        await writer.drain()
+    except OSError as error:
+        raise ClientClosed from error
+
+
 async def serve(settings):
     settings = validate(settings)
     clients = set()
+    staged = 0
+    failures = dict.fromkeys(('size', 'timeout', 'backend'), 0)
+    report_timer = None
+
+    def report():
+        nonlocal report_timer
+        print('Metrics proxy failures: '+' '.join(f'{k}={v}' for k, v in failures.items()), file=sys.stderr, flush=True)
+        failures.update(dict.fromkeys(failures, 0))
+        report_timer = None
+
+    def failed(reason):
+        nonlocal report_timer
+        failures[reason] += 1
+        if report_timer is None:
+            report_timer = asyncio.get_running_loop().call_later(30, report)
 
     async def proxy(reader, writer):
+        nonlocal staged
         task = asyncio.current_task()
         if len(clients) >= MAXIMUM_CLIENTS:
             await close(writer)
             return
         clients.add(task)
         backend = None
+        accepted = False
+        started = False
+        reserved = 0
         try:
-            async with asyncio.timeout(15):
-                header = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 5)
-                if not valid_request(header):
-                    writer.write(b'HTTP/1.0 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
-                    await writer.drain()
+            async with asyncio.timeout(REQUEST_SECONDS):
+                try:
+                    header = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 5)
+                except (asyncio.IncompleteReadError, OSError, TimeoutError, asyncio.LimitOverrunError):
+                    # An independent TCP connect/close probe stops here.
                     return
-                response, backend = await asyncio.open_connection(settings['backend'], 9101,
-                    local_addr=(settings['source'], 0), limit=32768)
-                # Forward no client headers, credentials, request body or URL.
-                backend.write(b'GET /metrics HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+                if not valid_request(header):
+                    await send(writer, b'HTTP/1.0 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+                    return
+                accepted = True
+                version = header.split(b'\r\n', 1)[0][-8:]
+                response, backend = await asyncio.open_connection(settings['backend'], BACKEND_PORT,
+                    local_addr=(settings['source'], 0), limit=BLOCK_BYTES)
+                backend.write(b'GET /metrics HTTP/1.1\r\nHost: localhost\r\nAccept: text/plain; version=0.0.4\r\n'
+                              b'Accept-Encoding: identity\r\nConnection: close\r\n\r\n')
                 await backend.drain()
-                total = 0
-                while data := await response.read(16384):
-                    total += len(data)
-                    if total > MAXIMUM_RESPONSE:
-                        break
-                    writer.write(data)
-                    await writer.drain()
-        except (OSError, ConnectionError, TimeoutError, asyncio.LimitOverrunError, asyncio.IncompleteReadError):
-            pass
+                response_header = await response.readuntil(b'\r\n\r\n')
+                content_type, length = response_framing(response_header)
+                prefix = version+b' 200 OK\r\nConnection: close\r\nContent-Type: '+content_type+b'\r\n'
+                blocks = body_blocks(response, length, len(response_header))
+                if version == b'HTTP/1.0' and length is None:
+                    # PrivateTmp; cap staged bytes across all legacy clients, including slow readers.
+                    with tempfile.TemporaryFile() as spool:
+                        async for block in blocks:
+                            if staged + len(block) > MAXIMUM_RESPONSE:
+                                raise ResponseTooLarge
+                            staged += len(block)
+                            reserved += len(block)
+                            spool.write(block)
+                        spool.seek(0)
+                        started = True
+                        await send(writer, prefix+b'Content-Length: '+str(reserved).encode()+b'\r\n\r\n')
+                        while block := spool.read(BLOCK_BYTES):
+                            await send(writer, block)
+                else:
+                    framing = b'Transfer-Encoding: chunked' if length is None else b'Content-Length: '+str(length).encode()
+                    started = True
+                    await send(writer, prefix+framing+b'\r\n\r\n')
+                    async for block in blocks:
+                        if length is None:
+                            block = b'%x\r\n' % len(block)+block+b'\r\n'
+                        await send(writer, block)
+                    if length is None:
+                        await send(writer, b'0\r\n\r\n')
+            return
+        except ClientClosed:
+            return
+        except ResponseTooLarge:
+            failed('size')
+        except TimeoutError:
+            failed('timeout')
+        except (OSError, ValueError, asyncio.LimitOverrunError, asyncio.IncompleteReadError):
+            failed('backend')
         finally:
+            staged -= reserved
+            # After committing headers, closing short of the advertised length or
+            # final chunk makes the whole scrape fail. Never append an HTTP error.
+            if accepted and not started and not writer.is_closing():
+                with suppress(OSError):
+                    writer.write(b'HTTP/1.0 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
             await close(backend)
             await close(writer)
             clients.discard(task)
@@ -108,6 +247,9 @@ async def serve(settings):
         for task in tuple(clients):
             task.cancel()
         await asyncio.gather(*clients, return_exceptions=True)
+        if report_timer is not None:
+            report_timer.cancel()
+            report()
 
 
 if __name__ == '__main__':

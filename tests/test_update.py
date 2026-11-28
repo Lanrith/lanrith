@@ -67,7 +67,7 @@ class UpdatePlanTests(unittest.TestCase):
                 def flush(descriptor):
                     info=os.fstat(descriptor)
                     if stat.S_ISDIR(info.st_mode):
-                        kind='destination' if info.st_ino==destination.stat().st_ino else 'parent'
+                        kind='parent' if info.st_ino==inbox.stat().st_ino else 'destination'
                         directories.append(kind)
                         if kind==fail_at:
                             raise OSError(5,'synthetic directory writeback failure')
@@ -86,15 +86,42 @@ class UpdatePlanTests(unittest.TestCase):
                         patch.object(update,'geometry',return_value=[]), \
                         patch.object(update,'upload_limits',return_value={role:4096 for role in files}), \
                         patch.object(update.shutil,'disk_usage',return_value=SimpleNamespace(free=1024**3)), \
+                        patch.object(update,'authenticated_manifest',return_value=manifest), \
                         patch.object(update,'verify',return_value=manifest), \
+                        patch('lanrith.image_operation.admission_lock'), \
                         patch.object(update.os,'fsync',side_effect=flush), \
-                        patch.object(update,'stage',side_effect=staged) as stage:
+                        patch.object(update,'stage_locked',side_effect=staged) as stage:
                     if fail_at is None:
                         self.assertEqual(update.promote(source,installed),{'result':'staged'})
                     else:
                         with self.assertRaises(OSError):
                             update.promote(source,installed)
                         stage.assert_not_called()
+
+    @unittest.skipUnless(os.geteuid() == 0, 'Staging requires protected root-owned files.')
+    def test_staging_rechecks_health_before_writing_a_slot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root/'state/update-inbox/17'
+            source.mkdir(parents=True, mode=0o700)
+            installed = root/'installed.json'
+            name = 'lanrith_10.efi'
+            installed.write_text(json.dumps({'state_directory': str(root/'state'), 'uki_name': name}))
+            def command(args, timeout=None):
+                if args == ['bootctl', '--print-stub-path']:
+                    return str(root/name)
+                self.assertEqual(args, ['systemctl', 'start', 'lanrith-health.service'])
+                self.assertGreater(timeout, 0)
+                raise ReleaseError('fixture required listener unavailable')
+
+            with patch.object(update, 'command', command), patch.object(update, 'IMAGE_LOCK_DIR', root), \
+                    patch.object(update, 'boot_esp', return_value=root), \
+                    patch.object(update, 'accepted_boot', return_value=root/name), \
+                    patch.object(update, 'require_default') as selector:
+                with self.assertRaisesRegex(ReleaseError, 'required listener'):
+                    update.stage_locked(source, installed)
+                selector.assert_not_called()
+                self.assertTrue((root/'lanrith-update.lock').is_file())
 
     def test_failed_boot_image_flush_cannot_select_a_candidate(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -184,19 +211,29 @@ class UpdatePlanTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseError, '^Update command timed out: systemd-sysupdate$'):
                 update.command(['/usr/lib/systemd/systemd-sysupdate', 'update', '/private/example-secret'])
 
+    def test_root_resolver_rejects_a_different_block_source_or_filesystem(self):
+        for mode, mounted in ((stat.S_IFREG, 18), (stat.S_IFBLK, 19)):
+            with self.subTest(mode=mode, mounted=mounted), \
+                    patch.object(update, 'command', return_value='/dev/mapper/example'), \
+                    patch.object(os, 'stat', side_effect=[SimpleNamespace(st_mode=mode, st_rdev=18),
+                                                          SimpleNamespace(st_dev=mounted)]), \
+                    self.assertRaisesRegex(ReleaseError, 'differs from the mounted root'):
+                update.mounted_root_device('/sysroot')
+
     def test_inactive_partition_is_busy_when_a_child_mapping_is_mounted(self):
         device = {'name': '/dev/lanrith-test-disk2', 'type': 'part', 'pkname': '/dev/lanrith-test-disk',
                   'partn': 2, 'parttype': update.GUIDS['root'], 'partlabel': '_empty',
                   'partuuid': '12345678-abcd-5678-9abc-123456789abc', 'size': 4096,
                   'mountpoints': [None], 'children': [{'name': '/dev/mapper/foreign', 'type': 'crypt',
                       'mountpoints': ['/mnt/foreign']}]}
-        table = {'label': 'gpt', 'device': '/dev/lanrith-test-disk', 'unit': 'sectors', 'sectorsize': 512,
-                 'partitions': [{'node': device['name'], 'size': 8, 'type': device['parttype'],
+        table = {'label': 'gpt', 'id': device['partuuid'], 'device': '/dev/lanrith-test-disk', 'unit': 'sectors', 'sectorsize': 512,
+                 'partitions': [{'node': device['name'], 'start': 2048, 'size': 8, 'type': device['parttype'],
                                  'name': device['partlabel'], 'uuid': device['partuuid']}]}
         with tempfile.TemporaryDirectory() as temporary:
             sysfs = Path(temporary)
             (sysfs/Path(device['name']).name).mkdir()
             (sysfs/Path(device['name']).name/'partition').write_text('2\n')
+            (sysfs/Path(device['name']).name/'start').write_text('2048\n')
             with patch.object(update, 'command', side_effect=[json.dumps({'partitiontable': table}),
                                                              json.dumps({'blockdevices': [device]})]):
                 rows = update.geometry('/dev/lanrith-test-disk', sysfs=sysfs)
@@ -208,17 +245,20 @@ class UpdatePlanTests(unittest.TestCase):
                   'parttype': None, 'partlabel': None, 'partuuid': None,
                   'size': 4096, 'mountpoints': [None]}
         identity = '12345678-abcd-5678-9abc-123456789abc'
-        part = {'node': device['name'], 'size': 8, 'type': '4d21b016-b534-45c2-a9fb-5c16e091fd2d',
+        part = {'node': device['name'], 'start': 2048, 'size': 8, 'type': '4d21b016-b534-45c2-a9fb-5c16e091fd2d',
                 'name': 'var', 'uuid': identity}
-        table = {'label': 'gpt', 'device': disk, 'unit': 'sectors', 'sectorsize': 512,
+        table = {'label': 'gpt', 'id': identity, 'device': disk, 'unit': 'sectors', 'sectorsize': 512,
                  'partitions': [part]}
-        def observe(observed_table, observed_device, number='8\n'):
+        def observe(observed_table, observed_device, number='8\n', start='2048\n'):
             with tempfile.TemporaryDirectory() as temporary:
                 sysfs = Path(temporary)
                 (sysfs/Path(device['name']).name).mkdir()
                 (sysfs/Path(device['name']).name/'partition').write_text(number)
-                with patch.object(update, 'command', side_effect=[json.dumps({'partitiontable': observed_table}),
-                                                                  json.dumps({'blockdevices': [observed_device]})]):
+                (sysfs/Path(device['name']).name/'start').write_text(start)
+                (sysfs/Path(device['name']).name/'holders').mkdir()
+                replies = [json.dumps({'partitiontable': observed_table}), json.dumps({'blockdevices': [observed_device]})]
+                with patch.object(update, 'claimed', return_value=False), patch.object(update.time, 'sleep'), \
+                        patch.object(update, 'command', side_effect=replies*3):
                     return update.geometry(disk, sysfs=sysfs)
         rows = observe(table, device)
         self.assertEqual((rows[0]['type'], rows[0]['label'], rows[0]['uuid']),
@@ -234,6 +274,16 @@ class UpdatePlanTests(unittest.TestCase):
                 (table, {**device, 'pkname': '/dev/foreign'})):
             with self.subTest(table=changed_table, device=changed_device), self.assertRaises(ReleaseError):
                 observe(changed_table, changed_device)
+        for sector in (512, 4096):
+            logical = {**table, 'sectorsize': sector, 'partitions': [{**part, 'size': 4096//sector}]}
+            self.assertEqual(observe(logical, device, start=str(2048*sector//512))[0]['start_bytes'], 2048*sector)
+            with self.assertRaises(update.StaleExtent):
+                observe(logical, device, start=str(2048*sector//512+1))
+        with patch.object(update, '_geometry', side_effect=[update.StaleExtent(), rows]) as probe, \
+                patch.object(update.time, 'sleep') as sleep:
+            self.assertEqual(update.geometry(disk), rows)
+            self.assertEqual(probe.call_count, 2)
+            sleep.assert_called_once()
         for number in ('', '0', '129', 'not-a-partition'):
             with self.subTest(number=number), self.assertRaises(ReleaseError):
                 observe(table, device, number)

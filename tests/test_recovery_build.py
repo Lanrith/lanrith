@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from lanrith import build, config, recovery_build, release
+from lanrith import build, cli, config, recovery_build, release
 
 
 class RecoveryAssemblyTests(unittest.TestCase):
@@ -126,6 +126,24 @@ class RecoveryAssemblyTests(unittest.TestCase):
             self.assertFalse(any(p.suffix in ('.yaml', '.yml') for p in initrd.rglob('*')))
             with self.assertRaisesRegex(release.ReleaseError, 'cannot be exported as an update'):
                 build.update_payload(workspace, identity, root/'update')
+
+    def test_display_only_profile_rejects_interactive_media_before_assembly(self):
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = io.StringIO()
+            args = ['build-recovery', str(Path(__file__).resolve().parents[1]/'examples/minimal.yaml'),
+                    '--qualification', '--version', '0.1.0', '--sequence', '1', '--base', str(root/'base'),
+                    '--initrd-base', str(root/'initrd'), '--workspace', str(root/'assembly'),
+                    '--output', str(root/'media'), '--recovery-disk-by-id', '/dev/disk/by-id/fixture',
+                    '--recovery-passphrase-hash', str(root/'fixture.hash')]
+            with patch.object(cli.sys, 'stderr', output), patch.object(build, 'assembly') as assemble:
+                self.assertEqual(cli.main(args), 1)
+            assemble.assert_not_called()
+            self.assertIn('hardware.boot.recovery_console=tty0', output.getvalue())
+            self.assertIn('hypervisor (hvc)', output.getvalue())
+            self.assertFalse((root/'media').exists())
+            self.assertFalse((root/'assembly').exists())
 
     def test_invalid_credential_fails_before_export_barrier_or_mutation(self):
         with tempfile.TemporaryDirectory(prefix='lanrith-recovery-invalid-') as temporary:

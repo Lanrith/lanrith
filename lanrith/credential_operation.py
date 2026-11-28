@@ -11,7 +11,7 @@ import sys
 import time
 
 from . import credential_store, image_operation
-from .credential_values import validate_catalog
+from .credential_values import FORMATS, consumer_units, validate_catalog
 from .release import canonical, require, unique
 
 
@@ -66,7 +66,7 @@ def control(action, units):
 
 
 def activate(store, *, committed=False):
-    units = [READY, *store.catalog['units']]
+    units = [READY, *consumer_units(store.catalog)]
     checks = [*OBSERVERS, 'boot-complete.target'] if committed else []
     control('reset-failed', [*units, *OBSERVERS] if committed else units)
     # Starting an already active completion observer is a no-op. Never stop,
@@ -92,7 +92,7 @@ def execute(value, selected):
             if store.admitted():
                 return store.status()
             require(accepted != store.identity, 'An accepted image cannot replace credential bindings.')
-            control('stop', [READY, *store.catalog['units']])
+            control('stop', [READY, *consumer_units(store.catalog)])
             status = store.stage(selected['credentials'], allow_replace=replace)
             activate(store)
             return status
@@ -220,7 +220,8 @@ def main(arguments=None):
     commands.add_parser('status')
     commands.add_parser('stage').add_argument('configuration_sha256')
     commands.add_parser('commit').add_argument('transaction_id')
-    for action in ('serve', 'setup', 'gate'):
+    commands.add_parser('gate', help=argparse.SUPPRESS).add_argument('format', nargs='?', choices=sorted(FORMATS))
+    for action in ('serve', 'setup'):
         commands.add_parser(action, help=argparse.SUPPRESS)
     args = parser.parse_args(arguments)
     try:
@@ -241,6 +242,12 @@ def main(arguments=None):
             value = image_operation.policy()
             if args.action == 'setup':
                 setup(value)
+            elif args.format:
+                require(value.get('credential_delivery') == 'image', 'Scoped check requires immutable inputs.')
+                selected = catalog(value)
+                items = [item for item in selected['credentials'] if item['format'] == args.format]
+                require(items, 'No signed credentials for this consumer.')
+                image_ready({'credentials': items})
             else:
                 require(wait_ready(value, committed=False), 'Credential provisioning deadline expired.')
         else:

@@ -17,6 +17,34 @@ class ConfigTests(unittest.TestCase):
     def setUp(self):
         self.example = config.load(ROOT / 'examples/minimal.yaml')
 
+    def test_sudo_services_use_profile_methods_and_retain_login_shell_session(self):
+        for serial in (False, True):
+            self.example['administration']['serial'] = {'enabled': serial}
+            files = config.render(self.example)
+            stack = files['etc/pam.d/lanrith-sudo-auth']
+            self.assertIn('pam_rssh.so auth_key_file=/etc/security/authorized_keys', stack)
+            self.assertEqual('verify-serial-passphrase' in stack, serial)
+            self.assertIn('pam_deny.so', stack)
+            for name, session in (('sudo', 'common-session-noninteractive'), ('sudo-i', 'common-session')):
+                lines = files['etc/pam.d/'+name].splitlines()
+                self.assertIn('@include lanrith-sudo-auth', lines)
+                self.assertIn('@include common-account', lines)
+                self.assertIn('@include '+session, lines)
+                self.assertEqual('session required pam_limits.so' in lines, name == 'sudo-i')
+        self.example['administration'].update(root_access='disabled', serial={'enabled': False})
+        files = config.render(self.example)
+        for name in ('sudo', 'sudo-i', 'lanrith-sudo-auth'):
+            self.assertNotIn('etc/pam.d/'+name, files)
+
+    def test_serial_cooldown_requires_enabled_serial_and_bounded_integers(self):
+        for enabled, attempts, seconds in ((False, 2, 30), (True, 1, 30), (True, 11, 30),
+                                           (True, True, 30), (True, 2, 0), (True, 2, 301), (True, 2, True)):
+            with self.subTest(enabled=enabled, attempts=attempts, seconds=seconds):
+                self.example['administration']['serial'] = {
+                    'enabled': enabled, 'cooldown': {'attempts': attempts, 'seconds': seconds}}
+                with self.assertRaisesRegex(ReleaseError, 'cooldown'):
+                    config.normalize(self.example)
+
     def test_networkd_preserves_routes_owned_by_other_router_components(self):
         files = config.render(self.example)
         ownership = files['etc/systemd/networkd.conf.d/60-lanrith-route-owners.conf']
@@ -32,7 +60,7 @@ class ConfigTests(unittest.TestCase):
             self.assertIn('chain source_guard', firewall)
             self.assertIn('iifname', firewall)
             self.assertNotIn('usr/share/lanrith/resolved.json', files)
-            self.assertEqual(json.loads(files['usr/share/lanrith/health.json'])['schema'], 1)
+            self.assertEqual(json.loads(files['usr/share/lanrith/health.json'])['schema'], 2)
             for network in value['networks'].values():
                 self.assertIn(network['name'], firewall)
             if example == 'segmented.yaml':
@@ -127,6 +155,39 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(manifest['host_key_rotation'], 'retain')
         self.assertFalse(any(path.endswith(('.yaml', '.yml')) for path in disabled))
 
+    def test_ssh_listener_contract_uses_only_selected_gateways_and_port(self):
+        config_value = config.load(ROOT/'examples/segmented.yaml')
+        config_value['administration']['ssh_port'] = 2202
+        files = config.render(config_value)
+        contract = json.loads(files['usr/share/lanrith/ssh-listeners.json'])
+        self.assertEqual(contract, {'interfaces': {'lan.10': ['192.168.10.1', 'fd42:1000:1000:10::1']}, 'port': 2202})
+        listeners = [line.split()[1] for line in files['etc/ssh/sshd_config.d/00-lanrith.conf'].splitlines()
+                     if line.startswith('ListenAddress ')]
+        self.assertEqual(listeners, contract['interfaces']['lan.10'])
+        self.assertIn('Port 2202\n', files['etc/ssh/sshd_config.d/00-lanrith.conf'])
+
+    def test_ssh_limits_and_channel_choices_reject_ambiguous_or_unusable_values(self):
+        for field, entry in (('ssh_forwarding', {'unknown': False}), ('ssh_forwarding', {'x11': 'false'}),
+                             ('ssh_limits', {'max_auth_tries': True}), ('ssh_limits', {'max_auth_tries': 0}),
+                             ('ssh_limits', {'client_alive_count_max': -1}),
+                             ('ssh_limits', {'client_alive_interval_seconds': 2147483648}),
+                             ('ssh_limits', {'login_grace_seconds': '30s'})):
+            with self.subTest(field=field, entry=entry), self.assertRaises(ReleaseError):
+                value = copy.deepcopy(self.example)
+                value['administration'][field] = entry
+                config.normalize(value)
+        self.example['administration']['ssh_limits'] = {'login_grace_seconds': 0, 'client_alive_count_max': 0,
+                                                        'client_alive_interval_seconds': 0}
+        self.example['administration']['ssh_forwarding'] = {'tcp': False, 'agent': False}
+        snippet = config.render(self.example)['etc/ssh/sshd_config.d/00-lanrith.conf']
+        for line in ('AllowAgentForwarding no', 'AllowTcpForwarding no', 'LoginGraceTime 0', 'ClientAliveCountMax 0', 'ClientAliveInterval 0'):
+            self.assertIn(line, snippet.splitlines())
+        self.assertNotIn('AllowStreamLocalForwarding', snippet)
+        self.assertNotIn('X11Forwarding', snippet)
+        self.example['administration'].update(root_access='disabled', ssh_forwarding={'agent': True})
+        with self.assertRaisesRegex(ReleaseError, 'Rootless SSH'):
+            config.normalize(self.example)
+
     def test_host_key_recovery_rotation_is_a_build_time_generation(self):
         value = copy.deepcopy(self.example)
         value['administration']['host_key_rotation'] = '0123456789abcdef0123456789abcdef'
@@ -139,6 +200,21 @@ class ConfigTests(unittest.TestCase):
             changed['administration']['host_key_rotation'] = invalid
             with self.subTest(invalid=invalid), self.assertRaises(ReleaseError):
                 config.normalize(changed)
+
+    def test_ssh_host_key_pin_requires_a_canonical_fingerprint_and_selected_generation(self):
+        pin = {'generation': '1'*32, 'fingerprint': 'SHA256:'+'A'*43}
+        admin = self.example['administration']
+        admin['host_key_pin'] = pin
+        files = config.render(self.example)
+        self.assertEqual(json.loads(files['usr/share/lanrith/administration.json'])['host_key_pin'], pin)
+        for invalid in (None, {}, {**pin, 'generation': 'old'}, {**pin, 'fingerprint': 'from-disk'},
+                        {**pin, 'fingerprint': 'SHA256:'+'B'*43}, {**pin, 'path': '/var/backup'}):
+            admin['host_key_pin'] = invalid
+            with self.assertRaises(ReleaseError):
+                config.normalize(self.example)
+        admin.update(host_key_pin=pin, host_key_rotation='2'*32)
+        with self.assertRaisesRegex(ReleaseError, 'matching generation'):
+            config.normalize(self.example)
 
     def test_rootless_mode_rejects_serial_recovery_and_unknown_values(self):
         for root_access in (False, 'sometimes'):

@@ -9,7 +9,11 @@ import tarfile
 from .release import ReleaseError, require
 
 
-def extract(source, destination, *, entries, maximum_size, maximum_file, nested=False):
+# Debian uses a tilde in prerelease and backport versions.
+DEBIAN_PACKAGE_PATH = re.compile(r'packages/[a-z0-9][a-z0-9.+-]*_[0-9][A-Za-z0-9.+~-]*_[a-z0-9][a-z0-9-]*\.deb')
+
+
+def extract(source, destination, *, entries, maximum_size, maximum_file, nested=False, debian_packages=False):
     """Reject links, metadata extensions, duplicates and oversized input before copying."""
     destination = Path(destination)
     require(destination.is_dir() and not destination.is_symlink() and not any(destination.iterdir()),
@@ -59,8 +63,10 @@ def extract(source, destination, *, entries, maximum_size, maximum_file, nested=
                     extended = {}
                 name = member.name.rstrip('/') if member.isdir() else member.name
                 parts = name.split('/')
-                require(name and len(name) <= 255 and all(re.fullmatch(r'[A-Za-z0-9_.+@-]{1,100}', part)
-                        and part not in ('.', '..') for part in parts) and
+                plain = all(re.fullmatch(r'[A-Za-z0-9_.+@-]+', part) for part in parts)
+                package = debian_packages and member.isfile() and DEBIAN_PACKAGE_PATH.fullmatch(name)
+                require(name and len(name) <= 255 and (plain or package) and
+                        all(0 < len(part) <= 100 and part not in ('.', '..') for part in parts) and
                         (nested or len(parts) == 1) and name not in seen,
                         'Unsafe or duplicate archive path.')
                 seen.add(name)

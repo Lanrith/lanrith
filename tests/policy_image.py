@@ -38,8 +38,8 @@ def main():
         (secret/'test.key').chmod(0o600)
         value = declaration()
         value['networks']['home']['vlan'] = 1
-        value['services'] = {'discovery': {'enabled': True, 'domain': 'devices.example.test',
-            'alias_prefix': 'lab-', 'networks': ['home', 'devices']}}
+        value['services']['discovery'] = {'enabled': True, 'domain': 'devices.example.test',
+            'alias_prefix': 'lab-', 'networks': ['home', 'devices']}
         value['translation'] = {'nat64': {'enabled': True}, 'nat46': {'enabled': True,
             'mappings': {'application': {'ipv4': '10.255.200.10', 'ipv6': 'fd42:1234:5678:10::20'}}}}
         value['runtime'] = {'trust': {'trust/directory.pem': (secret/'test.crt').read_text()}}

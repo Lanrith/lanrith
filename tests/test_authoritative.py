@@ -1,13 +1,16 @@
 """DNS alias resolution, writer boundaries and persistent initialization."""
 
 import base64
+import errno
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from lanrith import authoritative, config, dns_runtime, service_plane
+from lanrith import authoritative, authoritative_migration, config, dns_migration, dns_runtime, service_plane
 from lanrith.release import ReleaseError
 from test_intent import minimal
 
@@ -22,9 +25,12 @@ def declaration():
                       'seeded': {'A': '192.0.2.20'}}}},
         'writers': {
             'first': {'zone': 'example.test', 'sources': {'network': 'home', 'addresses': '192.168.10.20'},
+                      'grants': [{'subtree': '@', 'types': ['A', 'AAAA', 'CNAME', 'SRV', 'TXT']}],
                       'key_name': 'first-key', 'credential': 'first_tsig', 'zone_transfer': True},
             'second': {'zone': 'example.test', 'sources': {'network': 'home', 'addresses': '192.168.10.21'},
+                       'grants': [{'name': 'dynamic-second', 'types': ['A']}],
                        'key_name': 'second-key', 'credential': 'second_tsig'}}}}}
+    value['services']['ntp'] = {'enabled': True, 'upstreams': ['192.0.2.123']}
     return value
 
 
@@ -43,7 +49,8 @@ class AuthoritativeTests(unittest.TestCase):
         files = config.render(value)
         text = files['etc/bind/named.conf']
         self.assertIn('acl "writer-0" { !{ !{ 192.168.10.20/32; }; any; }; key "first-key"; };', text)
-        self.assertIn('allow-update { "writer-0"; "writer-1"; };', text)
+        self.assertIn('grant "first-key" subdomain example.test. A AAAA CNAME SRV TXT;', text)
+        self.assertIn('grant "second-key" name dynamic-second.example.test. A;', text)
         self.assertIn('allow-transfer { "writer-0"; };', text)
         self.assertIn('recursion no;', text)
         zone = files['usr/share/lanrith/zones/db.home.arpa']
@@ -65,6 +72,180 @@ class AuthoritativeTests(unittest.TestCase):
                 self.assertIn('sport { 53 }', line)
         self.assertIn('BindsTo=lanrith-services.service nftables.service lanrith-dns-state.service',
                       files['etc/systemd/system/named.service.d/60-lanrith-services.conf'])
+
+    def test_parent_delegates_only_selected_views(self):
+        value = declaration()
+        value['hardware']['interfaces']['guest'] = {'name': 'guest', 'match': {'mac': '02:00:00:00:30:01'}}
+        value['networks']['guest'] = {'interface': 'guest', 'ipv4': '172.20.30.0/24'}
+        value['services']['discovery'] = {
+            'enabled': True, 'domain': 'devices.test', 'networks': ['home', 'guest'], 'alias_prefix': 'lab-',
+            'views': {'home': 'home', 'other': 'guest'}, 'default_view': 'other'}
+        entry = {'discovery_delegation': {'views': ['home'], 'publish_browse': True},
+                 'records': {'Discovery-Proxy': {'A': '10.255.254.12'}}}
+        zones = value['services']['dns']['authoritative']['zones']
+        zones['devices.test'] = entry
+
+        def render():
+            return config.render(value)['usr/share/lanrith/zones/db.devices.test']
+
+        output = render()
+        for line in ('home IN NS discovery-proxy.devices.test.', 'Discovery-Proxy IN A 10.255.254.12',
+                     'Discovery-Proxy IN AAAA fd42:1234:5678:fe02::12',
+                     'b._dns-sd._udp IN PTR home.devices.test.', 'lb._dns-sd._udp IN PTR home.devices.test.'):
+            self.assertIn(line, output.splitlines())
+        self.assertNotIn('db._dns-sd._udp', output)
+        self.assertNotIn('other.devices.test', output)
+        entry['discovery_delegation']['publish_browse'] = False
+        self.assertNotIn(' IN PTR ', render())
+        entry['discovery_delegation']['publish_browse'] = True
+        for label, record in (('HOME', {'CNAME': 'somewhere.test.'}), ('ns.home', {'A': '192.0.2.8'}),
+                              ('B._DNS-SD._UDP', {'A': '192.0.2.9'}), ('Discovery-Proxy', {'A': '192.0.2.1'})):
+            original = entry['records']
+            entry['records'] = {**original, label: record}
+            with self.subTest(label=label), self.assertRaises(ReleaseError):
+                render()
+            entry['records'] = original
+        for child in ('home.devices.test', 'nested.home.devices.test', 'discovery-proxy.devices.test'):
+            zones[child] = {}
+            with self.subTest(child=child), self.assertRaises(ReleaseError):
+                render()
+            del zones[child]
+        for views in (['unknown'], ['home', 'home'], ['discovery-proxy']):
+            entry['discovery_delegation']['views'] = views
+            with self.subTest(views=views), self.assertRaises(ReleaseError):
+                render()
+        entry['discovery_delegation']['views'] = ['home']
+        entry['persistent'] = True
+        with self.assertRaises(ReleaseError):
+            render()
+        del entry['discovery_delegation']
+        self.assertNotIn('home IN NS ', render())
+
+    def test_direct_readers_and_bounded_grants(self):
+        value = declaration()
+        authority = value['services']['dns']['authoritative']
+        authority['direct_readers'] = [{'network': 'home', 'addresses': '192.168.10.40'}]
+        files = config.render(value)
+        for name in ('etc/bind/named.conf', 'etc/lanrith/services.nft', 'etc/nftables.conf'):
+            contents = files[name].splitlines()
+            admission = [line for line in contents if ('allow-query' in line or
+                         '10.255.254.11' in line and 'dport 53 accept' in line)]
+            self.assertTrue(any('192.168.10.40/32' in line for line in admission), (name, admission))
+            self.assertFalse(any('192.168.10.0/24' in line for line in admission), (name, admission))
+        for source in ({'network': 'home', 'addresses': '192.0.2.1'}, {'addresses': '192.168.10.40'}):
+            authority['direct_readers'] = [source]
+            with self.assertRaises(ReleaseError):
+                config.render(value)
+        del authority['direct_readers']
+        writer = authority['writers']['first']
+        for grant in ({'subtree': '@', 'types': ['ANY']}, {'name': 'bad.', 'types': ['A']},
+                      {'name': 'x', 'subtree': 'y', 'types': ['A']}, {'name': 'x', 'types': []},
+                      {'subtree': '@', 'types': ['AAA', 'A']}, {'name': 'x', 'types': ['A', 'A']}):
+            writer['grants'] = [grant]
+            with self.subTest(grant=grant), self.assertRaises(ReleaseError):
+                config.render(value)
+        writer['grants'] = []
+        transfer_only = config.render(value)['etc/bind/named.conf']
+        self.assertIn('allow-transfer { "writer-0"; };', transfer_only)
+        self.assertNotIn('grant "first-key"', transfer_only)
+        del writer['grants']
+        self.assertIn('grant "first-key" zonesub ANY;', config.render(value)['etc/bind/named.conf'])
+        authority['enabled'] = False
+        self.assertNotIn('etc/bind/named.conf', config.render(value))
+
+    def test_fixed_address_owners_and_their_delegation_path_precede_writer_grants(self):
+        value = declaration()
+        authority = value['services']['dns']['authoritative']
+        zone = authority['zones']['example.test']
+        zone['records']['Node.Lab'] = {'AAAA': '2001:db8::1'}
+        zone['fixed_records'] = ['nODE.lab']
+        authority['zones']['child.sub.example.test'] = {}
+        authority['zones']['other.child.sub.example.test'] = {}
+        authority['zones']['home.arpa']['persistent'] = True
+        del authority['writers']['first']['grants']
+        files = config.render(value)
+        policy = files['etc/bind/named.conf']
+        for rule in ('deny "*" name node.lab.example.test. ANY;',
+                     'deny "*" name lab.example.test. DNAME NS;',
+                     'deny "*" name sub.example.test. DNAME NS;',
+                     'deny "*" name child.sub.example.test. CNAME DNAME DS NS;',
+                     'deny "*" name example.test. DNAME NS SOA;'):
+            self.assertLess(policy.index(rule), policy.index('grant "first-key" zonesub ANY;'))
+        expected = json.loads(files['usr/share/lanrith/dns-fixed.json'])
+        checked = {(r['name'], r['type']): r['desired'] for r in expected['example.test']}
+        self.assertEqual(checked['node.lab.example.test.', 'AAAA'], ['2001:db8::1'])
+        self.assertEqual(checked['node.lab.example.test.', 'A'], [])
+        self.assertEqual(checked['lab.example.test.', 'NS'], [])
+        self.assertEqual(checked['example.test.', 'NS'], ['ns1.home.arpa.'])
+        self.assertIn('ns1.home.arpa.', {r['name'] for r in expected['home.arpa']})
+        self.assertNotIn('other.child.sub.example.test.', {r['name'] for r in expected['example.test']})
+        self.assertNotIn('seeded.example.test.', {r['name'] for r in expected['example.test']})
+        for invalid in ('Node.Lab', ['missing'], ['Node.Lab', 'node.lab'], ['@']):
+            zone['fixed_records'] = invalid
+            with self.subTest(fixed_records=invalid), self.assertRaises(ReleaseError):
+                config.render(value)
+        zone['fixed_records'] = ['node.lab']
+        authority['zones']['lab.example.test'] = {}
+        with self.assertRaisesRegex(ReleaseError, 'most specific'):
+            config.render(value)
+
+    def test_fixed_prerequisites_batch_rrsets_and_identify_conflicts(self):
+        addresses = ['2001:db8::10', '2001:db8::11']
+        fixed = {f'host-{n}.example.test.': {'AAAA': addresses} for n in range(500)}
+        expected = authoritative_migration.fixed_prerequisites('example.test', fixed, [], [], 'example.test')
+        with patch.object(dns_migration, 'transaction', return_value=True) as update:
+            dns_migration.check_fixed('example.test', expected, None)
+        requests = [call.args[1] for call in update.call_args_list]
+        self.assertGreater(len(requests), 1)
+        self.assertTrue(all(sum(len(line)+32 for line in request) <= 32768 for request in requests))
+        by_line = {line: index for index, request in enumerate(requests) for line in request}
+        for name in fixed:
+            self.assertEqual(len({by_line[f'prereq yxrrset {name} AAAA {address}'] for address in addresses}), 1)
+        with patch.object(dns_migration, 'transaction',
+                          side_effect=lambda z, c, k: 'prereq nxrrset host-200.example.test. A' not in c):
+            with self.assertRaisesRegex(dns_migration.MigrationError, r'for host-200\.example\.test\. A'):
+                dns_migration.check_fixed('example.test', expected, None)
+
+    def test_large_zone_keeps_exact_writer_grants(self):
+        value = declaration()
+        authority = value['services']['dns']['authoritative']
+        records = {f'host-{i}': {'A': '192.0.2.1'} for i in range(4100)}
+        authority['zones']['example.test']['records'] = records
+        authority['zones']['example.test']['fixed_records'] = list(records)
+        writer = authority['writers']['first']
+        writer['grants'] = [{'name': name, 'types': ['TXT']} for name in records]
+        files = config.render(value)
+        self.assertEqual(files['etc/bind/named.conf'].count('deny "*" name host-'), len(records))
+        grants = [line.strip() for line in files['etc/bind/named.conf'].splitlines()
+                  if line.strip().startswith('grant "first-key"')]
+        self.assertEqual(grants, [f'grant "first-key" name {name}.example.test. TXT;' for name in records])
+        zone_lines = set(files['usr/share/lanrith/zones/db.example.test'].splitlines())
+        self.assertTrue(all(f'{name} IN A 192.0.2.1' in zone_lines for name in records))
+        writer['grants'][-1]['name'] = 'outside.example.'
+        with self.assertRaises(ReleaseError):
+            config.render(value)
+        writer['grants'] = {'name': 'single', 'types': ['A']}
+        with self.assertRaisesRegex(ReleaseError, 'must be a list'):
+            config.render(value)
+
+    def test_routed_resolver_client_needs_a_separate_authority_grant(self):
+        from test_routing import declaration as routed_declaration
+        value = routed_declaration()
+        dns = declaration()['services']['dns']
+        value['services'] = {'dns': dns}
+        reader = 'fd42:9876:5432::17'
+        for declared in (False, True):
+            if declared:
+                dns['authoritative']['direct_readers'] = [{'network': 'home', 'addresses': reader}]
+            files = config.render(value)
+            host = files['etc/nftables.conf'].splitlines()
+            for transport in ('udp', 'tcp'):
+                target = 'ip6 daddr { fd42:1234:5678:fe02::11 } '+transport+' dport 53 accept'
+                self.assertEqual([line.strip() for line in host if target in line],
+                                 [f'iifname "lan" oifname "lr-services" ip6 saddr {{ {reader}/128 }} '+target]
+                                 if declared else [])
+            self.assertIn('access-control: fd42:9876:5432::/48 allow', files['etc/unbound/unbound.conf.d/lanrith.conf'])
+            self.assertNotIn('fd42:9876:5432::/48;', files['etc/bind/named.conf'])
 
     def test_all_six_aliases_share_translation_targets(self):
         value = declaration()
@@ -106,6 +287,112 @@ class AuthoritativeTests(unittest.TestCase):
         value['services']['dns']['blocked_domains'] = ['test']
         with self.assertRaisesRegex(ReleaseError, 'blocked domain'):
             config.normalize(value)
+
+    def test_managed_rrsets_are_opt_in_and_validate_prerequisites(self):
+        def with_zone(change):
+            value = declaration()
+            zone = value['services']['dns']['authoritative']['zones']['example.test']
+            zone.update(change)
+            return authoritative.render(config.normalize(value))
+
+        self.assertNotIn('etc/bind/lanrith-migration.conf', with_zone({}))
+        files = with_zone({'managed_rrsets': {'seeded': {'A': {'previous': ['192.0.2.10']}}}})
+        self.assertEqual(json.loads(files['usr/share/lanrith/dns-migration.json']), {
+            'example.test': [{'name': 'seeded.example.test.', 'type': 'A',
+                              'previous': ['192.0.2.10'], 'desired': ['192.0.2.20']}]})
+        policy = files['etc/bind/named.conf']
+        self.assertIn('deny "*" name seeded.example.test. A CNAME;', policy)
+        private = files['etc/bind/lanrith-migration.conf']
+        self.assertIn('grant "lanrith-migration" name seeded.example.test. A;', private)
+        self.assertNotIn('zonesub', private)
+        self.assertNotIn('lanrith-migration', policy)
+        for changes in ({'managed_rrsets': {'typo': {'AAAA': {'previous': []}}}},
+                        {'managed_rrsets': {'seeded': {'A': {'previous': ['2001:db8::1']}}}},
+                        {'managed_rrsets': {'seeded': {'A': {'previous': [], 'remove': True}}}},
+                        {'managed_rrsets': {'x': {'A': {'previous': [], 'remove': True}}}},
+                        {'managed_rrsets': {'seeded.': {'A': {'previous': []}}}},
+                        {'managed_rrsets': {'seeded': {'A': {'previous': ['192.0.2.1']*2}}}},
+                        {'persistent': False, 'managed_rrsets': {'seeded': {'A': {'previous': []}}}}):
+            with self.subTest(changes=changes), self.assertRaises(ReleaseError):
+                with_zone(changes)
+
+    def test_state_checks_before_allocation_and_verifies_publication_winner(self):
+        files = authoritative.render(config.normalize(declaration()))
+        manifest = json.loads(files['usr/share/lanrith/authoritative.json'])
+        manifest['credentials'] = {}
+        uid, gid = os.getuid(), os.getgid()
+        account = SimpleNamespace(pw_uid=uid, pw_gid=gid, gr_gid=gid)
+        with (tempfile.TemporaryDirectory() as temporary,
+              patch.object(dns_runtime.pwd, 'getpwnam', return_value=account),
+              patch.object(dns_runtime.grp, 'getgrnam', return_value=account),
+              patch.object(dns_runtime.os, 'fchown')):
+            root = Path(temporary)
+            source = root/manifest['seeds'][0]['source'][1:]
+            source.parent.mkdir(parents=True)
+            source.write_text('seed')
+            target = root/manifest['seeds'][0]['target'][1:]
+            target.parent.mkdir(parents=True)
+            journal = target.with_name(target.name+'.jnl')
+            runtime = root/'run'
+            runtime.mkdir()
+
+            def prepare():
+                dns_runtime.prepare(manifest, root, runtime, root=root)
+
+            allocate = tempfile.mkstemp
+
+            def full_cache(*args, **kwargs):
+                if kwargs['dir'] == target.parent:
+                    raise OSError(errno.ENOSPC, 'synthetic full cache')
+                return allocate(*args, **kwargs)
+
+            with patch.object(tempfile, 'mkstemp', side_effect=full_cache):
+                with self.assertRaises(OSError) as failure:
+                    prepare()
+                self.assertEqual(failure.exception.errno, errno.ENOSPC)
+                self.assertFalse(target.exists())
+                journal.write_bytes(b'journal marker')
+                with self.assertRaisesRegex(dns_runtime.IncompleteRestore, 'example.test'):
+                    prepare()
+                self.assertFalse(target.exists())
+                self.assertEqual(journal.read_bytes(), b'journal marker')
+                target.write_bytes(b'retained')
+                (runtime/'keys.conf').write_text('expired')
+                prepare()
+                self.assertEqual(target.read_bytes(), b'retained')
+                self.assertEqual(journal.read_bytes(), b'journal marker')
+                self.assertEqual((runtime/'keys.conf').read_text(), '')
+                with patch.object(dns_runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=uid+1)):
+                    with self.assertRaisesRegex(ValueError, 'unsafe metadata'):
+                        prepare()
+                target.chmod(0o664)
+                with self.assertRaisesRegex(ValueError, 'unsafe metadata'):
+                    prepare()
+                target.unlink()
+                target.symlink_to(journal)
+                with self.assertRaisesRegex(ValueError, 'unsafe metadata'):
+                    prepare()
+            target.unlink()
+            journal.unlink()
+            for mode in (0o640, 0o664):
+                def winner(*args, **kwargs):
+                    target.write_text('another initializer')
+                    target.chmod(mode)
+                    raise FileExistsError()
+                with patch.object(dns_runtime.os, 'link', side_effect=winner):
+                    if mode == 0o640:
+                        prepare()
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'unsafe metadata'):
+                            prepare()
+                    self.assertEqual(target.read_text(), 'another initializer')
+                target.unlink()
+                self.assertFalse(list(target.parent.glob('.lanrith-seed-*')))
+
+            # A compact declaration can expand into more than one MiB of zone data.
+            source.write_text(''.join(f'host-{n} IN AAAA 2001:db8::1\n' for n in range(40000)))
+            prepare()
+            self.assertEqual(target.read_bytes(), source.read_bytes())
 
     @unittest.skipUnless(os.geteuid() == 0, 'persistent service state requires package ownership')
     def test_restart_retains_zone_and_journal_and_rejects_bad_credentials(self):

@@ -35,6 +35,13 @@ def encoded(component, network):
     return ip.IPv6Network((int(prefix.network_address)+int(network.network_address), 96+network.prefixlen))
 
 
+def client_prefixes(value, key):
+    network = value['networks'][key]
+    addresses = (intent.gateway_addresses(network) + network.get('routed_prefixes', [])
+                 + routing.routed_sources(value, key))
+    return [ip.ip_interface(address).network for address in addresses]
+
+
 def route_scopes(value, family):
     """Partition declared route space, preserving longest-prefix attachment.
 
@@ -44,10 +51,7 @@ def route_scopes(value, family):
     wan = value['hardware']['interfaces'][value['uplink']['interface']]['name']
     routes = []
     for key, network in value['networks'].items():
-        prefixes = [ip.ip_interface(a).network for a in network['addresses']]
-        prefixes += [ip.ip_network(a) for a in network.get('additional_subnets', [])]
-        prefixes += [ip.ip_network(a) for a in network.get('routed_prefixes', [])]
-        prefixes += [ip.ip_network(a) for a in routing.routed_sources(value, key)]
+        prefixes = client_prefixes(value, key)
         for route in value.get('routing', {}).get('static_routes', []):
             if route['network'] == key:
                 prefixes += integrations.prefixes(value, route['to'])
@@ -83,14 +87,10 @@ class Compiler:
         self.allocations = translation.allocate(value, retained_allocations)
         self.physical = sorted({value['hardware']['interfaces'][value['uplink']['interface']]['name'],
                                 *(n['name'] for n in value['networks'].values())})
-        self.clients = {family: [(ip.ip_network(prefix), network['name'])
+        self.clients = {family: [(prefix, network['name'])
                                  for key, network in value['networks'].items()
                                  if network.get('forwarding', True)
-                                 for prefix in [*[str(ip.ip_interface(a).network) for a in network['addresses']],
-                                                *network.get('additional_subnets', []),
-                                                *network.get('routed_prefixes', []),
-                                                *routing.routed_sources(value, key)]
-                                 if ip.ip_network(prefix).version == family]
+                                 for prefix in client_prefixes(value, key) if prefix.version == family]
                         for family in (4, 6)}
         self.routes = {family: route_scopes(value, family) for family in (4, 6)}
         self.sets = {}
@@ -352,6 +352,20 @@ def definitions(value, retained_allocations=None):
             lines.append(f'  iifname {device} meta nfproto ipv6 ct mark != {{ {OWNER}, {DIRECTORY} }}{condition} drop')
         other, payload = (4, 'ip') if family == 6 else (6, 'ip6')
         lines += [f'  iifname {device} meta nfproto ipv{other} {payload} daddr vmap @tp_routes{other}']
+        if component['component'] == 'nat46':
+            aliases = ', '.join(m['ipv4'] for m in component['mappings'].values())
+            lines.append(f'  oifname {device} ip daddr != {{ {aliases} }} drop')
+            # A router on the IPv6 path can report an MTU for either a
+            # client request or the response to a mapped service's callback.
+            # Inspect the quoted connection before generic reply admission.
+            targets = ', '.join(m['ipv6'] for m in component['mappings'].values())
+            prefix = component['prefix']
+            ptb = f'  oifname {device} icmpv6 type packet-too-big'
+            for direction, quoted in (('reply', 'original'), ('original', 'reply')):
+                lines.append(f'{ptb} icmpv6 code 0 ip6 daddr {prefix} ct state related '
+                             f'ct mark {TRANSIT} ct direction {direction} '
+                             f'ct {quoted} ip6 saddr {prefix} ct {quoted} ip6 daddr {{ {targets} }} accept')
+            lines.append(f'{ptb} drop')
     lines += [' }', ' chain tp_transit {']
     for component in compiler.components.values():
         device = quote(component['interface'])
@@ -365,8 +379,14 @@ def definitions(value, retained_allocations=None):
             lines.append(f'  oifname {device} meta nfproto ipv4 drop')
         else:
             targets = ', '.join(m['ipv6'] for m in component['mappings'].values())
+            aliases = ', '.join(m['ipv4'] for m in component['mappings'].values())
             lines += [f'  iifname {device} ip6 saddr {component["prefix"]} ip6 daddr {{ {targets} }} ct mark set {TRANSIT} accept',
-                      f'  oifname {device} ip6 saddr {{ {targets} }} ip6 daddr {component["prefix"]} ct mark set {TRANSIT} accept']
+                      f'  oifname {device} ip6 saddr {{ {targets} }} ip6 daddr {component["prefix"]} ct mark set {TRANSIT} accept',
+                      # TAYGA can use its control address for the reporting
+                      # router. The original owner callback still identifies
+                      # the mapped peer. Directory flows take tp_fresh above.
+                      f'  iifname {device} icmp type destination-unreachable icmp code frag-needed '
+                      f'ct state related ct mark {OWNER} ct direction original ct original ip saddr {{ {aliases} }} accept']
     lines += [' }', ' chain tp_access {', *compiler.rules, '  drop', ' }']
     return lines
 

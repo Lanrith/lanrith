@@ -22,15 +22,20 @@ class SelectTests(unittest.TestCase):
         (self.esp/'EFI/Linux').mkdir(parents=True)
         self.entry = self.esp/'EFI/Linux/lanrith_9.efi'
         self.entry.write_bytes(b'synthetic signed fixture')
-        self.variable = self.root/'oneshot'
-        self.identity = {'fallback_binding': {'disk_by_id': '/dev/disk/by-id/test',
+        vendor = select.early_failure.LOADER_VENDOR
+        self.variable = self.root/('LoaderEntryOneShot'+vendor)
+        self.default = self.root/('LoaderEntryDefault'+vendor)
+        self.default.write_bytes(bytes(4)+(self.entry.name+'\0').encode('utf-16-le'))
+        (self.root/('LoaderEntrySelected'+vendor)).write_bytes(bytes(4)+'lanrith_10.efi\0'.encode('utf-16-le'))
+        self.identity = {'uki_name': 'lanrith_10.efi', 'fallback_binding': {'disk_by_id': '/dev/disk/by-id/test',
             'esp_uuid': '12345678-1234-1234-1234-123456789abc',
             'release': {'sequence': 9, 'uki_name': self.entry.name, 'uki_sha256': 'ab'*32}}}
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         def mock(obj, name, **kwargs):
             return self.stack.enter_context(patch.object(obj, name, **kwargs))
-        mock(select, 'ONESHOT', new=self.variable)
+        mock(select.early_failure, 'EFI_VARIABLES', new=self.root)
+        mock(select.factory, 'read_failure_identity', return_value=self.identity)
         mock(select.os, 'geteuid', return_value=0)
         mock(Path, 'is_file', return_value=True)
         mock(select.factory, 'secure_boot')
@@ -56,9 +61,6 @@ class SelectTests(unittest.TestCase):
             finally:
                 self.mounted = False
         mock(select.recovery_inputs, 'mounted', side_effect=mounted)
-        def read(path, maximum):
-            return self.variable.read_bytes() if path == self.variable else json.dumps(self.identity).encode()
-        mock(select.release, 'read', side_effect=read)
         self.commands = []
         def command(args):
             self.commands.append(args)
@@ -93,6 +95,49 @@ class SelectTests(unittest.TestCase):
         self.assertEqual(self.commands[-1][-2:], ['set-oneshot', self.entry.name])
         self.assertGreaterEqual(self.observe.call_count, 3)
         self.assertEqual(self.state.call_count, 2)
+
+    def test_menu_and_selector_recheck_accepted_default(self):
+        self.enable()
+        self.assertIsNone(select.unavailable_reason())
+        accepted = bytes(4)+'lanrith_10.efi\0'.encode('utf-16-le')
+        self.default.write_bytes(accepted)
+        self.assertIn('current image is already', select.unavailable_reason())
+        confirm = Mock()
+        with self.assertRaisesRegex(ReleaseError, 'current image is already'):
+            select.select_bound(confirm=confirm)
+        confirm.assert_not_called()
+        self.assertFalse(self.variable.exists())
+        self.assertEqual(self.default.read_bytes(), accepted)
+        self.assertEqual(self.commands, [])
+
+    def test_change_of_default_during_selection_clears_only_our_override(self):
+        self.enable()
+        original = select.update.command.side_effect
+        current = bytes(4)+'lanrith_10.efi\0'.encode('utf-16-le')
+        def choose(args):
+            result = original(args)
+            if args[-2:] == ['set-oneshot', self.entry.name]:
+                self.default.write_bytes(current)
+            return result
+        with patch.object(select.update, 'command', side_effect=choose):
+            with self.assertRaisesRegex(ReleaseError, 'current image is already'):
+                select.select_bound(confirm=lambda *_: '9')
+        self.assertFalse(self.variable.exists())
+        self.assertEqual(self.default.read_bytes(), current)
+
+    def test_reboot_rechecks_confirmed_choice(self):
+        self.enable()
+        selection = select.select_bound(confirm=lambda *_: '9')
+        with patch.object(select.update, 'command') as reboot:
+            select.reboot_selected(selection)
+            reboot.assert_called_once_with(['systemctl', '--force', 'reboot'])
+            reboot.reset_mock()
+            other = bytes(4)+'other.efi\0'.encode('utf-16-le')
+            self.variable.write_bytes(other)
+            with self.assertRaisesRegex(ReleaseError, 'changed'):
+                select.reboot_selected(selection)
+            reboot.assert_not_called()
+            self.assertEqual(self.variable.read_bytes(), other)
 
     def test_missing_or_incompatible_state_never_selects_fallback(self):
         self.enable()

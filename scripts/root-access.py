@@ -11,7 +11,7 @@ import stat
 REMOVED = (
     'usr/bin/sudo', 'usr/bin/sudoedit', 'usr/bin/su', 'bin/su',
     'etc/sudoers', 'etc/sudoers.d', 'etc/pam.d/sudo', 'etc/pam.d/sudo-i',
-    'etc/pam.d/su', 'etc/pam.d/su-l', 'etc/security/authorized_keys',
+    'etc/pam.d/lanrith-sudo-auth', 'etc/pam.d/su', 'etc/pam.d/su-l', 'etc/security/authorized_keys',
     'etc/security/admin.serial-passphrase.hash', 'root/.ssh',
     'usr/lib/lanrith/verify-serial-passphrase', 'usr/lib/lanrith/serial-idle-watchdog',
 )

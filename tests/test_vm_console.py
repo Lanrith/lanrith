@@ -102,7 +102,7 @@ class ConsoleTests(unittest.TestCase):
         guest.console = SimpleNamespace(condition=threading.Condition(), data=(
             b'Failed to start lanrith-factory.service\nFactory installation failed closed.\n'
             b'Failed to get or create SRK: private-tpm-detail\n'
-            b'disposable-recovery-key-never-log-this\nType RECOVERY-KEY-STORED: '))
+            b'disposable-recovery-key-never-log-this\nOffline recovery key: '))
         guest.qmp = None
         guest.qmp_events = []
         guest.observed_diagnostics = {}
@@ -117,6 +117,17 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(value['tpm']['errors'], ['srk-get-or-create'])
         self.assertNotIn('private-tpm-detail', encoded)
         self.assertNotIn('disposable-recovery-key', encoded)
+
+    def test_disposable_copy_survives_interleaved_status_and_only_reaches_selected_socket(self):
+        key = b'-'.join([b'bbbbbbbb']*8)
+        guest = Guest.__new__(Guest)
+        guest.serial = Mock()
+        guest.console = SimpleNamespace(condition=threading.Condition(), closed=False,
+            data=key+b'\r\nGuest startup status\r\nOffline recovery key: remaining')
+        guest.verify_disposable_copy(timeout=1)
+        guest.serial.sendall.assert_called_once_with(key+b'\r')
+        self.assertEqual(guest.buffer, b'remaining')
+        self.assertFalse(hasattr(guest, 'recovery_key'))
 
     def test_serial_selection_diagnostic_keeps_only_allowlisted_command(self):
         guest = Guest.__new__(Guest)

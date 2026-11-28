@@ -52,13 +52,15 @@ class LogsContractTests(unittest.TestCase):
         self.assertIn('WorkingDirectory=/var/lib/lanrith-alloy\n', unit)
         heartbeat = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.service']
         timer = files['usr/lib/systemd/system/lanrith-telemetry-heartbeat.timer']
-        self.assertIn('User=alloy\n', heartbeat)
+        self.assertIn('DynamicUser=yes\nUser=_lanrith-heartbeat\n', heartbeat)
+        self.assertNotIn('alloy\n', heartbeat)
+        self.assertIn('TimeoutStartSec=20s\nTimeoutStopSec=5s\n', heartbeat)
         self.assertIn('NoNewPrivileges=yes\n', heartbeat)
         self.assertIn('ExecStart=/usr/bin/lanrith-runtime telemetry\n', heartbeat)
         self.assertIn('After=boot-complete.target alloy.service lanrith-observation.service\n', heartbeat)
-        self.assertIn('ConditionPathExists=/run/lanrith/boot.json\n', heartbeat)
+        self.assertIn('ExecCondition=/usr/bin/test -e /run/lanrith/committed-boot.json\n', heartbeat)
         self.assertIn('OnUnitActiveSec=60s\n', timer)
-        self.assertIn('lanrith-telemetry-heartbeat.timer',
+        self.assertNotIn('lanrith-telemetry-heartbeat.timer',
                       json.loads(files['usr/share/lanrith/health.json'])['units'])
         alloy = files['etc/alloy/config.alloy']
         self.assertIn('loki.process "router_redaction"', alloy)

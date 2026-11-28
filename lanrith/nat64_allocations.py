@@ -16,14 +16,21 @@ from .release import read, require
 
 
 MAXIMUM = 65534
+RESERVED_IPV6 = ip.ip_network('::/8')
+WELL_KNOWN_TRANSLATION = ip.ip_network('64:ff9b::/32')
+
+
+def mappable_source(address, manifest):
+    # TAYGA reserves 0000::/8 except 64:ff9b::/32. Its own prefix and
+    # control address already occupy entries in its IPv6 translation table.
+    return (address.version == 6 and (address not in RESERVED_IPV6 or address in WELL_KNOWN_TRANSLATION)
+            and not (address.is_multicast or address.is_link_local)
+            and address not in ip.ip_network(manifest['prefix']) and address != ip.ip_address(manifest['ipv6']))
 
 
 def valid_source(source, manifest):
     address = ip.ip_address(source)
-    require(address.version == 6 and address.ipv4_mapped is None and
-            not (address.is_multicast or address.is_link_local or address.is_loopback or address.is_unspecified) and
-            address not in ip.ip_network(manifest['prefix']) and address != ip.ip_address(manifest['ipv6']),
-            'Invalid NAT64 source identity.')
+    require(mappable_source(address, manifest), 'Invalid NAT64 source identity.')
     return str(address)
 
 

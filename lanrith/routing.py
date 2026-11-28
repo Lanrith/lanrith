@@ -85,6 +85,58 @@ def static_routes(value, network):
     return text
 
 
+def fallback_pools(value):
+    pools = {'bgp_only': set(), 'routing_table': set()}
+    for group in groups(value).values():
+        for prefix, _, clause in imports(value, group):
+            pools[clause.get('fallback', 'routing_table')].add(prefix)
+    return pools
+
+
+def validate_fallback(value):
+    pools = fallback_pools(value)
+    if not pools['bgp_only']:
+        return
+    direct = [ip.ip_interface(a).network for network in value['networks'].values()
+              for a in network['addresses'] + network.get('additional_subnets', [])]
+    direct += [ip.ip_interface(a).network for a in value['uplink'].get('addresses', [])]
+    for route in value.get('routing', {}).get('static_routes', []):
+        direct.extend(integrations.prefixes(value, route['to']))
+    for pool in pools['bgp_only']:
+        require(not any(pool.overlaps(p) for p in pools['routing_table'] if p.version == pool.version),
+                'Overlapping BGP import pools must agree on their fallback.')
+        require(not any(pool.overlaps(p) for p in direct if p.version == pool.version),
+                'BGP-only fallback overlaps an explicitly on-link or connected allocation.')
+
+
+def validate_import_ownership(value):
+    bgp = value.get('routing', {}).get('bgp', {})
+    rows = intent.sequence(bgp.get('import_ownership', []), 4096)
+    if not rows:
+        return
+    # Validate declared policy even when temporarily disabling the daemon.
+    # Peers of either transport family can carry the advertised address family.
+    policies = [(list(imports(value, group)), {ip.ip_network(p) for p in peers(value, group)})
+                for group in bgp.get('peer_groups', {}).values()]
+    seen = set()
+    for row in rows:
+        intent.fields(row, {'prefix', 'origins'}, {'prefix', 'origins'})
+        prefix = intent.network(row['prefix'])
+        require(prefix not in seen, 'Duplicate BGP import ownership prefix.')
+        seen.add(prefix)
+        expected = {intent.network(p) for p in intent.sequence(row['origins'], 1024)}
+        actual = set()
+        for clauses, origins in policies:
+            if any(prefix.version == pool.version and prefix.prefixlen == length and prefix.subnet_of(pool)
+                   for pool, length, _ in clauses):
+                actual.update(origins)
+        for family in (4, 6):
+            expected_scope = ip.collapse_addresses(p for p in expected if p.version == family)
+            actual_scope = ip.collapse_addresses(p for p in actual if p.version == family)
+            require(list(expected_scope) == list(actual_scope),
+                    f'BGP import origins differ from allocation for {prefix}.')
+
+
 def validate(value):
     """Reject route ownership that would weaken another attachment's guard."""
     require(not value.get('routing', {}).get('bgp', {}).get('enabled') or bool(groups(value)),
@@ -112,6 +164,8 @@ def validate(value):
                             for network in value['networks'].values() for a in network['addresses']),
                     'Routed allocation includes a router control address.')
             owners.append((key, prefix))
+    validate_fallback(value)
+    validate_import_ownership(value)
     dynamic = [g for g in groups(value).values() if g.get('dynamic', {}).get('enabled')]
     # FRR's listen limit is per router instance, not per peer group.
     require(len(dynamic) <= 1, 'One bounded dynamic BGP peer group is supported per router.')
@@ -152,7 +206,8 @@ def frr_config(value):
             lines.append(f'route-map {name}-IN-{family} deny 65535')
         lines.append(f'route-map {name}-OUT deny 10')
     lines += [f'router bgp {bgp["asn"]}', f' bgp router-id {router_id}',
-              ' no bgp default ipv4-unicast', ' bgp ebgp-requires-policy']
+              ' no bgp default ipv4-unicast', ' bgp ebgp-requires-policy',
+              ' no bgp graceful-restart notification']
     for index, group in enumerate(groups(value).values()):
         name = 'LR'+str(index)
         network = value['networks'][attachment(value, group)]
@@ -192,10 +247,26 @@ def render(value):
         'etc/frr/frr.conf': text,
         'etc/frr/daemons': ('zebra=yes\nbgpd=yes\nvtysh_enable=yes\n'
             'zebra_options=" -A 127.0.0.1"\nbgpd_options=" -A 127.0.0.1"\n'),
-        'etc/systemd/system/frr.service.d/60-lanrith-routing.conf':
-            '[Unit]\nRequires=nftables.service\nAfter=nftables.service systemd-networkd.service\n'
-            'BindsTo=nftables.service\n',
     }
+    unit = ('[Unit]\nRequires=nftables.service\nAfter=nftables.service systemd-networkd.service\n'
+            'BindsTo=nftables.service\n')
+    # Each activation uses the selected image's complete FRR configuration.
+    service = '[Service]\nExecReload=\n'
+    pools = fallback_pools(value)['bgp_only']
+    if pools:
+        # Route ownership follows loopback, so a disconnected peer LAN cannot
+        # remove the reject. A high-byte distance of 255 lets zebra prefer BGP.
+        text_routes = '[Match]\nName=lo\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nKeepConfiguration=yes\n'
+        for family in (4, 6):
+            # A contained pool needs no second reject hijacking a covering BGP path.
+            selected = sorted((p for p in pools if p.version == family),
+                              key=lambda p: (p.network_address, p.prefixlen))
+            cover = None
+            for prefix in selected:
+                if cover is None or not prefix.subnet_of(cover):
+                    text_routes += f'\n[Route]\nDestination={prefix}\nType=unreachable\nMetric={255 << 24}\n'
+                    cover = prefix
+        files['etc/systemd/network/10-bgp-fallback.network'] = text_routes
     if bindings:
         files['usr/share/lanrith/routing.json'] = canonical({
             'schema': 1, 'template': text, 'credentials': bindings}).decode()
@@ -209,8 +280,9 @@ def render(value):
             + ''.join(f'LoadCredential={key}:{runtime_bindings.credential_path(value, key)}\n'
                       for key in sorted(set(bindings.values())))
             + 'ExecStart=/usr/bin/python3 /usr/lib/lanrith/lanrith/routing_runtime.py\n')
-        files['etc/systemd/system/frr.service.d/60-lanrith-routing.conf'] += (
+        unit += (
             'Requires=lanrith-routing-credentials.service\nAfter=lanrith-routing-credentials.service\n'
-            'BindsTo=lanrith-routing-credentials.service\n'
-            '[Service]\nBindReadOnlyPaths=/run/lanrith-routing/frr.conf:/etc/frr/frr.conf\n')
+            'BindsTo=lanrith-routing-credentials.service\n')
+        service += 'BindReadOnlyPaths=/run/lanrith-routing/frr.conf:/etc/frr/frr.conf\n'
+    files['etc/systemd/system/frr.service.d/60-lanrith-routing.conf'] = unit+'\n'+service
     return files

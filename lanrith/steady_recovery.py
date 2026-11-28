@@ -46,7 +46,7 @@ def observe(installed, disk, active, device):
     tpm_migration.fallback(installed, disk, active, device)
 
 
-def runtime_fallback(installed):
+def runtime_fallback(installed, *, restore_promoted=False, restored=None):
     """Recheck the accepted slot and retained state before a userspace fallback."""
     from . import early_failure, measured_boot, tpm_migration, update
     value = installed['image_contract']['recovery']
@@ -63,7 +63,9 @@ def runtime_fallback(installed):
     esp = update.boot_esp(installed, disk=disk)
     bound = value['binding']['release']
     uki = esp/'EFI/Linux'/bound['uki_name']
-    update.require_default(uki)
+    selected = update.default_entry()
+    release.require(selected == uki.name or restore_promoted and selected == installed['uki_name'],
+                    'Persistent selector differs from the bound fallback or authorized promotion.')
     release.require(release.file_record(uki)['sha256'] == bound['uki_sha256'], 'Runtime fallback UKI differs.')
     if installed.get('tpm_policy'):
         measured_boot.verify(uki, installed['tpm_policy'])
@@ -83,5 +85,10 @@ def runtime_fallback(installed):
     release.require(factory.state_metadata(installed) == (disk, state, luks) and update.geometry(disk) == rows and
                     release.file_record(uki)['sha256'] == bound['uki_sha256'],
                     'Runtime fallback state changed during inspection.')
+    release.require(update.default_entry() == selected, 'Persistent selector changed during fallback verification.')
+    if selected != uki.name:
+        update.command(['bootctl', 'set-default', uki.name])
     update.require_default(uki)
+    if restored is not None:
+        restored()
     update.command(['systemctl', '--force', 'reboot'])

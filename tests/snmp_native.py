@@ -40,6 +40,8 @@ def main():
                        'ipv6': {'address': '2001:db8:100::1/64', 'gateway': '2001:db8:100::2'}}
     value['services'] = {'dns': {'enabled': args.with_core_services},
                          'ntp': {'enabled': args.with_core_services}, 'dhcp4': {'enabled': False}}
+    if args.with_core_services:
+        value['services']['ntp']['upstreams'] = ['192.0.2.123']
     if args.gua:
         value['uplink']['ipv6'].update(downstream_prefix='2001:db8:100::/48', delivery='on_link')
     value['networks']['home']['ipv6'] = {'subnet_id': 16, 'ra': False, 'gua': False}
@@ -87,6 +89,15 @@ def main():
             prefix = 48 if args.gua and name == 'wan' and local.version == 6 else local.network.prefixlen
             ns(name+'-test', 'ip', 'address', 'add', str(local.ip+1)+'/'+str(prefix), 'dev', 'eth0', *flags)
             ns(name+'-test', 'ip', '-'+str(local.version), 'route', 'add', 'default', 'via', str(local.ip))
+    if args.gua:
+        # This initramfs has no networkd. Apply the uplink proxy declarations
+        # from the unit that owns them before checking actual neighbor discovery.
+        uplink = files['etc/systemd/network/20-uplink.network'].splitlines()
+        assert 'IPv6ProxyNDP=yes' in uplink
+        run('sysctl', '-qw', 'net.ipv6.conf.wan.proxy_ndp=1')
+        for line in uplink:
+            if line.startswith('IPv6ProxyNDPAddress='):
+                run('ip', '-6', 'neigh', 'add', 'proxy', line.split('=', 1)[1], 'dev', 'wan')
     run('ip', 'link', 'add', 'hostproof0', 'type', 'veth', 'peer', 'name', 'hostproof1')
     run('ip', 'link', 'set', 'hostproof0', 'up')
     index = json.loads(run('ip', '-j', 'link', 'show', 'hostproof0').stdout)[0]['ifindex']

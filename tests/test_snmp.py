@@ -97,7 +97,9 @@ class SNMPTests(unittest.TestCase):
         policy = json.loads(files['etc/lanrith/integrations/snmp-runtime-policy.json'])
         self.assertEqual(policy['server'], '2001:db8:20:700::1')
         plane = json.loads(files['usr/share/lanrith/service-plane.json'])
-        self.assertIn('2001:db8:20:700::1', plane['proxy'])
+        self.assertEqual(['2001:db8:20:700::1'], plane['proxy'])
+        self.assertEqual([line for line in files['etc/systemd/network/20-uplink.network'].splitlines()
+                          if line.startswith('IPv6ProxyNDPAddress=')], ['IPv6ProxyNDPAddress=2001:db8:20:700::1'])
         self.assertIn('2001:db8:20:700::1/64', plane['host_addresses'])
 
     def test_disabling_snmp_removes_the_listener_policy_and_attachment(self):
@@ -205,7 +207,7 @@ class SNMPTests(unittest.TestCase):
             value = credentials_fixture(root, value)
             build.assembly(value, base, root/'image', version='0.1.0', sequence=9)
             overlay = root/'image/mkosi.extra'
-            self.assertTrue((overlay/'etc/systemd/system/snmpd.service').is_symlink())
+            self.assertTrue((overlay/'usr/lib/systemd/system/multi-user.target.wants/snmpd.service').is_symlink())
             self.assertIn('snmpd.service', (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
             for name in ('snmp_service.py', 'snmp_credentials.py', 'snmp-runtime', 'credential_runtime.py', 'systemd_service.py'):
                 self.assertEqual((overlay/'usr/lib/lanrith'/name).read_bytes(), (HELPERS/name).read_bytes())

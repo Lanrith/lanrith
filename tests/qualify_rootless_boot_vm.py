@@ -102,7 +102,8 @@ def main():
             value['administration']['serial'] = {'enabled': False}
             value['administration']['authorized_keys'] = [(secret/'ssh.pub').read_text().strip()]
             assembly, identity, update = diagnostic_image(value, base, initrd, work, secret, diagnose=args.diagnose)
-            target = work/'synthetic-target.raw'
+            # The shared image fixture binds the successor to this disk's ESP.
+            target = work/'installed.raw'
             if args.direct:
                 shutil.copyfile(assembly/'output/lanrith_9.raw', target)
                 with target.open('r+b') as stream:

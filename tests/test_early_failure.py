@@ -16,6 +16,11 @@ from lanrith import early_failure, early_unlock, factory, release, repair, tpm_m
 class FailureFallbackTests(unittest.TestCase):
     identity = {'image_id': 'lanrith', 'deployment_sequence': 12, 'uki_name': 'lanrith_12.efi'}
 
+    def setUp(self):
+        self.efi_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.efi_dir.cleanup)
+        self.enterContext(patch.object(early_failure, 'EFI_VARIABLES', Path(self.efi_dir.name)))
+
     def bound_identity(self):
         binding = {'disk_by_id': '/dev/disk/by-id/synthetic-disk',
                    'esp_uuid': 'abcdefab-1234-1234-1234-123456789abc',
@@ -111,6 +116,49 @@ class FailureFallbackTests(unittest.TestCase):
                 else:
                     with self.assertRaises(release.ReleaseError): early_failure.failed_boot(self.bound_identity())
                     command.assert_not_called()
+
+    def test_pending_overrides_hold_the_boot_choices_even_if_they_appear_at_the_last_read(self):
+        directory = early_failure.EFI_VARIABLES
+        def variable(name):
+            return directory/(name+early_failure.LOADER_VENDOR)
+        def encoded(name):
+            return bytes(4)+(name+'\0').encode('utf-16-le')
+        selected, default = encoded('lanrith_12+2-1.efi'), encoded('lanrith_11.efi')
+        variable('LoaderEntrySelected').write_bytes(selected)
+        variable('LoaderEntryDefault').write_bytes(default)
+        override = variable('LoaderEntryOneShot')
+        with patch.object(early_failure.os, 'geteuid', return_value=0), \
+                patch.object(Path, 'is_file', return_value=True), \
+                patch.object(early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
+                patch.object(early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
+                patch.object(early_failure, 'observe_rollback_compatibility', return_value={'authorized_to_boot': False}), \
+                patch.object(early_failure, 'inspect_bound_fallback') as inspect, \
+                patch.object(early_failure, 'command') as reboot:
+            for pending in (encoded('other.efi'), default, b'malformed', b''):
+                override.write_bytes(pending)
+                with self.assertRaisesRegex(early_failure.FallbackUnavailable, 'already pending'):
+                    early_failure.failed_boot(self.bound_identity())
+                self.assertEqual(override.read_bytes(), pending)
+            inspect.assert_not_called()
+            override.unlink()
+            observation = {'sequence': 11, 'authorized_to_boot': False}
+            def late_override():
+                override.write_bytes(encoded('other.efi'))
+                return observation
+            inspect.side_effect = [observation, observation]
+            early_failure.failed_boot(self.bound_identity())
+            reboot.assert_called_once()
+            reboot.reset_mock()
+            inspect.side_effect = lambda *_: late_override() if inspect.call_count == 4 else observation
+            with self.assertRaisesRegex(early_failure.FallbackUnavailable, 'already pending'):
+                early_failure.failed_boot(self.bound_identity())
+            self.assertEqual(override.read_bytes(), encoded('other.efi'))
+            with patch.object(Path, 'lstat', side_effect=PermissionError):
+                with self.assertRaises(PermissionError):
+                    early_failure.failed_boot(self.bound_identity())
+            reboot.assert_not_called()
+            self.assertEqual(variable('LoaderEntrySelected').read_bytes(), selected)
+            self.assertEqual(variable('LoaderEntryDefault').read_bytes(), default)
 
     def test_missing_or_rejected_state_compatibility_cannot_reboot(self):
         with patch.object(early_failure.os, 'geteuid', return_value=0), \
@@ -310,7 +358,7 @@ class FailureFallbackTests(unittest.TestCase):
                 patch.object(early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
                 patch.object(early_failure, 'command') as command, \
                 patch.object(early_failure, 'inspect_bound_fallback') as inspect, \
-                self.assertRaisesRegex(release.ReleaseError, 'state and TPM rollback'):
+                self.assertRaisesRegex(release.ReleaseError, 'signed recovery policy is unqualified'):
             early_failure.failed_boot(value)
         command.assert_not_called()
         inspect.assert_not_called()
@@ -379,7 +427,7 @@ class FailureFallbackTests(unittest.TestCase):
         with patch.object(early_failure.os, 'geteuid', return_value=0), \
                 patch.object(Path, 'is_file', return_value=True), \
                 patch.object(early_failure, 'command') as command, \
-                self.assertRaisesRegex(release.ReleaseError, 'blocked pending authenticated fallback'):
+                self.assertRaisesRegex(release.ReleaseError, 'no bound previous release'):
             early_failure.failed_boot(self.identity)
         command.assert_not_called()
 
@@ -531,16 +579,29 @@ class FailureFallbackTests(unittest.TestCase):
     def test_factory_failure_uses_only_initrd_identity(self):
         payload = json.dumps(self.identity).encode()
         with patch.object(factory, 'read', return_value=payload) as read, \
-                patch.object(early_failure, 'failed_boot') as failed:
+                patch.object(factory, 'bounded_fallback') as failed:
             self.assertEqual(factory.main(['failed']), 0)
         read.assert_called_once_with(Path('/usr/share/lanrith/initrd-failure.json'), 65536)
         failed.assert_called_once_with(self.identity)
+
+    def test_unsafe_runtime_directory_cannot_reserve_a_verification_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            directory.chmod(0o777)
+            with patch.object(factory, 'ATTEMPT_DIRECTORY', directory), \
+                    patch.object(factory.os, 'geteuid', return_value=0), \
+                    patch.object(Path, 'is_file', return_value=True), \
+                    self.assertRaisesRegex(release.ReleaseError, 'Unsafe initrd runtime directory'):
+                factory.reserve_fallback_attempt(self.identity)
+            self.assertEqual(list(directory.iterdir()), [])
 
     def test_emergency_fallback_timeout_restores_signal_handler(self):
         import signal
         import time
         previous = signal.getsignal(signal.SIGALRM)
-        with patch.object(factory, 'FALLBACK_DEADLINE_SECONDS', 0.05), \
+        with patch.object(early_failure, 'require_fallback_policy'), \
+                patch.object(factory, 'reserve_fallback_attempt'), \
+                patch.object(factory, 'FALLBACK_DEADLINE_SECONDS', 0.05), \
                 patch.object(early_failure, 'failed_boot', side_effect=lambda _: time.sleep(2)), \
                 self.assertRaises(TimeoutError):
             factory.bounded_fallback(self.identity)
@@ -549,7 +610,8 @@ class FailureFallbackTests(unittest.TestCase):
 
     def test_emergency_does_not_replace_an_existing_timer(self):
         import signal
-        with patch.object(factory.signal, 'getitimer', return_value=(10.0, 0.0)), \
+        with patch.object(early_failure, 'require_fallback_policy'), \
+                patch.object(factory.signal, 'getitimer', return_value=(10.0, 0.0)), \
                 patch.object(early_failure, 'failed_boot') as failed, \
                 self.assertRaisesRegex(release.ReleaseError, 'existing process timer'):
             factory.bounded_fallback(self.identity)
@@ -565,7 +627,8 @@ class FailureFallbackTests(unittest.TestCase):
                 patch('builtins.print') as output, \
                 self.assertRaisesRegex(RuntimeError, 'stop test'):
             factory.main(['emergency'])
-        failed.assert_called_once_with(self.identity)
+        failed.assert_not_called()
+        self.assertTrue(any('no bound previous release' in str(call) for call in output.call_args_list))
         self.assertTrue(any('holding for recovery' in str(call) for call in output.call_args_list))
 
     def test_emergency_holds_after_a_fallback_timeout(self):
@@ -589,13 +652,33 @@ class FailureFallbackTests(unittest.TestCase):
         with patch.object(factory.os, 'geteuid', return_value=0), \
                 patch.object(Path, 'is_file', return_value=True), \
                 patch.object(factory, 'read', return_value=payload), \
-                patch.object(early_failure, 'failed_boot', side_effect=fail_with_secret), \
+                patch.object(factory, 'bounded_fallback', side_effect=fail_with_secret), \
                 patch('time.sleep', side_effect=RuntimeError('stop test')), \
                 patch('builtins.print') as output, self.assertRaises(RuntimeError):
             factory.main(['emergency'])
         printed = ' '.join(str(call) for call in output.call_args_list)
         self.assertIn('Automatic fallback diagnostic: verification', printed)
         self.assertNotIn('synthetic-secret-do-not-report', printed)
+
+    def test_first_install_and_unqualified_bindings_explain_both_failure_paths(self):
+        for value, reason in ((self.identity, 'no bound previous release'),
+                              (self.bound_identity(), 'signed recovery policy is unqualified')):
+            for entry in ('failed', 'emergency'):
+                with self.subTest(entry=entry, reason=reason), patch.object(factory.os, 'geteuid', return_value=0), \
+                        patch.object(factory, 'read_failure_identity', return_value=value), \
+                        patch.object(Path, 'is_file', lambda path: str(path) == '/etc/initrd-release'), \
+                        patch('time.sleep', side_effect=RuntimeError('fixture hold')), \
+                        patch('builtins.print') as output, patch.object(early_failure, 'command') as reboot:
+                    if entry == 'failed':
+                        self.assertEqual(factory.main([entry]), 1)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'fixture hold'):
+                            factory.main([entry])
+                    text = ' '.join(str(call) for call in output.call_args_list)
+                    self.assertIn(reason, text)
+                    self.assertIn('independently signed recovery media', text)
+                    self.assertNotIn(value['uki_name'], text)
+                    reboot.assert_not_called()
 
     def test_fallback_diagnostic_identifies_trusted_exception_location(self):
         namespace = {'ReleaseError': release.ReleaseError}

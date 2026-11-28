@@ -156,14 +156,14 @@ class FactoryConsoleTests(unittest.TestCase):
 
     def test_secret_child_has_only_the_selected_terminal_and_never_the_journal_pipe(self):
         program = '''
-import getpass,json,os,sys
+import json,os,sys
 from unittest.mock import patch
-from lanrith import factory_console
+from lanrith import factory_console, recovery_enrollment
 specs=json.loads(sys.argv[1])
 def private():
     assert os.ttyname(0) == '/dev/'+specs[int(sys.argv[2])]['tty']
     print('synthetic-private-recovery-material', flush=True)
-    assert getpass.getpass('Synthetic private passphrase: ') == 'synthetic-secret-input'
+    assert recovery_enrollment.private_input('Synthetic private passphrase: ') == b'synthetic-secret-input'
     print('PRIVATE-COMPLETE', flush=True)
 with patch.object(factory_console, 'allowed', return_value=specs):
     with factory_console.Consoles({}) as console:
@@ -195,6 +195,23 @@ with patch.object(factory_console, 'allowed', return_value=specs):
                     if process.poll() is None:
                         process.kill()
                     process.communicate()
+
+    def test_new_copy_is_displayed_and_compared_before_enrollment(self):
+        from lanrith import recovery_enrollment as enrollment
+        from contextlib import redirect_stdout
+        from io import StringIO
+        expected = b'-'.join([b'cbdefghi']*4 + [b'jklnrtuv']*4)
+        with patch.object(enrollment.secrets, 'token_hex', return_value='01234567'*4+'89abcdef'*4):
+            for supplied in (b'', b'wrong', b'-'.join([b'bbbbbbbb']*8), expected):
+                output = StringIO()
+                with self.subTest(matches=supplied == expected), redirect_stdout(output), \
+                        patch.object(enrollment, 'private_input', return_value=bytearray(supplied)):
+                    if supplied == expected:
+                        self.assertEqual(enrollment.fresh_key(), expected)
+                    else:
+                        with self.assertRaises(ReleaseError):
+                            enrollment.fresh_key()
+                    self.assertIn(expected.decode(), output.getvalue())
 
     def test_terminal_settings_are_restored(self):
         with terminals(1) as (pairs, specs), patch.object(factory_console, 'allowed', return_value=specs):

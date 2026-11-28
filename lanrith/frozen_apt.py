@@ -17,7 +17,7 @@ from .release import ReleaseError, canonical, require, unique
 SNAPSHOT_HOSTS = ('snapshot.debian.org', 'snapshot-cloudflare.debian.org')
 ORIGINS = {'debian':'https://deb.debian.org/debian',
            'debian-security':'https://security.debian.org/debian-security'}
-SUITES = {'trixie','trixie-security','bookworm','bookworm-security'}
+SUITES = {'trixie-backports','trixie','trixie-security','bookworm','bookworm-security'}
 MAX_SIGNED = 512*1024
 MAX_COMPRESSED = 16*1024**2
 MAX_EXPANDED = 128*1024**2
@@ -101,8 +101,8 @@ def validate_url(url):
             'Repository metadata left its fixed official HTTPS origins.')
     path=value.path
     file_path=re.fullmatch(r'/file/[0-9a-f]{40}/(?:InRelease|Packages.xz|[0-9a-f]{64})',path)
-    archive_path=re.fullmatch(r'/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z/dists/(?:trixie|bookworm)(?:-security)?/(?:InRelease|main/binary-amd64/(?:Packages.xz|by-hash/SHA256/[0-9a-f]{64}))',path)
-    live_path=re.fullmatch(r'/(?:debian|debian-security)/dists/(?:trixie|bookworm)(?:-security)?/(?:InRelease|main/binary-amd64/by-hash/SHA256/[0-9a-f]{64})',path)
+    archive_path=re.fullmatch(r'/archive/(?:debian|debian-security)/[0-9]{8}T[0-9]{6}Z/dists/(?:trixie-backports|(?:trixie|bookworm)(?:-security)?)/(?:InRelease|main/binary-amd64/(?:Packages.xz|by-hash/SHA256/[0-9a-f]{64}))',path)
+    live_path=re.fullmatch(r'/(?:debian|debian-security)/dists/(?:trixie-backports|(?:trixie|bookworm)(?:-security)?)/(?:InRelease|main/binary-amd64/by-hash/SHA256/[0-9a-f]{64})',path)
     require(file_path if value.hostname in SNAPSHOT_HOSTS and path.startswith('/file/') else
             archive_path if value.hostname in SNAPSHOT_HOSTS else live_path, 'Unexpected repository metadata path.')
 

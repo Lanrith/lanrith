@@ -151,6 +151,7 @@ def prepare(value):
 
     services = value.setdefault('services', {})
     require(isinstance(services, dict), 'Invalid services configuration.')
+    services.setdefault('ntp', {'enabled': False})
     for feature in ('dns', 'ntp', 'dhcp4'):
         entry = services.setdefault(feature, {})
         require(isinstance(entry, dict), 'Invalid service configuration.')
@@ -195,6 +196,9 @@ def prepare(value):
             # Global disable is authoritative; a per-network flag can further restrict it.
             enabled = boolean(item.get(feature, not management)) and services[feature]['enabled']
             item[feature] = enabled
+        if boolean(item.get('ntp_intercept', False)):
+            require(item['ntp'] and item.get('forwarding', True) and 'namespace' not in item,
+                    'NTP interception requires NTP access on a forwarded host LAN.')
         if 'dhcp4' in item:
             dhcp = item['dhcp4']
             fields(dhcp, {'enabled', 'pool', 'pools', 'reservations', 'id'})
@@ -296,6 +300,11 @@ def dhcp4_ids(value):
             result[key] = candidate
             reserved.add(candidate)
     return result
+
+
+def ntp_upstreams(value):
+    return [({'type': 'pool', 'address': source} if isinstance(source, str) else source)
+            for source in sequence(value['services']['ntp'].get('upstreams', []), 16)]
 
 
 def service_networks(value):

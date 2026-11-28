@@ -46,6 +46,67 @@ the build user, mode `0600`, and contain the existing Lanrith scrypt hash format
 This credential is separate from root login and works with
 `administration.root_access: disabled`.
 
+## Firmware trust and maintenance
+
+New factory and recovery media install owner-signed systemd-boot at both
+`EFI/BOOT/BOOTX64.EFI` and `EFI/systemd/systemd-bootx64.efi`. Enroll the
+image signing certificate in the target firmware's allowed image database
+(`db`). PK and KEK authorize database changes. The PCR signing authority
+authorizes the UKI measurements used for encrypted-state unlock. Keep the
+offline state recovery key available independently.
+
+For a target that needs vendor shim, set `hardware.boot.removable_shim_sha256`
+to the SHA-256 digest of the exact approved signed shim binary. This selects
+shim at the removable entry. The builder checks that pin and verifies the
+owner signatures on the installed systemd-boot, shim's second stage, and UKI.
+The target must authorize shim in firmware and the owner-signed second stage
+through shim. If the target must also boot the canonical systemd-boot entry
+directly, authorize its signer in firmware db. Test the planned db, dbx, MOK
+and SBAT state on each required entry before installation or maintenance. A/B
+staging writes the candidate UKI to the ESP. Changing an existing loader
+chain requires a separately qualified maintenance step.
+
+A change to the boot chain or firmware databases can change PCR 7. Rehearse
+the intended firmware, boot paths, both installed UKIs and independent recovery
+media on disposable retained state. Obtain the destination SHA-256 PCR 7 from
+that independently approved configuration. The recovery boot and both
+installed boot paths must reach that same value.
+
+Before maintenance, collect the actual encrypted state device's LUKS2 JSON
+metadata, its GPT partition UUID and LUKS UUID. Keep the full dump private.
+Use `cryptsetup luksDump --dump-json-metadata "$STATE_DEVICE"` on the identified
+volume. Create the exact predecessor binding on the build controller.
+
+```sh
+python3 scripts/prepare-firmware-transition.py \
+  --state-partuuid "$STATE_PARTUUID" --approved-pcr7 "$APPROVED_PCR7" \
+  < private-premaintenance-luks.json > firmware-transition.json
+```
+
+Build independent `build-recovery` media with the existing disk binding,
+`--recovery-state-uuid`, `--recovery-passphrase-hash`, the same trusted PCR
+authority, and `--firmware-transition firmware-transition.json`. The signed
+initrd authorizes replacement of the named TPM token on this disk. It also
+reserves the first free LUKS2 token and keyslot for an interrupted enrollment.
+The current implementation handles a single strong TPM token with verified
+independent recovery methods.
+
+After applying the qualified firmware change, boot the recovery medium,
+authenticate on its configured console, and run `inspect-state` with the
+recorded offline key. Run `reenroll-tpm`, check the displayed PCR 7 against
+the approved value, type `REENROLL`, and enter the recorded key. The operation
+checks Secure Boot, verified root, the live PCR 7, state identity and bound
+keyslots. It enrolls the exact approved PCR 7 with signed PCR 11 and zero
+PCR 15. It tests early unlock and late denial before retiring the predecessor.
+The offline recovery key remains usable across the header writes. After
+interruption, cold boot the same recovery medium and repeat the command.
+
+Remove recovery media and cold boot twice. Check the current-boot early-unlock
+observation on each boot and read retained state. Include the authorized fallback
+in the platform rehearsal. A physical platform whose recovery and installed
+paths measure different PCR 7 values requires its own qualified procedure.
+Observing a denial on a target supplies no authority to sign a new destination.
+
 ## An update with a usable fallback
 
 Build each update against the accepted prior release:
@@ -103,28 +164,45 @@ For a deliberate manual rollback, systemd-boot's `d` key sets the selected entry
 as the persistent default. An automatic fallback preserves the existing accepted
 default and needs no manual change.
 
-The initrd provisioning service has a 300-second deadline. On a candidate
-failure, recovery checks the bound fallback bytes, verified root metadata,
-state contract and TPM policy before requesting a reboot. If those checks
-fail, it holds for recovery rather than repeatedly selecting an unusable image.
-A hardware watchdog is needed to cover uninterruptible kernel or device I/O.
+On a candidate failure, the initrd checks the bound fallback bytes, verified
+root metadata, state contract and TPM policy. It requests a reboot only while
+the failed candidate is running, the bound previous release is the persistent
+default and the loader has no pending one-shot. A conflicting choice stays in
+place for the operator.
+
+The failure service and emergency console share one automatic attempt per
+boot and signed initrd identity. The default verification budget is 900
+seconds. Set `hardware.boot.fallback_timeout_seconds` (1 to 86400 seconds)
+for the time measured with both slots on the deployment's storage. Measure
+the time to the prompt with a failed candidate. Uninterruptible device I/O
+requires a separately qualified hardware watchdog.
 
 ## Serial recovery
 
 When automatic fallback is unavailable, the configured serial menu prompts for
 its recovery passphrase. Three incorrect attempts close the session. After
-authentication, the commands are:
+authentication, the menu shows the commands available for the current boot.
 
-- `status`: show whether this session selected a fallback.
-- `fallback`: verify the bound previous slot and request confirmation of its
-  deployment number, then select it for one boot.
-- `reboot`: boot a fallback selected in this session.
-- `exit`: close the session.
+- `status` shows fallback eligibility or the one-shot selected this session.
+- `fallback` verifies the bound previous slot while it is still the persistent
+  default. Enter its exact deployment number to select it for one boot.
+- `reboot` boots the fallback confirmed in this session.
+- `exit` closes the session.
 
 The menu has no arbitrary command, filesystem path or root-login action.
-Selecting a fallback does not change the accepted boot default.
+The persistent default survives a serial one-shot. After acceptance the new
+release is the default. The serial menu then offers `status` and `exit`.
+For manual recovery, use the firmware console to reach the bootloader or
+boot the independently signed recovery medium.
 
 ## Independent recovery media
+
+Prepare the medium before deployment. Select an accessible serial or
+hypervisor terminal in the recovery build's `hardware.boot.recovery_console`
+(for example, `ttyS0` or `hvc0`). A display-only `tty0` installation shows
+the hold message on its screen. To use interactive recovery, qualify access
+to the selected terminal and boot the prepared medium under the machine's
+Secure Boot trust policy.
 
 Use `lanrith build-recovery` with the same admitted platform and signing inputs
 as a normal build. Provide `--recovery-passphrase-hash`,

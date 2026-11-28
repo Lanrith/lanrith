@@ -38,14 +38,23 @@ def expiry(objects):
     return entry['elem'][0]['elem']['expires']
 
 with tempfile.TemporaryDirectory(prefix='lanrith-guards.') as temporary:
+    with mock.patch.object(runtime.time, 'monotonic', side_effect=(0, 46)):
+        try:
+            runtime.wait_interfaces({'guard_interfaces': ['lo', 'absent1', 'absent2']})
+        except runtime.GuardReadinessError as error:
+            assert str(error) == 'Missing policy guard interfaces: absent1, absent2'
+        else:
+            raise AssertionError('Expected the signed missing-link diagnosis.')
     directory = Path(temporary)
     path = directory/'guards.nft'
     guards = ('table netdev lanrith_identity {\n'
               ' set tp_bound4 { type ipv4_addr; flags timeout; }\n'
-              ' chain target { ip saddr @tp_bound4 return; drop; }\n}\n')
+              ' chain tp_identity { ip saddr @tp_bound4 return; drop; }\n'
+              ' chain tp_egress_0 { type filter hook egress device "lo" priority 0; policy accept;\n'
+              '  jump tp_identity\n }\n}\n')
     path.write_text(guards)
     path.chmod(0o400)
-    contract = {'nft_executable': nft, 'profile_directory': temporary}
+    contract = {'nft_executable': nft, 'profile_directory': temporary, 'guard_interfaces': ['lo']}
     pins = {'guards_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     with mock.patch.object(runtime, 'load_contract', return_value=contract), \
             mock.patch.object(runtime, 'metadata', return_value=pins), \
@@ -54,10 +63,22 @@ with tempfile.TemporaryDirectory(prefix='lanrith-guards.') as temporary:
         apply('table inet unrelated {\n chain untouched {\n counter\n }\n}\n'
               'add element netdev lanrith_identity tp_bound4 { 192.0.2.7 timeout 60s }\n')
         before = listing()
-        assert len(rules(before)) == 3
+        assert len(rules(before)) == 4 and 0 < expiry(before) <= 60
+        try:
+            runtime.verify_guard_hooks({**contract, 'guard_interfaces': ['another']})
+        except runtime.GuardReadinessError as error:
+            assert 'another' in str(error)
+        else:
+            raise AssertionError('A hook for a different device passed readiness.')
         # Positive control reproduces the former append-on-restart behavior.
         apply(guards)
-        assert len(rules(listing())) == 5
+        assert len(rules(listing())) == 7
+        try:
+            runtime.verify_guard_hooks(contract)
+        except runtime.GuardReadinessError:
+            pass
+        else:
+            raise AssertionError('Duplicate guard jump passed readiness.')
         time.sleep(1)
         runtime.install_guards()
         repaired = listing()
@@ -66,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix='lanrith-guards.') as temporary:
         runtime.install_guards()
         assert rules(listing()) == rules(before)
         # A failed replacement must not expose the flushed intermediate state.
-        path.write_text(guards+'add rule netdev lanrith_identity target jump absent_chain\n')
+        path.write_text(guards+'add rule netdev lanrith_identity tp_identity jump absent_chain\n')
         pins['guards_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
         try:
             runtime.install_guards()

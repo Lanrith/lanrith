@@ -1,5 +1,6 @@
 """A same-run package handoff cannot change source identity or payload bytes."""
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -19,7 +20,8 @@ class PackageStageTests(unittest.TestCase):
         (project/'build-inputs.json').write_text('synthetic pinned inputs')
         (work/'packages').mkdir(parents=True)
         output.mkdir()
-        for name in ('pam_rssh.so', 'pam-rssh.notices.txt', 'alloy-beyla.scan', 'alloy_1.0_amd64.deb'):
+        for name in ('pam_rssh.so', 'pam-rssh.notices.txt', 'alloy-beyla.scan', 'alloy_1.0_amd64.deb',
+                     'example_2.0~rc1-1~bpo13+2_amd64.deb'):
             (work/'packages'/name).write_bytes(('synthetic '+name).encode())
         (work/'packages/pam_rssh.so').chmod(0o755)
         for name in ('builder.tar', 'build-cache.json', 'custom-security.json', 'package-checkpoint.json'):
@@ -41,6 +43,8 @@ class PackageStageTests(unittest.TestCase):
             project, source, builder = self.fixture(root)
             self.assertEqual(self.restore(root, source, project), builder)
             self.assertEqual((root/'native/packages/pam_rssh.so').read_bytes(), b'synthetic pam_rssh.so')
+            backport = root/'native/packages/example_2.0~rc1-1~bpo13+2_amd64.deb'
+            self.assertEqual(backport.read_bytes(), ('synthetic '+backport.name).encode())
             self.assertEqual(stat.S_IMODE((root/'native/packages/pam_rssh.so').stat().st_mode), 0o755)
             self.assertEqual((root/'native-output/builder.tar').read_bytes(), b'synthetic builder.tar')
             self.assertEqual((root/'native/custom-security.json').read_bytes(), b'synthetic custom-security.json')
@@ -59,7 +63,7 @@ class PackageStageTests(unittest.TestCase):
                 self.assertFalse(any((root/'native-output').iterdir()))
 
     def test_changed_extra_and_missing_payloads_cannot_reach_the_native_workspace(self):
-        for alteration in ('changed', 'extra', 'missing'):
+        for alteration in ('changed', 'extra', 'missing', 'backup'):
             with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 project, source, _ = self.fixture(root)
@@ -69,6 +73,12 @@ class PackageStageTests(unittest.TestCase):
                     files['packages/alloy_1.0_amd64.deb'] = b'changed package'
                 elif alteration == 'extra':
                     files['unselected.sh'] = b'unselected data'
+                elif alteration == 'backup':
+                    files['packages/checkpoint~1'] = b'backup'
+                    metadata = json.loads(files['stage.json'])
+                    metadata['files']['packages/checkpoint~1'] = {
+                        'name': 'checkpoint~1', 'size': 6, 'sha256': hashlib.sha256(b'backup').hexdigest()}
+                    files['stage.json'] = canonical(metadata)
                 else:
                     del files['packages/alloy-beyla.scan']
                     metadata = json.loads(files['stage.json'])

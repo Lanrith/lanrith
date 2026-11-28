@@ -57,6 +57,34 @@ class TunPolicyTests(unittest.TestCase):
             counts.append(program['access_rules'])
         self.assertEqual(counts, [3, 3, 3])
 
+    def test_nat46_ptb_requires_its_transit_tuple_before_general_reply_rules(self):
+        raw = nat46_declaration()
+        raw['addressing']['ula_prefix'] = 'fd18:ac10:70::/48'
+        raw['hardware']['interfaces']['servers']['name'] = 'service-link'
+        raw['translation']['nat64'] = {'enabled': True}
+        raw['translation']['nat46']['mappings'] = {
+            'one': {'ipv4': '10.255.200.8', 'ipv6': 'fd18:ac10:70:20::29'}}
+        value = config.normalize(raw)
+        text = firewall.render(value, access_backend='tun')
+        component = intent.translations(value)['nat46']
+        prefix = component['prefix']
+        scope = f'  oifname "{component["interface"]}" icmpv6 type packet-too-big'
+        rules = [line for line in text.splitlines() if line.startswith(scope)]
+        expected = [f'{scope} icmpv6 code 0 ip6 daddr {prefix} ct state related ct mark {tun_policy.TRANSIT} '
+                    f'ct direction {direction} ct {quoted} ip6 saddr {prefix} '
+                    f'ct {quoted} ip6 daddr {{ fd18:ac10:70:20::29 }} accept'
+                    for direction, quoted in (('reply', 'original'), ('original', 'reply'))]
+        self.assertEqual(rules, expected + [scope+' drop'])
+        boundary = text.split(' chain tp_boundary {', 1)[1].split('\n }', 1)[0]
+        for rule in rules:
+            self.assertIn(rule, boundary)
+        forward = text.split(' chain forward {', 1)[1].split('\n }', 1)[0]
+        self.assertLess(forward.index('oifname { "nat46", "nat64", "nat64-internal" } drop'),
+                        forward.index('jump tp_boundary'))
+        self.assertLess(forward.index('jump tp_boundary'), forward.index('ct direction reply ct mark'))
+        self.assertIn('ct state related ct mark '+str(tun_policy.OWNER)+
+                      ' ct direction original ct original ip saddr { 10.255.200.8 } accept', text)
+
     def test_address_lists_and_network_groups_do_not_copy_transport_clauses(self):
         raw = nat64_declaration()
         raw['groups'] = {'sources': [{'network': 'home', 'addresses': [

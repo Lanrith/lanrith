@@ -1,13 +1,41 @@
 """NAT64 policy projection retains logical destinations and source identity."""
 
+import ipaddress as ip
 import json
 import unittest
 
-from lanrith import config, firewall, nat64, nat64_packets
+from lanrith import config, firewall, nat64, nat64_packets, translation_runtime
 from nat64_native import declaration
 
 
 class Nat64Tests(unittest.TestCase):
+    def test_private_route_samples_scale_with_fixed_allocations_and_peer_ranges(self):
+        manifest = next(m for m in nat64.manifests(config.normalize(declaration()))
+                        if m['interface'] == 'nat64-internal')
+        pool = ip.ip_network(manifest['pool'])
+        prefix = ip.ip_network(manifest['prefix']).network_address
+        active = {str(ip.IPv6Address('fd42::100')+i): str(pool.broadcast_address-1-i) for i in range(255)}
+        clients = [('v'+str(i), f'fd43:{i:x}::2') for i in range(64)]
+        clients.extend(('v0', source) for source in active)
+        peers = [('v'+str(i), f'10.64.{i}.2') for i in range(64)]
+        manifest['source_allocations'] = {'active': active, 'reserved': active}
+        manifest['route_contexts'] = {'clients': clients, 'peers': peers}
+        cases = set(translation_runtime.forwarding_cases(manifest))
+        # Each later peer expands only by the fixed identities and one sample.
+        self.assertEqual(len(cases), 2+len(clients)+63*256+64*257)
+        for attachment, peer in peers:
+            synthesized = str(prefix+int(ip.ip_address(peer)))
+            for source, alias in active.items():
+                self.assertIn((synthesized, 'v0', source, 'forward'), cases)
+                self.assertIn((alias, attachment, peer, 'return'), cases)
+
+        del manifest['route_contexts']
+        older = list(translation_runtime.forwarding_cases(manifest))
+        self.assertTrue(all(case[1:3] == (None, None) for case in older))
+        self.assertEqual({case[0] for case in older if case[-1] == 'return'},
+                         set(active.values()) | {str(pool.network_address+2),
+                                                 str(pool.network_address+pool.num_addresses//4)})
+
     def test_encoded_destination_keeps_address_with_its_attachment(self):
         value = config.normalize(declaration())
         for manifest in nat64.manifests(value):

@@ -15,7 +15,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import pwd
 import re
 import signal
 import shutil
@@ -29,6 +28,7 @@ sys.path[:0] = [str(ROOT), str(ROOT/'tests')]
 from lanrith import config, policy_agent, policy_runtime, tun_policy
 from lanrith.release import canonical, require
 import policy_observer_component_native as base
+from kea_control_systemd_native import stage as stage_kea
 from test_radius import declaration
 
 MAC = '02:00:00:00:22:79'
@@ -77,13 +77,14 @@ while True:
 
 def qualify(candidate, collector_sha, output, *, configure=None, observer=None, observe_stage=None,
             prepare_interfaces=None, prepare_ruleset=None, after_profile=None,
-            retained_allocations=None, snapshot_provider=None, access_backend='legacy', service_graph=None):
+            retained_allocations=None, snapshot_provider=None, access_backend='legacy', service_graph=None,
+            admission_test=None):
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
         Path('/run/.containerenv').exists() and not Path('/usr/share/lanrith/installed.json').exists(),
         'Require an uninitialized disposable systemd container.')
     require({row['ifname'] for row in json.loads(base.run('ip', '-j', 'link').stdout)} == {'lo'} and
         not output.exists() and output.is_absolute() and output.parent.is_dir(), 'Fixture topology/output exists.')
-    sources = {name: sha(ROOT/name) for name in (*base.SOURCE_FILES, 'lanrith/kea_runtime.py',
+    sources = {name: sha(ROOT/name) for name in (*base.SOURCE_FILES, 'lanrith/kea_runtime.py', 'lanrith/kea_listeners.py', 'lanrith/kea_observer.py',
         'tests/policy_bindings_component_native.py', 'tests/test_radius.py')}
     if service_graph is not None:
         sources['tests/policy_service_graph_native.py'] = sha(ROOT/'tests/policy_service_graph_native.py')
@@ -120,7 +121,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         labels.write_text(files['etc/xtables/connlabel.conf'])
     library = Path('/usr/lib/lanrith/lanrith'); require(not library.exists(), 'Runtime library exists.')
     library.mkdir(parents=True)
-    for name in ('__init__.py', 'release.py', 'policy_runtime.py', 'kea_runtime.py'):
+    for name in ('__init__.py', 'release.py', 'policy_runtime.py'):
         shutil.copyfile(ROOT/'lanrith'/name, library/name)
     wrapper = library.parent/'policy-runtime'
     wrapper.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0,"/usr/lib/lanrith")\n'
@@ -182,7 +183,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     if service_graph is None:
         base.run('/usr/bin/router-policy-helper', '-config-directory', str(policy_runtime.CONFIG), '-initialize-state')
     units = Path('/run/systemd/system')
-    names = (base.HELPER, *base.SOCKETS, *base.DEPENDENCIES, 'kea-dhcp4-server.service', 'freeradius.service')
+    names = (base.HELPER, *base.SOCKETS, *base.DEPENDENCIES, 'kea-dhcp4-server.service', 'lanrith-kea-leases.service', 'freeradius.service')
     for name in (base.HELPER, base.DEPENDENCIES[1]):
         (units/name).write_text(files['usr/lib/systemd/system/'+name])
     for name in base.SOCKETS:
@@ -193,13 +194,14 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
     (units/'freeradius.service').write_text('[Service]\nType=exec\nUser=freerad\nGroup=freerad\n'
         'ExecStart=/usr/bin/python3 -I /run/synthetic-accounting.py\nSyslogIdentifier=freeradius\n'
         'StandardOutput=journal\nStandardError=journal\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n')
-    account = pwd.getpwnam('_kea')
-    path = Path('/etc/kea/kea-dhcp4.conf'); path.write_text(files['etc/kea/kea-dhcp4.conf'])
-    os.chown(path, 0, account.pw_gid); path.chmod(0o640)
-    dropin = units/'kea-dhcp4-server.service.d'; dropin.mkdir()
-    hardening = 'mkosi/base/mkosi.extra/etc/systemd/system/kea-dhcp4-server.service.d/30-lanrith-hardening.conf'
-    shutil.copyfile(ROOT/hardening, dropin/'30-lanrith-hardening.conf')
-    (dropin/'60-lanrith-control.conf').write_text(files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'])
+    account = stage_kea(files)
+    group = Path('/run/sysusers.d/80-lanrith-kea.conf')
+    group.parent.mkdir(exist_ok=True)
+    group.write_text(files['usr/lib/sysusers.d/80-lanrith-kea.conf'])
+    base.run('systemd-sysusers', str(group))
+    bindings_dropin = 'lanrith-policy-bindings.service.d/65-lanrith-kea.conf'
+    (units/bindings_dropin).parent.mkdir(exist_ok=True)
+    (units/bindings_dropin).write_text(files['etc/systemd/system/'+bindings_dropin])
     state = Path('/var/lib/kea'); state.mkdir(exist_ok=True)
     os.chown(state, account.pw_uid, account.pw_gid); state.chmod(0o750)
     expiry = int(time.time())+600
@@ -213,8 +215,8 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         service_graph.install(candidate, contract, files, metadata, units)
     checks, observed, paused = [], {}, None
     def bindings(): return json.loads((policy_runtime.BINDINGS/'bindings.json').read_bytes())
-    # Follow the selected helper's bounded processing cap. This changes only
-    # the test client's wait, never source freshness or authorization expiry.
+    # Include two seconds for proposal delivery and the reply around the
+    # selected helper's five- or ten-second authenticated request deadline.
     # Both providers are trusted Python-only fixture inputs. Retained maps use
     # the real compiler/baseline contract; directory proposals still enter the
     # same authenticated reader socket and independently checked source path.
@@ -223,13 +225,14 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         if service_graph is not None:
             return service_graph.submit()
         return base.request(base.PROPOSAL, proposal(), uid=1701, gid=1701,
-                            response_timeout=10 if contract['translation_manifests'] else 7).get('reply', {})
+                            response_timeout=12 if contract['translation_manifests'] else 7).get('reply', {})
     def observe(): return base.request(policy_runtime.OBSERVATIONS, base.OBSERVE).get('reply', {})
     try:
         base.run('systemctl', 'daemon-reload')
         base.run('systemctl', 'start', 'systemd-journald.service')
         # The base boot dependencies are deliberately not an image boot test.
-        base.run('systemctl', '--job-mode=ignore-dependencies', 'start', 'kea-dhcp4-server.service')
+        base.run('systemctl', 'start', 'kea-dhcp4-server.service')
+        base.run('systemctl', 'start', 'lanrith-kea-leases.service')
         base.run('systemctl', 'start', base.HELPER, timeout=110)
         pid = base.run('systemctl', 'show', '--property=MainPID', '--value', base.HELPER).stdout.strip()
         initial = submit()
@@ -254,6 +257,11 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         observed.update(binding=first, grant_snapshot=grant)
         checks.append('fresh-directory-and-collected-ownership-produce-nonempty-enforcing-observation')
         if observe_stage is not None: observe_stage('applied', value, files)
+        if admission_test is not None:
+            # The companion owns its post-admission assertions and result.
+            # The same finally block shuts down the graph and removes its links.
+            admission_test()
+            return
         # Pause the real daemon while preserving its dependency state. An
         # explicit unit stop would also stop its Requires= dependents.
         paused = int(base.run('systemctl', 'show', '--property=MainPID', '--value', 'kea-dhcp4-server.service').stdout)
@@ -262,8 +270,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         denied = submit()
         require(denied.get('status') == 'rejected', 'Missing Kea evidence admitted a directory request.')
         # A source query can consume its full deadline. Keep it stalled long
-        # enough to cover helper supervision and the collector's own negative
-        # publication, rather than only the runtime wrapper's first marker.
+        # enough to cover helper supervision and the staged collector's final outcome.
         negative_markers = []
         for _ in range(12):
             time.sleep(1)
@@ -272,11 +279,14 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
                 require(negative['schema_version'] == 1 and negative['generation'] and
                     negative['observed_at'] != '0001-01-01T00:00:00Z' and negative['records'] == [],
                     'Native collector emitted a malformed incomplete envelope.')
-                if len(negative['generation']) == 64: negative_markers.append(negative)
+                metadata = json.loads(os.getxattr(policy_runtime.BINDINGS/'bindings.json',
+                                                  policy_runtime.STATUS_ATTRIBUTE))
+                if metadata['outcome'] in ('collector', 'lease', 'budget'):
+                    negative_markers.append(negative)
             require(base.run('systemctl', 'show', '--property=MainPID', '--value', base.HELPER).stdout.strip() == pid and
                 base.run('systemctl', 'show', '--property=NRestarts', '--value', base.HELPER).stdout.strip() == b'0',
                 'A stalled source or collector negative publication restarted the enforcing helper.')
-        require(negative_markers, 'Actual native collector negative publication was not observed.')
+        require(negative_markers, 'Collector failure did not publish a diagnosed withdrawal.')
         observed['collector_negative_markers'] = negative_markers
         checks.append('native-collector-negative-marker-retains-loader-contract-through-source-deadline')
         checks.append('kea-source-loss-invalidates-complete-export-and-denies-directory-request')
@@ -311,7 +321,7 @@ def qualify(candidate, collector_sha, output, *, configure=None, observer=None, 
         base.run('systemctl', 'stop', *names, check=False)
         for name in names:
             (units/name).unlink(missing_ok=True)
-        shutil.rmtree(dropin)
+        shutil.rmtree((units/bindings_dropin).parent)
         base.run('systemctl', 'daemon-reload')
         base.run('nft', 'flush', 'ruleset')
         for name in reversed(interfaces): base.run('ip', 'link', 'delete', name)

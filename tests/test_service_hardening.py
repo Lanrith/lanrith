@@ -39,7 +39,7 @@ class ServiceHardeningTests(unittest.TestCase):
                 'chrony.service.d/30-lanrith-hardening.conf').read_text()
         self.assertIn('NoNewPrivileges=yes\n', unit)
         self.assertIn('MemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\nLimitNOFILE=1024\n', unit)
-        self.assertIn('ExecStart=/usr/sbin/chronyd -n -U -u _chrony -f /etc/chrony/chrony.conf\n', unit)
+        self.assertIn('ExecStart=/usr/sbin/chronyd -n -U -F 1 -u _chrony -f /etc/chrony/chrony.conf\n', unit)
 
     def test_message_bus_keeps_only_its_audit_role_and_cannot_change_cgroups(self):
         unit = (ROOT/'mkosi/base/mkosi.extra/etc/systemd/system/'

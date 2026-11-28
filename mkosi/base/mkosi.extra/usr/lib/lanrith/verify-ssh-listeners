@@ -1,0 +1,171 @@
+#!/usr/bin/python3 -I
+"""Check or restore the appliance's declared OpenSSH management listeners."""
+
+import errno
+import ipaddress
+import json
+import os
+import re
+from pathlib import Path
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+MANIFEST = Path('/usr/share/lanrith/ssh-listeners.json')
+RETRY = Path('/run/lanrith-ssh-listeners/attempts.json')
+
+
+def bindable(address, port):
+    # Runs inside the ssh.service sandbox too. Do not require AF_NETLINK there.
+    family = socket.AF_INET6 if ':' in address else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((address, port))
+    except OSError as error:
+        if error.errno in (errno.EADDRNOTAVAIL, errno.EADDRINUSE, errno.EAFNOSUPPORT, errno.ENODEV):
+            return False
+        raise
+    return True
+
+
+def wait_for_addresses(expected, port):
+    deadline = time.monotonic() + 10
+    while True:
+        ready = {address for address in expected if bindable(address, port)}
+        if ready == expected:
+            return 0
+        if time.monotonic() >= deadline:
+            report('SSH address pending', expected - ready, port)
+            return 0 if ready else 1
+        time.sleep(0.25)
+
+
+def assigned(interfaces):
+    rows = json.loads(subprocess.check_output(['/usr/bin/ip', '-j', 'address', 'show', 'up'], timeout=2))
+    return {item['local'] for row in rows if row.get('ifname') in interfaces
+            for item in row.get('addr_info', []) if item['local'] in interfaces[row['ifname']]
+            and not (item.get('tentative') or item.get('dadfailed'))}
+
+
+def listener_sockets(pid):
+    process = Path('/proc', str(pid))
+    if os.readlink(process/'exe') != '/usr/sbin/sshd':
+        raise ValueError('SSH main process unavailable.')
+    fds = set()
+    for fd in (process/'fd').iterdir():
+        try:
+            fds.add(os.readlink(fd))
+        except FileNotFoundError:
+            continue
+    found = set()
+    for table in ('tcp', 'tcp6'):
+        path = process/'net'/table
+        if table == 'tcp6' and not path.exists():
+            continue
+        with path.open() as rows:
+            next(rows)
+            for line in rows:
+                fields = line.split()
+                if fields[3] != '0A' or f'socket:[{fields[9]}]' not in fds:
+                    continue
+                address, port = fields[1].split(':')
+                raw = b''.join(struct.pack('=I', int(address[i:i+8], 16)) for i in range(0, len(address), 8))
+                found.add((str(ipaddress.ip_address(raw)), int(port, 16)))
+    return found
+
+
+def report(message, addresses, port):
+    for address in sorted(addresses):
+        print(f'{message} [{address}]:{port}', file=sys.stderr)
+
+
+def retry_allowed(pid, addresses):
+    if not addresses:
+        RETRY.unlink(missing_ok=True)
+        return False
+    previous = json.loads(RETRY.read_text()) if RETRY.exists() else {}
+    count = previous.get('count', 0) if (previous.get('pid'), previous.get('addresses')) == (pid, addresses) else 0
+    if count >= 3:
+        return False
+    pending = RETRY.with_suffix('.tmp')
+    pending.write_text(json.dumps({'pid': pid, 'addresses': addresses, 'count': count + 1}))
+    pending.replace(RETRY)
+    return True
+
+
+def address_start_failure(unit):
+    if unit['ActiveState'] == 'inactive' and unit['Result'] == 'exec-condition':
+        return True
+    # Addresses can disappear between ExecCondition and sshd's bind. Preserve
+    # the package's treatment of every other status 255, including config errors.
+    if not (unit['ActiveState'] == 'failed' and unit['Result'] == 'exit-code' and
+            unit.get('ExecMainStatus') == '255' and re.fullmatch('[a-f0-9]{32}', unit.get('InvocationID', '')) and
+            re.fullmatch('[1-9][0-9]*', unit.get('ExecMainPID', ''))):
+        return False
+    message = subprocess.run(['/usr/bin/journalctl', '--boot', '--quiet', '--no-pager', '-o', 'cat', '-n', '1',
+                              '_SYSTEMD_INVOCATION_ID='+unit['InvocationID'], '_PID='+unit['ExecMainPID'],
+                              r'--grep=^([^:]+: )?Cannot bind any address\.$'],
+                             capture_output=True, text=True, timeout=3)
+    return message.returncode == 0 and bool(message.stdout.strip())
+
+
+def check(interfaces, expected, port, repair):
+    ready = assigned(interfaces)
+    properties = subprocess.check_output(['/usr/bin/systemctl', 'show', '-p', 'MainPID', '-p', 'Result',
+                                          '-p', 'ActiveState', '-p', 'ExecMainStatus', '-p', 'InvocationID',
+                                          '-p', 'ExecMainPID', 'ssh.service'],
+                                         text=True, timeout=2)
+    unit = dict(line.split('=', 1) for line in properties.splitlines())
+    pid = int(unit['MainPID'])
+    if pid <= 1:
+        if not repair:
+            report('SSH listener missing', expected, port)
+            return 1
+        available = sorted(address for address in ready if bindable(address, port))
+        if not available:
+            RETRY.unlink(missing_ok=True)
+            return 0
+        if address_start_failure(unit) and retry_allowed(0, available):
+            subprocess.run(['/usr/bin/systemctl', '--no-block', 'start', 'ssh.service'], check=True, timeout=2)
+        return 0
+    owned = listener_sockets(pid)
+    required = {(address, port) for address in expected}
+    if not repair:
+        report('SSH address pending', expected - ready, port)
+        report('SSH listener missing', {address for address, _ in required - owned}, port)
+        if owned - required:
+            print('SSH main process has an undeclared TCP listener.', file=sys.stderr)
+        return 0 if ready == expected and owned == required else 1
+
+    # Only reload for declared addresses which have arrived and whose socket is
+    # free. This preserves an existing listener if a different service holds a port.
+    missing = sorted(address for address in ready if (address, port) not in owned and bindable(address, port))
+    if not retry_allowed(pid, missing):
+        return 0
+    report('Reloading SSH for available listener', missing, port)
+    subprocess.run(['/usr/bin/systemctl', 'reload', 'ssh.service'], check=True, timeout=8)
+    return 0
+
+
+def main(args):
+    contract = json.loads(MANIFEST.read_bytes())
+    interfaces, port = contract['interfaces'], contract['port']
+    expected = {str(ipaddress.ip_address(a)) for addresses in interfaces.values() for a in addresses}
+    if not expected or type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError('Invalid SSH listener contract.')
+    if args == ['wait']:
+        return wait_for_addresses(expected, port)
+    if args in ([], ['repair']):
+        return check(interfaces, expected, port, bool(args))
+    return 64
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (KeyError, OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f'SSH listener check failed: {error}', file=sys.stderr)
+        sys.exit(255 if sys.argv[1:] == ['wait'] else 1)

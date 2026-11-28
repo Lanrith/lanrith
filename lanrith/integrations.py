@@ -1,12 +1,13 @@
 """Typed optional integration contracts and cross-component references."""
 
+import hashlib
 import ipaddress as ip
 from pathlib import PurePosixPath
 import re
 from urllib.parse import urlsplit
 
-from . import intent
-from .release import require
+from . import bindings, intent
+from .release import canonical, require
 
 
 def text(value, maximum=512):
@@ -20,6 +21,16 @@ def domain(value):
     require(all(re.fullmatch(r'[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?', label)
                 for label in value.rstrip('.').split('.')), 'Invalid DNS name.')
     return value
+
+
+def zone_owner(label, zone):
+    """Return an absolute lowercase owner for a relative label or the apex."""
+    if label == '@':
+        return zone.lower()+'.'
+    domain(label)
+    require(not label.endswith('.') and len(label+'.'+zone) <= 253,
+            'Zone records must use relative in-zone labels.')
+    return (label+'.'+zone+'.').lower()
 
 
 def credential(value):
@@ -65,7 +76,7 @@ def routing(value):
         require(intent.boolean(route['on_link']), 'Static routes must explicitly declare on-link delivery.')
         prefixes(value, route['to'])
     bgp = settings.get('bgp', {})
-    intent.fields(bgp, {'enabled', 'asn', 'network', 'peer_groups'})
+    intent.fields(bgp, {'enabled', 'asn', 'network', 'peer_groups', 'import_ownership'})
     active = enabled(bgp)
     if active:
         integer(bgp.get('asn'), 1, 4294967294)
@@ -77,7 +88,10 @@ def routing(value):
         integer(group['remote_asn'], 1, 4294967294)
         selected = selected_network(value, group.get('network', bgp.get('network')))
         for clause in intent.sequence(group['import'], 64, 1):
-            intent.fields(clause, {'group', 'prefix_length', 'exact', 'purpose', 'reply_mode'}, {'group', 'purpose'})
+            intent.fields(clause, {'group', 'prefix_length', 'exact', 'purpose', 'reply_mode', 'fallback'},
+                          {'group', 'purpose'})
+            require(clause.get('fallback', 'routing_table') in ('routing_table', 'bgp_only'),
+                    'Unknown BGP import fallback.')
             require(clause['purpose'] in ('network', 'service'), 'Unknown route purpose.')
             require(('prefix_length' in clause) != ('exact' in clause), 'Specify exact imports or a prefix length.')
             if 'exact' in clause:
@@ -131,7 +145,7 @@ def dns_records(value):
     """Resolve address references once, sharing aliases with packet translation."""
     dns = value['services']['dns']
     authoritative = dns.get('authoritative', {})
-    intent.fields(authoritative, {'enabled', 'primary_zone', 'writers', 'zones'})
+    intent.fields(authoritative, {'enabled', 'primary_zone', 'writers', 'direct_readers', 'zones'})
     active = enabled(authoritative) and dns['enabled']
     if active:
         domain(authoritative.get('primary_zone'))
@@ -142,15 +156,16 @@ def dns_records(value):
     result = {}
     for zone, settings in zones.items():
         domain(zone)
-        intent.fields(settings, {'persistent', 'records', 'records_from'})
+        intent.fields(settings, {'persistent', 'records', 'records_from', 'fixed_records', 'managed_rrsets', 'discovery_delegation'})
         intent.boolean(settings.get('persistent', False))
         records = settings.get('records', {})
-        require(isinstance(records, dict) and len(records) <= 4096, 'Invalid DNS records.')
+        require(isinstance(records, dict), 'Invalid DNS records.')
         resolved = {}
         for label, rr in records.items():
-            domain(label)
+            zone_owner(label, zone)
             intent.fields(rr, {'A', 'AAAA', 'CNAME'})
-            require(rr and not ('CNAME' in rr and len(rr) != 1), 'CNAME conflicts with address records.')
+            require(rr and not ('CNAME' in rr and (len(rr) != 1 or label == '@')),
+                    'CNAME conflicts with address records or zone apex authority.')
             resolved[label] = {}
             for kind, entry in rr.items():
                 if kind == 'CNAME':
@@ -188,14 +203,49 @@ def dns_records(value):
                 resolved[label] = {'AAAA' if intent.address(target).version == 6 else 'A': target}
         result[zone] = resolved
     for writer in intent.named(authoritative.get('writers', {}), 64).values():
-        intent.fields(writer, {'zone', 'sources', 'key_name', 'credential', 'zone_transfer'},
+        intent.fields(writer, {'zone', 'sources', 'key_name', 'credential', 'zone_transfer', 'grants'},
                       {'zone', 'sources', 'key_name', 'credential'})
         require(writer['zone'] in zones, 'DNS writer references an undeclared zone.')
+        grants = writer.get('grants', [])
+        require(isinstance(grants, list), 'DNS writer grants must be a list.')
+        require(not active or 'grants' not in writer or grants or writer.get('zone_transfer') is True,
+                'DNS writer needs grants or transfer access.')
+        for grant in grants:
+            intent.fields(grant, {'name', 'subtree', 'types'}, {'types'})
+            require(('name' in grant) != ('subtree' in grant), 'DNS grant requires one name or subtree.')
+            owner = grant.get('name', grant.get('subtree'))
+            if owner != '@':
+                domain(owner)
+                require(not owner.endswith('.') and len(owner+'.'+writer['zone']) <= 253,
+                        'DNS grant requires an in-zone relative owner.')
+            kinds = intent.sequence(grant['types'], 16, 1)
+            require(all(kind in ('A', 'AAAA', 'CAA', 'CNAME', 'HTTPS', 'MX', 'NAPTR', 'NS', 'PTR',
+                                 'SRV', 'SVCB', 'TLSA', 'TXT') for kind in kinds) and
+                    len(set(kinds)) == len(kinds), 'Invalid or duplicate DNS grant type.')
         endpoints(value, writer['sources'])
         domain(writer['key_name'])
+        require(not writer['key_name'].endswith('..'), 'Invalid DNS writer key name.')
         credential(writer['credential'])
         intent.boolean(writer.get('zone_transfer', False))
     return result
+
+
+def validate_admission_binding(radius, directory, vlan):
+    admission = radius['admission']
+    provider = admission.get('provider_policy')
+    require(isinstance(provider, dict), 'Directory admission requires a trusted provider policy export.')
+    intent.fields(provider, {'provider', 'revision', 'binding_sha256'}, {'provider', 'revision', 'binding_sha256'})
+    text(provider['provider'], 128)
+    require(isinstance(provider['revision'], str) and re.fullmatch(r'[0-9a-f]{64}', provider['revision']),
+            'Directory admission requires an immutable provider policy revision (SHA-256).')
+    # Independently pinned by the release owner from the provider's effective flow.
+    # The declaration supplies expected values; it must never synthesize the pin.
+    binding = {'schema': 1, 'provider': provider['provider'], 'revision': provider['revision'],
+               'endpoint': str(intent.address(radius['proxy']['address'])),
+               'directory': admission['directory'], 'directory_url': directory['url'],
+               'directory_base_dn': directory['base_dn'], 'group_dn': admission['group_dn'], 'vlan': vlan}
+    require(hashlib.sha256(canonical(binding)).hexdigest() == provider['binding_sha256'],
+            'RADIUS admission differs from the trusted provider policy binding.')
 
 
 def identity(value):
@@ -246,10 +296,12 @@ def identity(value):
     if enabled(radius):
         radius_network = selected_network(value, radius.get('network'))
         admission = radius.get('admission')
-        intent.fields(admission, {'directory', 'group_dn', 'network'}, {'network'})
+        intent.fields(admission, {'directory', 'group_dn', 'network', 'provider_policy'}, {'network'})
         admitted = selected_network(value, admission['network'])
         require(('directory' in admission) == ('group_dn' in admission),
                 'Directory admission requires both a directory and group DN.')
+        require('provider_policy' not in admission or 'directory' in admission,
+                'A provider policy export requires directory admission.')
         if 'directory' in admission:
             directory_reference(admission['directory'])
             text(admission['group_dn'])
@@ -294,13 +346,85 @@ def identity(value):
             attachments += [ip.ip_network(a) for a in routing_model.routed_sources(value, radius['network'])]
             require(any(target.version == attached.version and target in attached for attached in attachments),
                     'RADIUS proxy is outside its declared attachment network.')
+    if enabled(radius) and 'directory' in admission:
+        validate_admission_binding(radius, directories[admission['directory']], admitted['vlan'])
     fallback = radius.get('fallback', {})
-    intent.fields(fallback, {'enabled', 'clients'})
+    intent.fields(fallback, {'enabled', 'clients', 'provider_response_seconds', 'nas_retry_seconds'})
     if enabled(fallback) and enabled(radius):
+        response = fallback.get('provider_response_seconds')
+        retry = fallback.get('nas_retry_seconds')
+        require(type(response) is int and 1 <= response <= 26 and
+                type(retry) is int and response + 3 <= retry <= 120,
+                'RADIUS fallback requires a qualified provider response bound and compatible NAS retry interval.')
         for key in intent.sequence(fallback.get('clients'), 64, 1):
             require(key in clients and clients[key]['kind'] == 'wired_mab' and 'port' in clients[key] and
                     intent.network(clients[key]['address']).num_addresses == 1,
                     'Outage fallback requires an exact wired NAS and port.')
+
+
+def validate_dns_forwarding(value):
+    dns = value['services']['dns']
+    upstreams = []
+    if 'tls_forwarding' in dns:
+        tls = dns['tls_forwarding']
+        intent.fields(tls, {'trust', 'upstreams'}, {'trust', 'upstreams'})
+        require(dns['enabled'] and 'upstreams' not in dns and tls['trust'] == 'system',
+                'TLS forwarding requires an enabled resolver, system trust and no plain upstreams.')
+        for peer in intent.sequence(tls['upstreams'], 16, 1):
+            intent.fields(peer, {'address', 'authentication_name'}, {'address', 'authentication_name'})
+            addr = intent.address(peer['address'])
+            name = domain(peer['authentication_name']).removesuffix('.')
+            require(not addr.is_link_local and '_' not in name and not name.endswith('.') and
+                    not name.rsplit('.', 1)[-1].isdigit(),
+                    'TLS forwarding requires a routed address and certificate DNS name.')
+            upstreams.append(addr)
+    else:
+        upstreams = [intent.address(raw) for raw in intent.sequence(dns.get('upstreams', []), 16)]
+    if upstreams:
+        require(any(value['uplink'].get('ipv'+str(addr.version)) != 'disabled' for addr in upstreams),
+                'DNS forwarding requires an upstream on an enabled address family.')
+
+
+def validate_ntp(value):
+    settings = value['services']['ntp']
+    sources = intent.ntp_upstreams(value)
+    require(not settings['enabled'] or sources, 'Enabled NTP requires explicit site upstreams.')
+    bootstrap = False
+    total = 0
+    for source in sources:
+        intent.fields(source, {'type', 'address', 'family', 'maxsources'}, {'type', 'address'})
+        kind, host = source['type'], source['address']
+        require(kind in ('pool', 'server'), 'NTP source type must be pool or server.')
+        family = source.get('family')
+        require('family' not in source or family in ('ipv4', 'ipv6'), 'Invalid NTP address family.')
+        require(isinstance(host, str), 'Invalid NTP source address.')
+        try:
+            literal = ip.ip_address(host)
+        except ValueError:
+            domain(host)
+            require(not re.fullmatch(r'[0-9.]+', host) and not host.endswith('..'), 'Invalid NTP hostname.')
+            literal = None
+        else:
+            intent.address(host)
+            require(not literal.is_link_local and family in (None, 'ipv'+str(literal.version)),
+                    'NTP address must be routable and match its declared family.')
+            if value['uplink'].get('ipv'+str(literal.version)) != 'disabled':
+                bootstrap = True
+        if 'maxsources' in source:
+            require(kind == 'pool', 'NTP maxsources applies only to pools.')
+            integer(source['maxsources'], 1, 1 if literal else 16)
+        total += 1 if kind == 'server' or literal else source.get('maxsources', 4)
+    if 'total_sources' in settings:
+        integer(settings['total_sources'], 1, 256)
+        require(total == settings['total_sources'], 'NTP total_sources must equal the configured member targets.')
+    require(not intent.boolean(settings.get('require_numeric_source', False)) or bootstrap,
+            'DNS-independent NTP bootstrap requires a numeric site upstream on an enabled uplink family.')
+    if 'ratelimit' in settings:
+        limits = settings['ratelimit']
+        ranges = {'interval': (-19, 12), 'burst': (1, 255), 'leak': (1, 4)}
+        intent.fields(limits, ranges)
+        for key, number in limits.items():
+            integer(number, *ranges[key])
 
 
 def validate(value):
@@ -311,28 +435,28 @@ def validate(value):
     from .routing import validate as validate_routes
     validate_routes(value)
     identity(value)
-    for feature in ('dns', 'ntp'):
-        settings = value['services'][feature]
-        for upstream in intent.sequence(settings.get('upstreams', []), 16):
-            if feature == 'dns':
-                intent.address(upstream)
-                continue
-            try:
-                intent.address(upstream)
-            except ValueError:
-                domain(upstream)
+    validate_dns_forwarding(value)
+    validate_ntp(value)
     dns = value['services']['dns']
     if 'domain' in dns:
         domain(dns['domain'])
     for blocked in intent.sequence(dns.get('blocked_domains', []), 1024):
         domain(blocked)
     dns_records(value)
-    from .authoritative import validate as validate_authoritative
-    validate_authoritative(value)
+    if 'private_dns64_startup' in dns:
+        from . import dns64
+        require(dns64.private_active(value) and dns['private_dns64_startup'] in ('required', 'independent'),
+                'Select required or independent startup for an enabled private DNS64 handler.')
     discovery = value['services'].get('discovery', {})
+    clients = discovery.get('local_clients', {})
+    require(isinstance(clients, dict) and len(clients) <= 64 and
+            all(isinstance(name, str) and bindings.ACCOUNT.fullmatch(name) and
+                name not in ('root', 'avahi', 'discovery-bridge-collector', 'discovery-bridge-publisher') and
+                role in ('status', 'browse', 'publish') for name, role in clients.items()),
+            'Local Avahi clients require distinct Unix accounts and a status, browse or publish role.')
     if 'configuration' not in discovery:
         intent.fields(discovery, {'enabled', 'domain', 'alias_prefix', 'networks', 'additional_sources', 'browse',
-                                  'external_publishers', 'exclude', 'views', 'default_view'})
+                                  'external_publishers', 'exclude', 'views', 'default_view', 'direct_readers', 'local_clients'})
         if enabled(discovery):
             require(value['services']['dns']['enabled'], 'Discovery DNS requires the generated DNS service.')
             domain(discovery.get('domain'))
@@ -357,17 +481,28 @@ def validate(value):
             intent.network(prefix)
         views = intent.named(discovery.get('views', {}), 64)
         require(all(key in discovery.get('networks', []) for key in views.values()) and
-                ('default_view' not in discovery or discovery['default_view'] in views), 'Invalid discovery views.')
+                ('default_view' not in discovery or discovery['default_view'] in (views or discovery.get('networks', []))),
+                'Invalid discovery views.')
+    from .authoritative import validate as validate_authoritative
+    validate_authoritative(value)
     observability = value.get('observability', {})
-    intent.fields(observability, {'metrics', 'logs', 'snmp', 'ids'})
+    intent.fields(observability, {'metrics', 'logs', 'snmp', 'ids', 'journal'})
     for key, settings in observability.items():
+        if key == 'journal':
+            from . import journal
+            journal.validate(settings, value['hardware']['storage']['state_mib'])
+            continue
         allowed = {'clients'} if key == 'metrics' else {'clients', 'username', 'credential'} if key == 'snmp' else {
-            'endpoint', 'tls_server_name', 'authentication', 'username', 'credential'} if key == 'logs' else set()
+            'endpoint', 'tls_server_name', 'authentication', 'username', 'credential'} if key == 'logs' else {'forward_alerts'}
         intent.fields(settings, allowed | {'enabled'})
         active = enabled(settings)
         if active:
-            required = {'endpoint', 'tls_server_name'} if key == 'logs' else allowed
+            required = {'endpoint', 'tls_server_name'} if key == 'logs' else set() if key == 'ids' else allowed
             require(required <= set(settings), 'Enabled observability integration is missing configuration.')
+        if key == 'ids' and 'forward_alerts' in settings:
+            intent.boolean(settings['forward_alerts'])
+            require(not settings['forward_alerts'] or active and observability.get('logs', {}).get('enabled'),
+                    'Forwarding IDS alerts requires enabled IDS and log delivery.')
         if key == 'logs':
             from .logs import authentication
             authentication(settings)
@@ -429,6 +564,6 @@ def require_runtime(value, target_facts=None):
             from .hardware_config import ownership_manifest
             ownership_manifest(value, target_facts)
     if any(enabled(s) for name, s in value.get('observability', {}).items()
-           if name not in ('ids', 'metrics', 'snmp', 'logs')):
+           if name not in ('ids', 'metrics', 'snmp', 'logs', 'journal')):
         missing.append('observability integration')
     require(not missing, 'Runtime implementation is not admitted for: '+', '.join(missing)+'.')

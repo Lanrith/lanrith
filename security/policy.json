@@ -62,7 +62,7 @@
     },
     "lanrith-tayga-internal": {
       "source": "tayga-internal",
-      "version": "0.9.6-1"
+      "version": "0.9.6-2"
     },
     "libunbound8": {
       "source": "unbound",
@@ -74,7 +74,7 @@
     },
     "prometheus-node-exporter": {
       "source": "node-exporter",
-      "version": "1.12.1-1+lanrith2"
+      "version": "1.12.1-1+lanrith3"
     },
     "router-policy-collector": {
       "source": "router-policy-collector",
@@ -112,13 +112,14 @@
   "required_exact_packages": {
     "alloy": "1.20.1-1+lanrith7",
     "discovery-bridge": "0.1.13",
-    "lanrith-tayga-internal": "0.9.6-1",
+    "lanrith-tayga-internal": "0.9.6-2",
     "libunbound8": "1.26.2-0+deb13u1",
     "libvppinfra": "25.06-release",
-    "prometheus-node-exporter": "1.12.1-1+lanrith2",
+    "prometheus-node-exporter": "1.12.1-1+lanrith3",
     "router-policy-collector": "0.1.18",
     "router-policy-helper": "0.1.18",
     "router-policy-reader": "0.1.18",
+    "suricata": "1:8.0.8-1~bpo13+2",
     "unbound": "1.26.2-0+deb13u1",
     "unbound-anchor": "1.26.2-0+deb13u1",
     "vpp": "25.06-release",

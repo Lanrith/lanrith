@@ -7,6 +7,7 @@ fixed, narrow runtime document and never searches for or reconstructs intent.
 import argparse
 from datetime import datetime, timezone
 import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 import pwd
 import re
 import socket
+import struct
 import stat
 import subprocess
 import sys
@@ -27,7 +29,15 @@ CONFIG = ROOT/'config'
 GENERATION = ROOT/'generation'
 BINDINGS = ROOT/'bindings'
 COLLECTOR = ROOT/'collector'
+EVIDENCE_SOCKET = '/run/lanrith-policy-evidence.sock'
+STATUS_ATTRIBUTE = 'user.lanrith.binding-status'
+BINDING_LIMIT = 1024 * 1024
 READER = Path('/run/router-policy-reader')
+# The native owner reserves ten rule bits and the all-ones epoch. An
+# exhausted counter cannot supply a new generation on helper startup.
+MAX_OWNERSHIP_EPOCH = ((2**32 - 1) >> 10) - 1
+INSTALL_ID = 'user.lanrith.policy-install'
+ENROLLED = b'image-owner-first-install-v1\n'
 ENROLLMENT = Path('/var/lib/lanrith/policy-enrollment/enrolled')
 OBSERVATIONS = Path('/run/lanrith-policy-observations/observations.sock')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
@@ -36,8 +46,16 @@ IFNAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,14}\Z')
 MAC = re.compile(r'(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\Z')
 
 
+class EnrollmentError(ValueError):
+    """Only fixed, non-secret record diagnoses may reach the boot journal."""
+
+
 class PolicyRuntimeError(ValueError):
     """A fixed runtime prerequisite is absent or differs from the image policy."""
+
+
+class GuardReadinessError(PolicyRuntimeError):
+    """Contains only fixed messages and validated guard interface names."""
 
 
 def unique(pairs):
@@ -161,7 +179,7 @@ def load_contract(path=CONTRACT, *, owner=0):
         except (TypeError, ValueError) as error:
             raise PolicyRuntimeError('Policy binding collector address differs.') from error
         if (collector['radius_user'] != 'freerad' or collector['kea_user'] != '_kea' or
-                collector['kea_socket'] != '/run/kea/kea4-ctrl-socket' or prefix.version != 4 or
+                collector['kea_socket'] != '/run/lanrith-kea-leases/leases.sock' or prefix.version != 4 or
                 str(prefix) != collector['ipv4_prefix'] or not isinstance(collector['nas_prefixes'], list) or
                 not 1 <= len(nas) <= 64 or collector['nas_prefixes'] != sorted(set(map(str, nas))) or
                 type(collector['subnet_id']) is not int or not 1 <= collector['subnet_id'] <= 2**32-2 or
@@ -182,7 +200,7 @@ def private_directory(path, *, owner=0, group=0, parents=False):
         raise PolicyRuntimeError('Policy runtime directory metadata differs.')
 
 
-def atomic(path, value, *, owner=0, group=0, mode=0o600):
+def atomic(path, value, *, owner=0, group=0, mode=0o600, status=None):
     data = value if isinstance(value, bytes) else json.dumps(
         value, sort_keys=True, separators=(',', ':')).encode()+b'\n'
     private_directory(path.parent, owner=path.parent.stat().st_uid,
@@ -194,6 +212,8 @@ def atomic(path, value, *, owner=0, group=0, mode=0o600):
             os.fchmod(stream.fileno(), mode)
             os.fchown(stream.fileno(), owner, group)
             stream.write(data)
+            if status is not None:
+                os.setxattr(stream.fileno(), STATUS_ATTRIBUTE, json.dumps(status, separators=(',', ':')).encode())
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -244,12 +264,11 @@ def translation_hash(contract):
     return hashlib.sha256(encoded).hexdigest()
 
 
-
 def wait_interfaces(contract):
     deadline = time.monotonic()+45
-    while not all((Path('/sys/class/net')/name).exists() for name in contract.get('guard_interfaces', contract['managed_interfaces'])):
+    while missing := [name for name in contract['guard_interfaces'] if not (Path('/sys/class/net')/name).exists()]:
         if time.monotonic() >= deadline:
-            raise PolicyRuntimeError('Policy guard interfaces are unavailable.')
+            raise GuardReadinessError('Missing policy guard interfaces: '+', '.join(missing))
         time.sleep(0.2)
 
 
@@ -273,9 +292,16 @@ def prepare_reader(contract, password):
     account = pwd.getpwnam('router-policy-reader')
     if account.pw_uid == 0:
         raise PolicyRuntimeError('Directory reader identity is not isolated.')
-    if not READER.exists():
-        READER.mkdir(mode=0o700)
-        os.chown(READER, account.pw_uid, account.pw_gid)
+    try:
+        READER.lstat()
+    except FileNotFoundError:
+        # Only publish the final name once the directory has its intended identity.
+        # A killed process may leave an empty private staging directory in /run.
+        with tempfile.TemporaryDirectory(prefix='.policy-reader-', dir=READER.parent) as work:
+            staged = Path(work)/'private'
+            staged.mkdir(mode=0o700)
+            os.chown(staged, account.pw_uid, account.pw_gid)
+            staged.rename(READER)
     private_directory(READER, owner=account.pw_uid, group=account.pw_gid)
     source = Path(contract['directory']['ca_file'])
     ca = read(source, 64*1024)
@@ -288,20 +314,104 @@ def prepare_reader(contract, password):
     atomic(READER/'ca.pem', ca, owner=account.pw_uid, group=account.pw_gid)
 
 
+def binding_envelope(complete):
+    observed = datetime.now(timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z')
+    return {'schema_version': 1, 'generation': hashlib.sha256(observed.encode()).hexdigest(),
+            'observed_at': observed, 'complete': complete, 'records': []}
+
+
 def empty_bindings():
-    now = datetime.now(timezone.utc)
-    observed = now.isoformat(timespec='microseconds').replace('+00:00', 'Z')
-    generation = 'compiled-empty-'+hashlib.sha256(observed.encode()).hexdigest()[:24]
-    atomic(BINDINGS/'bindings.json', {'schema_version': 1, 'generation': generation,
-                                     'observed_at': observed, 'complete': True, 'records': []})
+    atomic(BINDINGS/'bindings.json', binding_envelope(True))
 
 
-def incomplete_bindings():
+def last_binding_success():
+    try:
+        fd = os.open(BINDINGS/'bindings.json', os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    try:
+        try:
+            value = os.getxattr(fd, STATUS_ATTRIBUTE)
+        except OSError as error:
+            if error.errno == errno.ENODATA:
+                return None  # A bootstrap or an older collector wrote this generation.
+            raise
+        return decode(value, 512)['last_success']
+    finally:
+        os.close(fd)
+
+
+class BindingFailure(ValueError):
+    def __init__(self, reason):
+        self.reason = reason
+
+
+def worker_snapshot(configuration):
+    limit = BINDING_LIMIT + 1
+    deadline = time.monotonic() + 32
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+        stream.settimeout(32)
+        stream.connect(EVIDENCE_SOCKET)
+        _, uid, _ = struct.unpack('3i', stream.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if uid != 0:
+            raise BindingFailure('collector')
+        stream.sendall(json.dumps(configuration, separators=(',', ':')).encode())
+        stream.shutdown(socket.SHUT_WR)
+        data = bytearray()
+        while len(data) < limit:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BindingFailure('budget')
+            stream.settimeout(remaining)
+            part = stream.recv(min(65536, limit - len(data)))
+            if not part:
+                break
+            data.extend(part)
+    response = decode(bytes(data), BINDING_LIMIT)
+    if set(response) == {'reason'} and response['reason'] in (
+            'accounting', 'lease', 'placement', 'changed', 'budget', 'collector'):
+        raise BindingFailure(response['reason'])
+    return exact(response, {'snapshot'}, 'Evidence worker')['snapshot']
+
+
+def validate_binding_snapshot(snapshot, collector, managed):
+    import ipaddress
+    exact(snapshot, {'schema_version', 'generation', 'observed_at', 'complete', 'records'}, 'Binding snapshot')
+    records = snapshot['records']
     now = datetime.now(timezone.utc)
-    observed = now.isoformat(timespec='microseconds').replace('+00:00', 'Z')
-    generation = 'collector-incomplete-'+hashlib.sha256(observed.encode()).hexdigest()[:24]
-    atomic(BINDINGS/'bindings.json', {'schema_version': 1, 'generation': generation,
-                                     'observed_at': observed, 'complete': False, 'records': []})
+    def stamp(value):
+        moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if moment.tzinfo is None:
+            raise BindingFailure('collector')
+        return moment
+    def fresh(value):
+        return 0 <= (now - stamp(value)).total_seconds() < 90
+    if (type(snapshot['schema_version']) is not int or snapshot['schema_version'] != 1 or
+            snapshot['complete'] is not True or not isinstance(records, list) or
+            len(records) > len(managed) or not HASH.fullmatch(snapshot['generation']) or
+            not fresh(snapshot['observed_at'])):
+        raise BindingFailure('changed')
+    addresses, macs = set(), set()
+    prefix = ipaddress.ip_network(collector['ipv4_prefix'])
+    clients = [ipaddress.ip_network(value) for value in collector['nas_prefixes']]
+    for record in records:
+        exact(record, {'mac', 'nas', 'interface', 'vlan', 'associated_at', 'association_id', 'addresses'},
+              'Binding record')
+        if (record['mac'] not in managed or record['mac'] in macs or
+                not any(ipaddress.ip_address(record['nas']) in client for client in clients) or
+                record['interface'] != collector['interface'] or record['vlan'] != collector['vlan'] or
+                not fresh(record['associated_at']) or not HASH.fullmatch(record['association_id']) or
+                not isinstance(record['addresses'], list) or len(record['addresses']) != 1):
+            raise BindingFailure('changed')
+        macs.add(record['mac'])
+        address = exact(record['addresses'][0], {'ip', 'source', 'ownership_id', 'observed_at', 'valid_until'},
+                        'Binding address')
+        if (ipaddress.ip_address(address['ip']) not in prefix or address['ip'] in addresses or
+                address['source'] != 'kea_dhcp4' or not HASH.fullmatch(address['ownership_id']) or
+                not fresh(address['observed_at']) or not now < stamp(address['valid_until']) or
+                (stamp(address['valid_until']) - stamp(record['associated_at'])).total_seconds() > 90):
+            raise BindingFailure('changed')
+        addresses.add(address['ip'])
 
 
 def cohort(contract):
@@ -319,32 +429,73 @@ def cohort(contract):
     return macs
 
 
-def refresh_bindings(contract):
+def collect_bindings(contract, worker):
     collector = contract['binding_collector']
     if collector is None:
-        empty_bindings()
-        return
-    # Close the feed before inspecting mutable runtime evidence. The native
-    # collector replaces this only after all journal, DHCP and placement reads
-    # agree, so every failure leaves directory grants unusable.
-    incomplete_bindings()
-    managed = cohort(contract)
+        return binding_envelope(True)
+    try:
+        managed = cohort(contract)
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise BindingFailure('cohort') from error
     if not managed:
-        empty_bindings()
-        return
+        return binding_envelope(True)
+    staging = COLLECTOR/'staged'
+    private_directory(staging)
     configuration = {
         'schema_version': 1, 'mode': 'bindings', 'radius_user': collector['radius_user'],
         'nas_prefixes': collector['nas_prefixes'], 'kea_user': collector['kea_user'],
         'kea_socket': collector['kea_socket'], 'subnet_id': collector['subnet_id'],
         'ipv4_prefix': collector['ipv4_prefix'], 'vlan': collector['vlan'],
-        'maximum_devices': collector['maximum_devices'], 'output_directory': str(BINDINGS),
+        'maximum_devices': collector['maximum_devices'], 'output_directory': str(staging),
         'host_placement': {'interface': collector['interface'], 'parent': collector['parent'],
                            'binding_mode': 'dhcp_packet_guarded'},
         'managed_macs': managed,
     }
-    atomic(COLLECTOR/'collector.json', configuration)
-    command([contract['collector_executable'], '-publish-bindings',
-             '-config-directory', str(COLLECTOR)], timeout=35)
+    if worker:
+        snapshot = worker_snapshot(configuration)
+    else:
+        # The packaged v0.1.16 CLI writes its in-progress generation here.
+        # Remove the previous output before each invocation so a successful
+        # process must actually provide a new complete generation.
+        (staging/'bindings.json').unlink(missing_ok=True)
+        atomic(COLLECTOR/'collector.json', configuration)
+        command([contract['collector_executable'], '-publish-bindings',
+                 '-config-directory', str(COLLECTOR)], timeout=32)
+        snapshot = decode(read(staging/'bindings.json', BINDING_LIMIT, private=True), BINDING_LIMIT)
+    if cohort(contract) != managed:
+        raise BindingFailure('cohort')
+    validate_binding_snapshot(snapshot, collector, managed)
+    return snapshot
+
+
+def refresh_bindings(contract, worker=False):
+    # Serialize all callers through commit, including negative publications.
+    fd = os.open(COLLECTOR/'publication.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        started = time.monotonic()
+        last_success = None
+        reason = 'complete'
+        try:
+            last_success = last_binding_success()
+            snapshot = collect_bindings(contract, worker)
+        except BindingFailure as error:
+            reason = error.reason
+        except (TimeoutError, subprocess.TimeoutExpired):
+            reason = 'budget'
+        except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError, AttributeError):
+            reason = 'collector'
+        if reason == 'complete':
+            last_success = datetime.now(timezone.utc).isoformat(timespec='microseconds')
+        else:
+            snapshot = binding_envelope(False)
+        status = {'outcome': reason, 'elapsed_ms': round((time.monotonic() - started) * 1000),
+                  'last_success': last_success}
+        # The xattr and snapshot reach the helper in the very same rename.
+        atomic(BINDINGS/'bindings.json', snapshot, status=status)
+        print('policy-bindings '+json.dumps(status, separators=(',', ':')), flush=True)
+    finally:
+        os.close(fd)
 
 
 def publish_runtime(contract, profile, mapping):
@@ -488,6 +639,43 @@ def serve(contract_path=CONTRACT):
             os.close(descriptor)
 
 
+def guard_device_matches(nft, hook, name, interface):
+    if 'dev' in hook or 'devs' in hook:
+        return hook.get('dev') == interface and 'devs' not in hook
+    # nft 1.0.9 can omit the device in JSON even for a single-device hook.
+    # Its numeric text listing identifies the interface. Match the entire chain
+    # so multiple devices, extra rules or a different policy cannot qualify.
+    listing = subprocess.run([nft, '-n', 'list', 'chain', 'netdev', 'lanrith_identity', name],
+                             capture_output=True, check=True, timeout=5)
+    expected = (f'table netdev lanrith_identity {{ chain {name} {{ type filter hook egress '
+                f'device "{interface}" priority 0; policy accept; jump tp_identity }} }}')
+    return len(listing.stdout) <= 4096 and listing.stdout.split() == expected.encode().split()
+
+
+def verify_guard_hooks(contract):
+    listing = subprocess.run([contract['nft_executable'], '-j', '-n', '-t', 'list', 'table',
+                              'netdev', 'lanrith_identity'], capture_output=True, check=True, timeout=5)
+    # Match the pinned helper's complete nft program listing limit.
+    rows = decode(listing.stdout, 16*1024*1024)['nftables']
+    tables = [row['table'] for row in rows if 'table' in row]
+    hooks = {row['chain']['name']: row['chain'] for row in rows if 'hook' in row.get('chain', {})}
+    expected = {f'tp_egress_{index}': name for index, name in enumerate(contract['guard_interfaces'])}
+    if len(tables) != 1 or tables[0].get('flags') or hooks.keys() != expected.keys():
+        raise GuardReadinessError('Live policy guard table or hook inventory differs.')
+    rules = {name: [] for name in expected}
+    for row in rows:
+        rule = row.get('rule', {})
+        if rule.get('chain') in rules:
+            rules[rule['chain']].append(rule['expr'])
+    for name, interface in expected.items():
+        hook = hooks[name]
+        if ((hook.get('type'), hook.get('hook'), hook.get('prio'), hook.get('policy'))
+                != ('filter', 'egress', 0, 'accept') or
+                rules[name] != [[{'jump': {'target': 'tp_identity'}}]] or
+                not guard_device_matches(contract['nft_executable'], hook, name, interface)):
+            raise GuardReadinessError('Live policy guard differs for interface '+interface+'.')
+
+
 def install_guards(contract_path=CONTRACT):
     if os.geteuid() != 0:
         raise PolicyRuntimeError('Policy guard installation requires root.')
@@ -502,6 +690,143 @@ def install_guards(contract_path=CONTRACT):
     # The main access table and its startup barrier remain untouched.
     batch = b'add table netdev lanrith_identity\nflush table netdev lanrith_identity\n'+guards
     command([contract['nft_executable'], '-f', '-'], data=batch)
+    verify_guard_hooks(contract)
+
+
+def initial_records(contract):
+    """Ask the installed helper for its exact initial state in volatile storage."""
+    with tempfile.TemporaryDirectory(prefix='initialize-', dir=ROOT) as temporary:
+        root = Path(temporary)
+        config, state = root/'config', root/'state'
+        private_directory(config)
+        private_directory(state)
+        helper = decode(read(CONFIG/'helper.json', 64*1024, private=True), 64*1024)
+        helper['state_directory'] = str(state)
+        atomic(config/'helper.json', helper)
+        command([contract['helper_executable'], '-config-directory', str(config), '-initialize-state'])
+        return {name: read(state/name, 4096, private=True)
+                for name in ('state.json', 'ownership-epoch.json')}
+
+
+def install_record(directory, name, value):
+    # An unnamed inode cannot leave an ambiguous, half-written record after a
+    # power loss. linkat publishes it once, and refuses to replace any survivor.
+    fd = os.open('.', os.O_TMPFILE | os.O_RDWR, 0o600, dir_fd=directory)
+    with os.fdopen(fd, 'wb') as stream:
+        stream.write(value)
+        stream.flush()
+        os.fsync(fd)
+        os.link('/proc/self/fd/'+str(fd), name, dst_dir_fd=directory)
+        os.fsync(directory)
+
+
+def finish_install(contract, state, directory):
+    expected = initial_records(contract)
+    entries = set(os.listdir(directory))
+    if entries - {'.lock', *expected} or (entries and '.lock' not in entries):
+        raise EnrollmentError('First-install store contains unrecognized records.')
+    if 'ownership-epoch.json' in entries and 'state.json' not in entries:
+        raise EnrollmentError('First-install state.json is missing before the ownership counter.')
+    lock = os.open('.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600,
+                   dir_fd=directory)
+    try:
+        info = os.fstat(lock)
+        if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or
+                (info.st_uid, info.st_gid, info.st_nlink, info.st_size) != (0, 0, 1, 0)):
+            raise EnrollmentError('First-install .lock metadata differs.')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if set(os.listdir(directory)) != entries | {'.lock'}:
+            raise EnrollmentError('First-install store changed during lock acquisition.')
+        # Validate every survivor before touching a missing record.
+        for name in expected:
+            if name in entries:
+                try:
+                    info = (state/name).lstat()
+                    matches = (info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o600 and
+                               read(state/name, 4096, private=True) == expected[name])
+                except (OSError, ValueError):
+                    matches = False
+                if not matches:
+                    raise EnrollmentError('First-install '+name+' differs from its initial record.')
+        for name, value in expected.items():
+            if name not in entries:
+                install_record(directory, name, value)
+        os.fsync(directory)
+        atomic(ENROLLMENT, ENROLLED)
+    finally:
+        os.close(lock)
+
+
+def enroll_or_recover(contract):
+    state = Path(contract['state_directory'])
+    control = os.open(ENROLLMENT.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(control, fcntl.LOCK_EX)
+        try:
+            marker = read(ENROLLMENT, 128, private=True)
+            if ENROLLMENT.lstat().st_gid != 0:
+                raise ValueError
+        except FileNotFoundError:
+            marker = None
+        except (OSError, ValueError):
+            raise EnrollmentError('Policy enrollment marker is unreadable.') from None
+        directory = os.open(state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            try:
+                token = os.getxattr(directory, INSTALL_ID)
+            except OSError as error:
+                if error.errno != errno.ENODATA and not (
+                        marker == ENROLLED and error.errno == errno.ENOTSUP):
+                    raise
+                token = None
+            if marker is None:
+                if os.listdir(directory) or token == b'enrolled':
+                    raise EnrollmentError('Unacknowledged policy store requires explicit recovery.')
+                if token is None:
+                    token = os.urandom(16).hex().encode()
+                    os.setxattr(directory, INSTALL_ID, token, os.XATTR_CREATE)
+                if not re.fullmatch(b'[0-9a-f]{32}', token):
+                    raise EnrollmentError('First-install store identity differs.')
+                os.fsync(directory)
+                # StateDirectory and tmpfiles may have created these directories
+                # on this boot. Persist their names before recording enrollment.
+                for parent in (state.parent, state.parent.parent):
+                    fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+                marker = b'installing-v2 '+token+b'\n'
+                atomic(ENROLLMENT, marker)
+            # A previous process may have returned an fsync error after rename.
+            # Make the visible marker durable before relying on its phase.
+            os.fsync(control)
+            if marker != ENROLLED:
+                if (token is None or not re.fullmatch(b'[0-9a-f]{32}', token) or
+                        marker != b'installing-v2 '+token+b'\n'):
+                    raise EnrollmentError('Pending enrollment does not match this store.')
+                finish_install(contract, state, directory)
+            if token is not None and token != b'enrolled':
+                os.setxattr(directory, INSTALL_ID, b'enrolled', os.XATTR_REPLACE)
+                os.fsync(directory)
+        finally:
+            os.close(directory)
+        # Native recovery first closes the barrier, validates history and
+        # restores only its deny classifiers, even if the counter is damaged.
+        try:
+            command([contract['recover_executable'], '-config-directory', str(CONFIG), '-timeout', '5s'])
+        except PolicyRuntimeError:
+            raise EnrollmentError('Native guard recovery from state.json failed.') from None
+        try:
+            epoch = exact(decode(read(state/'ownership-epoch.json', 128, private=True), 128),
+                          {'schema_version', 'last'}, 'Ownership counter')
+            if (type(epoch['schema_version']) is not int or epoch['schema_version'] != 1 or
+                    type(epoch['last']) is not int or not 0 <= epoch['last'] < MAX_OWNERSHIP_EPOCH):
+                raise ValueError
+        except (OSError, ValueError):
+            raise EnrollmentError('ownership-epoch.json requires explicit recovery.') from None
+    finally:
+        os.close(control)
 
 
 def bootstrap(contract_path=CONTRACT):
@@ -515,29 +840,18 @@ def bootstrap(contract_path=CONTRACT):
     profile = metadata(contract)
     mapping = translation_hash(contract)
     publish_runtime(contract, profile, mapping)
-    password = credential(contract)
-    prepare_reader(contract, password)
     empty_bindings()
-    if not ENROLLMENT.exists():
-        if (Path(contract['state_directory'])/'state.json').exists():
-            raise PolicyRuntimeError('Unacknowledged policy history prevents first enrolment.')
-        atomic(ENROLLMENT, b'image-owner-first-install-v1\n')
-        command([contract['helper_executable'], '-config-directory', str(CONFIG), '-initialize-state'])
-    else:
-        command([contract['recover_executable'], '-config-directory', str(CONFIG), '-timeout', '5s'])
+    enroll_or_recover(contract)
 
 
-def bindings_loop(contract_path=CONTRACT, interval=30):
+def bindings_loop(contract_path=CONTRACT, interval=30, *, worker=False):
     if os.geteuid() != 0:
         raise PolicyRuntimeError('Policy binding refresh requires root.')
     contract = load_contract(contract_path)
     private_directory(BINDINGS)
     private_directory(COLLECTOR)
     while True:
-        try:
-            refresh_bindings(contract)
-        except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
-            incomplete_bindings()
+        refresh_bindings(contract, worker)
         time.sleep(interval)
 
 
@@ -572,19 +886,25 @@ def wait_clock():
 
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'bindings-loop', 'serve', 'wait-clock'))
+    parser.add_argument('operation', choices=('install-guards', 'bootstrap', 'prepare-reader', 'bindings-loop', 'bindings-worker-loop', 'serve', 'wait-clock'))
     args = parser.parse_args(arguments)
     try:
         if args.operation == 'install-guards':
             install_guards()
         elif args.operation == 'bootstrap':
             bootstrap()
+        elif args.operation == 'prepare-reader':
+            contract = load_contract()
+            prepare_reader(contract, credential(contract))
         elif args.operation == 'wait-clock':
             wait_clock()
         elif args.operation == 'serve':
             serve()
         else:
-            bindings_loop()
+            bindings_loop(worker=args.operation == 'bindings-worker-loop')
+    except (EnrollmentError, GuardReadinessError) as error:
+        print('policy-runtime: '+str(error), file=sys.stderr)
+        return 1
     except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print('policy-runtime: '+type(error).__name__+'; enforcement remains closed', file=sys.stderr)
         return 1

@@ -295,23 +295,34 @@ class ExtensionCredentialExecutionTests(unittest.TestCase):
     def test_runtime_health_cannot_bypass_uncommitted_required_extension(self):
         self.prepare(required=True)
         self.store.setup()
-        with patch.object(runtime, 'installed', return_value=self.installed), \
+        with patch.object(runtime, 'BOOT_OBSERVATION', self.root/'boot.json'), \
+                patch.object(runtime, 'installed', return_value=self.installed), \
                 patch.object(core, 'ready', return_value=True), patch.object(runtime.factory, 'secure_boot') as boot:
             with self.assertRaisesRegex(ReleaseError, 'Required extension credentials'):
                 runtime.health()
             boot.assert_not_called()
 
     def test_persisted_acceptance_requires_current_boot_observation(self):
-        observed = {'schema': 1, 'accepted': True, 'boot_complete': True, 'image_id': 'synthetic-router',
-                    'deployment_sequence': 12, 'boot_id': 'current-boot'}
-        with patch.object(image_operation, 'accepted_identity', return_value=image_operation.identity(self.installed)), \
-                patch.object(operation, 'read', side_effect=lambda *_: canonical(observed)), \
-                patch.object(Path, 'read_text', return_value='current-boot\n'):
+        self.installed['platform_version'] = '0.1.0'
+        boot = self.root/'boot.json'
+        selected = image_operation.identity(self.installed)
+        observed = {'schema': 1, 'accepted': True, 'boot_complete': True,
+                    'image_id': selected['image_id'], 'deployment_sequence': selected['deployment_sequence'],
+                    'selected_entry': selected['uki_name'], 'platform_version': self.installed['platform_version'],
+                    'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+        with patch.object(image_operation, 'visible_accepted', return_value=selected) as accepted, \
+                patch.object(runtime, 'BOOT_OBSERVATION', boot):
+            self.assertFalse(operation.core_accepted(self.installed))
+            boot.write_bytes(canonical(observed))
             self.assertTrue(operation.core_accepted(self.installed))
             for changes in ({'boot_id': 'old-boot'}, {'deployment_sequence': 11}, {'accepted': False},
-                            {'boot_complete': 1}, {'schema': True}, {'image_id': 'other-router'}):
-                previous = copy.deepcopy(observed)
-                observed.update(changes)
+                            {'boot_complete': 1}, {'schema': True}, {'image_id': 'other-router'},
+                            {'platform_version': '2.4.1'}, {'selected_entry': 'other.efi'}):
+                boot.write_bytes(canonical({**observed, **changes}))
                 self.assertFalse(operation.core_accepted(self.installed))
-                observed.clear()
-                observed.update(previous)
+            boot.write_bytes(canonical(observed))
+            accepted.return_value = None
+            self.assertFalse(operation.core_accepted(self.installed))
+            accepted.return_value = selected
+            boot.chmod(0o666)
+            self.assertFalse(operation.core_accepted(self.installed))

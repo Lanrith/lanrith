@@ -2,7 +2,7 @@
 
 import ipaddress as ip
 
-from . import integrations, intent, routing, translation
+from . import authoritative, dns64, integrations, intent, routing, translation
 from .release import canonical, require
 
 
@@ -28,24 +28,65 @@ def _native_prefixes(network, *, additional=True):
     return list(dict.fromkeys(result))
 
 
-def _discovery_prefixes(value, key):
-    result = _native_prefixes(value['networks'][key], additional=False)
-    for selector in value['services']['discovery'].get('additional_sources', []):
-        for item in integrations.endpoints(value, selector):
-            if item.get('network') == key:
-                result += item['addresses']
-    return list(dict.fromkeys(str(ip.ip_network(prefix)) for prefix in result))
+def _additional(value, key):
+    return [ip.ip_network(prefix) for selector in value['services']['discovery'].get('additional_sources', [])
+            for item in integrations.endpoints(value, selector) if item.get('network') == key
+            for prefix in item['addresses']]
 
 
-def _discovery_gateways(value, key):
-    network = value['networks'][key]
-    result = list(network['addresses'])
-    native = set(_native_prefixes(network, additional=False))
-    for prefix in _discovery_prefixes(value, key):
-        if prefix not in native:
-            parsed = ip.ip_network(prefix)
-            result.append(str(parsed.network_address+1)+'/'+str(parsed.prefixlen))
-    return result
+def _survivors(prefix, excluded):
+    remaining = [prefix]
+    for cut in excluded:
+        if not prefix.overlaps(cut):
+            continue
+        remaining = [part for item in remaining if not item.subnet_of(cut)
+                     for part in (item.address_exclude(cut) if cut.subnet_of(item) else [item])]
+    return remaining
+
+
+def _outermost(prefixes):
+    roots = []
+    for prefix in sorted(set(prefixes), key=lambda p: (p.version, p.prefixlen, int(p.network_address))):
+        if not any(prefix.subnet_of(other) for other in roots if prefix.version == other.version):
+            roots.append(prefix)
+    return roots
+
+
+def _source_ranges(value, key, excluded):
+    configured = [ip.ip_network(raw) for raw in _native_prefixes(value['networks'][key], additional=False)]
+    additional = _additional(value, key)
+    declared = []
+    for prefix in dict.fromkeys(configured + additional):
+        if _survivors(prefix, excluded):
+            declared.append(prefix)
+        elif prefix in additional:
+            covers = ', '.join(str(item) for item in excluded if prefix.overlaps(item))
+            require(False, f'Discovery additional source {prefix} on {key} is wholly excluded by {covers}.')
+    # IPv4 network and broadcast checks use the original subnet boundaries.
+    # Native query selection and the firewall use their surviving CIDRs.
+    require(declared, f'Discovery link {key} has no surviving source prefix.')
+    effective = [part for prefix in _outermost(declared) for part in _survivors(prefix, excluded)]
+    require(len(declared) <= 128 and len(effective) <= 128,
+            f'Discovery link {key} exceeds 128 effective source prefixes.')
+    return declared, effective
+
+
+def _exclusions(value):
+    return [ip.ip_network(raw) for raw in _forbidden(value, _publisher(value))]
+
+
+def _view_prefixes(value, key):
+    # These DNS delegations contain only source-qualified records from the collector.
+    # Keep a containing delegation when an interior address is excluded.
+    declared, _ = _source_ranges(value, key, _exclusions(value))
+    aligned = []
+    for prefix in _outermost(declared):
+        width = 8 if prefix.version == 4 else 4
+        extra_bits = -prefix.prefixlen % width
+        require(len(aligned) + (1 << extra_bits) <= 8,
+                f'Discovery DNS view {key} exceeds eight source reverse prefixes.')
+        aligned.extend(prefix.subnets(prefixlen_diff=extra_bits))
+    return [str(prefix) for prefix in aligned]
 
 
 def selected(value):
@@ -130,20 +171,28 @@ def _translators(value, retained_allocations, access_backend):
 def router_manifest(value, retained_allocations=None, *, access_backend='tun'):
     settings = value['services']['discovery']
     publisher = _publisher(value)
-    sources = {network['name']: _discovery_prefixes(value, key) for key, network in selected(value)}
+    excluded = _exclusions(value)
+    require(len(excluded) <= 128, 'Discovery supports up to 128 excluded prefixes.')
+    sources = {network['name']: [str(p) for p in _source_ranges(value, key, excluded)[0]]
+               for key, network in selected(value)}
+    browse = sorted({kind.lower() for kind in settings.get('browse', [])})
+    pairs = sum(len({ip.ip_network(prefix).version for prefix in prefixes}) for prefixes in sources.values())
+    require(pairs <= 12, 'Discovery supports up to 12 selected interface/family pairs.')
+    require(pairs * (1 + len(browse)) <= 512,
+            'Discovery configured browse watches exceed the 512 permanent browser budget.')
     manifest = {
         'enabled': True,
         'interfaces': [{'interface': network['name'], 'source': network['name'],
                         'families': sorted({ip.ip_network(prefix).version for prefix in sources[network['name']]})}
                        for _, network in selected(value)],
         'sources': sources,
-        'forbidden': _forbidden(value, publisher),
+        'forbidden': [str(prefix) for prefix in excluded],
         'alias_prefix': settings['alias_prefix'],
         'state': '/var/lib/discovery-bridge/identities.db',
         'bus_socket': '/run/dbus/system_bus_socket',
         'publisher_socket': '/run/discovery-bridge/publisher.sock',
         'producer_user': COLLECTOR,
-        'bootstrap': [{'name': kind+'.local.', 'type': 'PTR'} for kind in settings.get('browse', [])],
+        'bootstrap': [{'name': kind+'.local.', 'type': 'PTR'} for kind in browse],
     }
     configured_views, _ = views(value)
     manifest['native'] = {'socket': NATIVE_SOCKET, 'user': DNS_USER,
@@ -159,21 +208,31 @@ def router_manifest(value, retained_allocations=None, *, access_backend='tun'):
     return manifest
 
 
+def direct_clients(value):
+    readers = intent.sequence(value['services']['discovery'].get('direct_readers', []), 64)
+    return authoritative.qualified_clients(value, readers)
+
+
 def dns_manifest(value):
     settings = value['services']['discovery']
     configured_views, default = views(value)
     domain = settings['domain'].rstrip('.')+'.'
+    # The pinned DNS frontend reserves local. for mDNS and arpa. for reverse mappings.
+    require(not ('.'+domain.lower()).endswith(('.local.', '.arpa.')),
+            'Discovery DNS requires a forward domain outside local. and arpa.')
+    require(len(configured_views) <= 12 and len(set(configured_views.values())) == len(configured_views),
+            'Discovery DNS supports up to 12 views with a distinct collected link for each.')
     links = []
     for name, key in configured_views.items():
         links.append({'source': value['networks'][key]['name'],
                       'service_domain': name+'.'+domain, 'host_domain': name+'.'+domain,
-                      'prefixes': _native_prefixes(value['networks'][key], additional=False)})
-    clients = {'127.0.0.0/8', '::1/128', *(str(prefix) for prefix in intent.service_networks(value))}
-    for key, network in value['networks'].items():
-        if not network.get('forwarding', True):
-            continue
-        clients.update(_native_prefixes(network))
-        clients.update(routing.routed_sources(value, key))
+                      'prefixes': _view_prefixes(value, key)})
+    reverse_scopes = [ip.ip_network(raw) for link in links for raw in link['prefixes']]
+    require(not any(a.overlaps(b) for i, a in enumerate(reverse_scopes) for b in reverse_scopes[i+1:]),
+            'Discovery DNS views require distinct source reverse delegations.')
+    clients = {str(ip.ip_network(address)) for address in intent.service_addresses(value, 'dns')}
+    clients.update(address for client in direct_clients(value) for address in client['addresses'])
+    require(len(clients) <= 128, 'Discovery DNS supports up to 128 client prefixes.')
     return {
         'schema': 1, 'enabled': True,
         'listeners': [{'host': address, 'port': 53} for address in intent.service_addresses(value, 'discovery')],
@@ -196,45 +255,104 @@ def reverse_zone(prefix):
     return '.'.join(labels[(4 if network.version == 4 else 32)-keep:])+'.'
 
 
-def resolver_configuration(value):
+def browse_records(domain, view_names, default):
+    domains = [name+'.'+domain for name in view_names]
+    records = {'b._dns-sd._udp': domains}
+    if default in view_names:
+        records['db._dns-sd._udp'] = [default+'.'+domain]
+    records['lb._dns-sd._udp'] = domains
+    return records
+
+
+def resolver_budget(value, *, private=False):
+    # Both DNS64 instances can perform a native AAAA lookup followed by A.
+    # The outer budget covers four native windows, with slack at the three boundaries.
+    cold_ms = 6000
+    margin_ms = 2000
+    direct_ms = cold_ms + margin_ms
+    chained = dns64.private_active(value) and not private
+    upstream_ms = 4 * cold_ms + 3 * margin_ms if chained else direct_ms
+    reply_ms = 2 * direct_ms if private else upstream_ms
+    # Unbound may shorten the TCP deadline after a fast metadata reply unless
+    # this RTT floor matches the 376ms unknown-server threshold.
+    return ['  infra-cache-min-rtt: 376', f'  tcp-auth-query-timeout: {upstream_ms}',
+            f'  discard-timeout: {reply_ms}']
+
+
+def resolver_configuration(value, *, private=False):
+    chained = dns64.private_active(value) and not private
     settings = value['services']['discovery']
     configured_views, default = views(value)
     domain = settings['domain'].rstrip('.')+'.'
-    parents = {domain}
-    dns = value['services']['dns']
-    if dns.get('domain'):
-        parents.add(dns['domain'].rstrip('.')+'.')
-    authoritative = dns.get('authoritative', {})
-    if authoritative.get('enabled') and authoritative.get('primary_zone'):
-        parents.add(authoritative['primary_zone'].rstrip('.')+'.')
-    lines = ['server:']
-    domains = [name+'.'+domain for name in configured_views]
-    for parent in sorted(parents):
-        for owner, names in (('b._dns-sd._udp.', domains),
-                             ('db._dns-sd._udp.', [default+'.'+domain]),
-                             ('lb._dns-sd._udp.', domains)):
-            lines.append('  local-zone: "'+owner+parent+'" static')
-            lines += ['  local-data: "'+owner+parent+' 10 IN PTR '+target+'"' for target in names]
+    lines = ['server:', *resolver_budget(value, private=private)]
+    if private:
+        lines.append('  qname-minimisation: no')
+    else:
+        parents = {domain}
+        dns = value['services']['dns']
+        if dns.get('domain'):
+            parents.add(dns['domain'].rstrip('.')+'.')
+        authority = dns.get('authoritative', {})
+        if authority.get('enabled') and authority.get('primary_zone'):
+            parents.add(authority['primary_zone'].rstrip('.')+'.')
+        for parent in sorted(parents):
+            for owner, names in browse_records(domain, configured_views, default).items():
+                name = owner+'.'+parent
+                lines.append('  local-zone: "'+name+'" static')
+                lines += ['  local-data: "'+name+' 10 IN PTR '+target+'"' for target in names]
     zones = []
     for name, key in configured_views.items():
         child = name+'.'+domain
-        lines.append('  local-zone: "'+child+'" transparent')
         zones.append(child)
-        for prefix in _native_prefixes(value['networks'][key], additional=False):
+        if chained:
+            lines.append(f'  private-domain: "{child}"')
+        for prefix in _view_prefixes(value, key):
             reverse = reverse_zone(prefix)
-            lines.append('  local-zone: "'+reverse+'" transparent')
             zones.append(reverse)
     targets = intent.service_addresses(value, 'discovery')
     for zone in zones:
-        lines += ['forward-zone:', '  name: "'+zone+'"',
-                  *('  forward-addr: '+target for target in targets),
-                  '  forward-first: no', '  forward-tcp-upstream: yes']
+        lines += [f'  local-zone: "{zone}" transparent', f'  domain-insecure: "{zone}"']
+    kind = 'stub' if private else 'forward'
+    if chained:
+        loop = '::1' if value['uplink'].get('ipv4') == 'disabled' else '127.0.0.1'
+        targets = [f'{loop}@{dns64.PORT}']
+    for zone in zones:
+        lines += [kind+'-zone:', f'  name: "{zone}"', *(f'  {kind}-addr: {target}' for target in targets),
+                  f'  {kind}-first: no', f'  {kind}-tcp-upstream: yes']
+        if private:
+            lines.append('  stub-prime: no')
     return '\n'.join(lines)+'\n'
+
+
+def avahi_bus_policy(value):
+    # Debian includes /etc/dbus-1/system.d after both packages' policies.
+    # Restrict method calls at each level with an inherited Avahi grant.
+    destination = 'send_destination="org.freedesktop.Avahi" send_type="method_call"'
+    deny = f'    <deny {destination}/>'
+    lines = ['<busconfig>', '  <policy context="default">', deny, '  </policy>',
+             '  <policy group="netdev">', deny, '  </policy>']
+    methods = {
+        'status': (),
+        'browse': ('Server2.RecordBrowserPrepare', 'RecordBrowser.Start', 'RecordBrowser.Free'),
+        'publish': ('Server.EntryGroupNew', 'EntryGroup.AddRecord', 'EntryGroup.Commit',
+                    'EntryGroup.Reset', 'EntryGroup.Free'),
+    }
+    clients = {'root': 'status', COLLECTOR: 'browse', PUBLISHER: 'publish',
+               **value['services']['discovery'].get('local_clients', {})}
+    for user, role in sorted(clients.items()):
+        lines += [f'  <policy user="{user}">', deny]
+        for method in ('Server.GetState', *methods[role]):
+            interface, member = method.split('.')
+            lines.append(f'    <allow {destination} send_interface="org.freedesktop.Avahi.{interface}" '
+                         f'send_member="{member}"/>')
+        lines.append('  </policy>')
+    return '\n'.join([*lines, '</busconfig>', ''])
 
 
 def avahi_configuration(value):
     interfaces = ','.join(network['name'] for _, network in selected(value))
     return ('[server]\nuse-ipv4=yes\nuse-ipv6=yes\nenable-dbus=yes\n'
+            'ratelimit-interval-usec=1000000\nratelimit-burst=1000\n'
             'entries-per-entry-group-max=4096\nallow-interfaces='+interfaces+'\n'
             '[wide-area]\nenable-wide-area=no\n[publish]\npublish-addresses=no\n'
             'publish-hinfo=no\npublish-workstation=no\npublish-domain=no\n'
@@ -247,19 +365,23 @@ def firewall_rules(value, direction):
     result = []
     if not active(value):
         return result
+    excluded = _exclusions(value)
     for key, network in selected(value):
+        _, effective = _source_ranges(value, key, excluded)
         interface = network['name']
         for family, spelling, multicast, ttl in ((4, 'ip', '224.0.0.251', 'ttl'),
                                                   (6, 'ip6', 'ff02::fb', 'hoplimit')):
-            sources = [prefix for prefix in _discovery_prefixes(value, key)
-                       if ip.ip_network(prefix).version == family]
-            local = [str(ip.ip_interface(address).ip) for address in _discovery_gateways(value, key)
-                     if ip.ip_interface(address).version == family]
-            if not sources or not local:
+            sources = [str(prefix) for prefix in effective if prefix.version == family]
+            local = [str(ip.ip_interface(address).ip) for address in intent.gateway_addresses(network)
+                     if any(ip.ip_interface(address).ip in prefix for prefix in effective if prefix.version == family)]
+            if not sources:
                 continue
             if family == 6:
-                sources.append('fe80::/10')
-                local.append('fe80::/10')
+                link_local = [str(prefix) for prefix in _survivors(ip.ip_network('fe80::/10'), excluded)]
+                require(len(link_local) <= 128, f'Discovery link {key} exceeds 128 IPv6 link-local source prefixes.')
+                sources.extend(link_local)
+                local.extend(link_local)
+            require(local, f'Discovery link {key} needs a surviving IPv{family} local address.')
             if direction == 'input':
                 result.append(f'  iifname "{interface}" {spelling} saddr {values(sources)} '
                               f'{spelling} daddr {values([multicast, *local])} {spelling} {ttl} 255 '
@@ -310,6 +432,7 @@ def render(value, retained_allocations=None, *, access_backend='tun'):
         'etc/discovery-bridge/router.json': canonical(router).decode(),
         'etc/discovery-bridge/dns.json': canonical(dns).decode(),
         'etc/avahi/avahi-daemon.conf': avahi_configuration(value),
+        'etc/dbus-1/system.d/lanrith-avahi.conf': avahi_bus_policy(value),
         # Type=dbus orders Avahi against the socket, not the bus daemon.
         # Keep the bus alive until Avahi and its ordered consumers have stopped.
         'etc/systemd/system/avahi-daemon.service.d/60-lanrith.conf': (

@@ -81,7 +81,24 @@ class CompiledRuntimeTests(unittest.TestCase):
         self.assertNotIn('groups', raw)
         self.assertNotIn('networks', raw)
         self.assertNotIn(selected, raw)
-        unit = files['usr/lib/systemd/system/lanrith-policy-bootstrap.service']
+        bootstrap = 'lanrith-policy-bootstrap.service'
+        from lanrith import credential_operation
+        from types import SimpleNamespace
+        catalog = json.loads(files['usr/share/lanrith/credentials.json'])
+        self.assertIn(bootstrap, catalog['units'])  # v1 cross-slot journal spelling
+        with patch.object(credential_operation, 'control') as control:
+            credential_operation.activate(SimpleNamespace(catalog=catalog))
+        for call in control.call_args_list:
+            self.assertIn('lanrith-policy-reader-setup.service', call.args[1])
+            self.assertNotIn(bootstrap, call.args[1])
+        self.assertNotIn('LoadCredential=', files['usr/lib/systemd/system/'+bootstrap])
+        self.assertNotIn('StateDirectory=', files['usr/lib/systemd/system/'+bootstrap])
+        self.assertIn('/var/lib/lanrith/policy-agent :0700 :root :root',
+                      files['usr/lib/tmpfiles.d/76-router-policy-enrollment.conf'])
+        self.assertNotIn('etc/systemd/system/'+bootstrap+'.d/50-lanrith-credentials.conf', files)
+        self.assertIn('lanrith-policy-reader-setup.service',
+                      files['usr/lib/systemd/system/lanrith-policy-reader.service'])
+        unit = files['usr/lib/systemd/system/lanrith-policy-reader-setup.service']
         self.assertIn('LoadCredential=directory_bind:'+selected, unit)
         self.assertNotIn('Password=', unit)
         with tempfile.TemporaryDirectory() as temporary:
@@ -138,14 +155,8 @@ for path in pathlib.Path(sys.argv[1], 'lanrith').glob('*.py'):
 assert not any(name == 'yaml' or name.startswith('yaml.') for name in sys.modules)
 assert not any(name in sys.modules for name in ('lanrith.config', 'lanrith.intent', 'lanrith.build'))
 from lanrith import boot_health
-from unittest.mock import patch
 plan = json.loads(sys.argv[2])
-def command(args):
-    if args[:2] == ['systemctl', 'is-active']: return 'active'
-    name = args[-1]
-    return json.dumps([{'addr_info': [{'local': a} for item in plan['interfaces']
-                                    if item['name'] == name for a in item['addresses']]}])
-with patch.object(boot_health, 'command', command): boot_health.check(plan)
+boot_health.validate(plan)
 '''
                 result = subprocess.run([sys.executable, '-I', '-S', '-c', program, str(library),
                                          json.dumps(runtime_plan.health(value))], cwd=root,
@@ -213,29 +224,52 @@ with patch.object(boot_health, 'command', command): boot_health.check(plan)
         files = config.render(value)
         plan = json.loads(files['usr/share/lanrith/health.json'])
         self.assertEqual(plan['interfaces'], [{'name': 'lan', 'addresses':
-            ['192.168.10.11', 'fd42:1234:5678:10::1', 'fd42:1234:5678:ffff::61']}])
+            ['192.168.10.11/24', 'fd42:1234:5678:10::1/64', 'fd42:1234:5678:ffff::61/124']}])
 
     def test_inactive_service_or_missing_gateway_fails_acceptance(self):
         plan = runtime_plan.health(config.normalize(minimal()))
         for missing in ('service', 'gateway'):
             with self.subTest(missing=missing):
-                def command(args):
+                def command(args, timeout):
                     if args[0] == 'systemctl':
                         return 'inactive' if missing == 'service' else 'active'
-                    return '[{"addr_info": []}]'
+                    return '[]'
                 with patch.object(boot_health, 'command', command), self.assertRaises(ReleaseError):
                     boot_health.check(plan)
 
     def test_invalid_boot_contract_does_not_invoke_tools(self):
         plan = runtime_plan.health(config.normalize(minimal()))
         for key, bad in (('units', ['--help']*3), ('units', plan['units']+plan['units']),
-                         ('probes', ['unknown']), ('schema', 2), ('interfaces', [])):
+                         ('probes', ['unknown']), ('schema', 1), ('interfaces', [])):
             selected = copy.deepcopy(plan)
             selected[key] = bad
             with self.subTest(key=key, bad=bad), patch.object(boot_health, 'command') as command:
                 with self.assertRaises(ReleaseError):
                     boot_health.check(selected)
                 command.assert_not_called()
+
+    def test_serial_cooldown_expires_without_extending_a_blocked_deadline(self):
+        path = ROOT/'mkosi/base/mkosi.extra/usr/lib/lanrith/verify-serial-passphrase'
+        loader = importlib.machinery.SourceFileLoader('serial_verifier', str(path))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        serial = {'cooldown': {'attempts': 2, 'seconds': 5}, 'tty': 'ttyS1'}
+        with tempfile.TemporaryDirectory() as directory, patch.object(module, 'STATE_DIR', Path(directory)), \
+                patch.object(module, 'verify', side_effect=lambda token, stored: token == b'good') as verify, \
+                patch.object(module.time, 'monotonic_ns') as clock, patch.object(module.os, 'fstat') as fstat:
+            fstat.return_value.st_uid = 0
+            fstat.return_value.st_mode = 0o40700
+            clock.return_value = 0
+            self.assertFalse(module.check_cooldown(serial, b'bad', 'fixture'))
+            clock.return_value = 1_000_000_000
+            self.assertFalse(module.check_cooldown(serial, b'bad', 'fixture'))
+            self.assertEqual((Path(directory)/'ttyS1').read_text(), '2 6000000000\n')
+            clock.return_value = 5_999_999_999
+            self.assertFalse(module.check_cooldown(serial, b'good', 'fixture'))
+            self.assertEqual(verify.call_count, 2)
+            clock.return_value += 1
+            self.assertTrue(module.check_cooldown(serial, b'good', 'fixture'))
+            self.assertFalse((Path(directory)/'ttyS1').exists())
 
     def test_serial_helpers_consume_only_the_generated_admin_contract(self):
         value = config.normalize(minimal())
@@ -254,13 +288,14 @@ with patch.object(boot_health, 'command', command): boot_health.check(plan)
                 loader.exec_module(module)
                 if name == 'verify-serial-passphrase':
                     environment = {'PAM_TYPE': 'auth', 'PAM_SERVICE': 'login', 'PAM_USER': 'operator', 'PAM_TTY': 'ttyS1'}
-                    self.assertTrue(module.permitted_context(environment))
-                    self.assertFalse(module.permitted_context({**environment, 'PAM_TTY': 'ttyS0'}))
+                    for service in ('login', 'sudo', 'sudo-i'):
+                        self.assertTrue(module.permitted_context({**environment, 'PAM_SERVICE': service}))
+                    for service in ('su', 'sshd', 'sudo-other'):
+                        self.assertFalse(module.permitted_context({**environment, 'PAM_SERVICE': service}))
+                    for tty in ('ttyS0', 'tty1', 'tty2', 'tty6', '/dev/pts/0'):
+                        self.assertFalse(module.permitted_context({**environment, 'PAM_TTY': tty}))
                     self.assertFalse(module.permitted_context({**environment, 'PAM_RHOST': 'remote'}))
                     self.assertFalse(module.permitted_context({**environment, 'PAM_USER': 'admin'}))
                 else:
                     self.assertEqual(module.UNIT, 'serial-getty@ttyS1.service')
-                    state, expired = module.advance(module.State(), 24, True, 10, 100)
-                    self.assertFalse(expired)
-                    self.assertTrue(module.advance(state, 24, True, 10, 145)[1])
-                    self.assertFalse(module.advance(state, 24, True, 11, 145)[1])
+                    self.assertEqual(module.TIMEOUT, 45)

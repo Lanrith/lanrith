@@ -41,7 +41,9 @@ def inert_package(binary, license_file, name, version, output, notices=None):
             f'Package: {name}\nVersion: {version}\nArchitecture: amd64\n'
             'Maintainer: Lanrith <maintainers@lanrith.org>\nSection: net\nPriority: optional\n'
             'Description: Lanrith qualified router component\n')
-        run('dpkg-deb', '--build', '--root-owner-group', str(root), str(output/(name+'_'+version+'_amd64.deb')))
+        package = output/(name+'_'+version+'_amd64.deb')
+        run('dpkg-deb', '--build', '--root-owner-group', str(root), str(package))
+        return package
 
 
 def main():
@@ -84,27 +86,25 @@ def main():
         run('git', '-C', str(source), 'apply', str(ROOT/'builders/node-exporter/dependencies.patch'))
         shutil.copyfile(ROOT/'scripts/collect-notices.py', work/'collect-notices.py')
         shutil.copyfile(ROOT/'lanrith/go_download.py', work/'go-download.py')
+        shutil.copyfile(ROOT/'builders/node-exporter/build.sh', work/'build-node-exporter.sh')
         run('docker', 'run', '--rm', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--user', str(os.getuid())+':'+str(os.getgid()),
             *build_resources.arguments(),
             *[item for key, value in build_resources.compiler_environment().items() for item in ('--env', key+'='+value)],
             '--env', 'GOCACHE=/work/go-cache', '--env', 'GOMODCACHE=/work/go-mod', '--env', 'GOENV=off',
             '--env', 'LANRITH_GO_VERSION='+pin['go_version'],
+            '--env', 'LANRITH_PACKAGE_VERSION='+pin['package_version'],
             '-v', str(work)+':/work', '-v', str(scanner)+':/scanner:ro', '-w', '/work/node-exporter',
             pin['builder'], 'sh', '-ec',
-            'test "$(go env GOVERSION)" = "$LANRITH_GO_VERSION"; python3 /work/go-download.py all; go mod verify; '
-            './ttar -C collector/fixtures -x -f collector/fixtures/sys.ttar; '
-            './ttar -C collector/fixtures -x -f collector/fixtures/udev.ttar; '
-            'go test ./...; /scanner ./... > /work/exporter-source.txt; '
-            'CGO_ENABLED=0 go build -trimpath -o /work/node_exporter .; '
-            '/scanner -mode=binary /work/node_exporter > /work/exporter-binary.txt; '
-            'python3 /work/collect-notices.py go --output /work/exporter-notices.txt')
-        inert_package(work/'node_exporter', source/'LICENSE', 'prometheus-node-exporter',
-                      pin['package_version'], args.output, work/'exporter-notices.txt')
+            'sh /work/build-node-exporter.sh; /scanner ./... > /work/exporter-source.txt; '
+            '/scanner -mode=binary /work/node_exporter > /work/exporter-binary.txt')
+        package = inert_package(work/'node_exporter', source/'LICENSE', 'prometheus-node-exporter',
+                                pin['package_version'], args.output, work/'exporter-notices.txt')
+        binary_sha = file_record(work/'node_exporter')['sha256']
         reports['node-exporter'] = {'source_commit': pin['commit'], 'patch_sha256':
                                     file_record(ROOT/'builders/node-exporter/dependencies.patch')['sha256'],
-                                    'binary_sha256': {'prometheus-node-exporter':
-                                        file_record(work/'node_exporter')['sha256']},
+                                    'package_sha256': file_record(package)['sha256'],
+                                    'binary_sha256': {'prometheus-node-exporter': binary_sha},
                                     'go_modules': {'prometheus-node-exporter': go_modules(json.loads(
                                         run('go', 'version', '-m', '-json', str(work/'node_exporter'),
                                             capture_output=True, text=True).stdout))},

@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import tempfile
@@ -24,21 +23,7 @@ class KeyCapturingGuest(Guest):
     """Keep only this disposable guest's generated key in volatile test memory."""
     recovery_key = None
 
-    def expect_any(self, patterns, timeout=600):
-        if self.recovery_key is None and any(b'RECOVERY-KEY-STORED' in pattern for pattern in patterns):
-            deadline = time.monotonic()+timeout
-            while time.monotonic() < deadline:
-                clean = re.sub(rb'\x1b\[[0-9;:?]*[A-Za-z]', b'', self.buffer)
-                matches = set(re.findall(rb'\b(?:[a-z]{8}-){7}[a-z]{8}\b', clean))
-                if matches:
-                    release.require(len(matches) == 1, 'Disposable recovery key observation is ambiguous.')
-                    self.recovery_key = bytearray(next(iter(matches)))
-                    break
-                release.require(self.process.poll() is None and b'Entering emergency mode' not in clean,
-                                'Disposable install failed before recovery enrollment.')
-                time.sleep(0.2)
-            release.require(self.recovery_key is not None, 'Disposable recovery key was not observed.')
-        return super().expect_any(patterns, timeout=timeout)
+    retain_recovery_copy = True
 
 
 def partition_hashes(disk, rows):

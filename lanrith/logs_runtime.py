@@ -50,7 +50,10 @@ class LogsRuntimeError(ValueError):
 
 
 def load(path=MANIFEST, *, owner=0):
-    value = decode(read(path, 64*1024, owner=owner), 64*1024)
+    return validate_manifest(decode(read(path, 64*1024, owner=owner), 64*1024))
+
+
+def validate_manifest(value):
     if not isinstance(value, dict):
         raise LogsRuntimeError('Log delivery contract differs.')
     mode = value.get('authentication', 'basic')

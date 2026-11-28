@@ -1,0 +1,681 @@
+rule_files:
+- ../examples/monitoring/router.rules.yml
+evaluation_interval: 15s
+tests:
+- interval: 15s
+  input_series:
+  - series: lanrith_expected_router{job="router",instance="b",directory="enabled",ntp="enabled"}
+    values: 1x18
+  - series: up{job="router",instance="b"}
+    values: 1x18
+  - series: node_boot_time_seconds{job="router",instance="b"}
+    values: 1x18
+  - series: lanrith_router_metrics_collection_success{job="router",instance="b"}
+    values: 1x18
+  - series: lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="b"}
+    values: 1+15x18
+  - series: lanrith_router_metrics_query_success{job="router",instance="b",collector="directory"}
+    values: 1x18
+  - series: lanrith_router_metrics_query_success{job="router",instance="b",collector="chrony"}
+    values: 1x18
+  - series: lanrith_router_directory_tls_verified{job="router",instance="b"}
+    values: 1x18
+  - series: lanrith_router_directory_tls_observation_timestamp_seconds{job="router",instance="b"}
+    values: 1+15x18
+  - series: lanrith_router_chrony_observation_timestamp_seconds{job="router",instance="b"}
+    values: 1+15x18
+  - series: lanrith_router_chrony_synchronised{job="router",instance="b"}
+    values: 1x18
+  - series: lanrith_router_directory_tls_certificate_not_after_seconds{job="router",instance="b"}
+    values: 800x18
+  - series: lanrith_expected_router{job="router",instance="a",directory="enabled",ntp="enabled"}
+    values: 1x18
+  - series: up{job="router",instance="a"}
+    values: 1x18
+  - series: node_boot_time_seconds{job="router",instance="a"}
+    values: 1x11 195x6
+  - series: lanrith_router_metrics_collection_success{job="router",instance="a"}
+    values: 1x8 0 1x8
+  - series: lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="a"}
+    values: 1x8 135 150 165 180 180 210 900 240 255 270
+  - series: lanrith_router_metrics_query_success{job="router",instance="a",collector="directory"}
+    values: 1x16 0 1
+  - series: lanrith_router_metrics_query_success{job="router",instance="a",collector="chrony"}
+    values: 1x18
+  - series: lanrith_router_directory_tls_verified{job="router",instance="a"}
+    values: 1x9 0 1x7
+  - series: lanrith_router_directory_tls_observation_timestamp_seconds{job="router",instance="a"}
+    values: 1+15x18
+  - series: lanrith_router_chrony_observation_timestamp_seconds{job="router",instance="a"}
+    values: 1+15x18
+  - series: lanrith_router_chrony_synchronised{job="router",instance="a"}
+    values: 1x18
+  - series: lanrith_router_directory_tls_certificate_not_after_seconds{job="router",instance="a"}
+    values: 800x10 165 800x6
+  - series: lanrith_router_client_inventory_complete{job="router",instance="a"}
+    values: 1x9 0 1x7
+  - series: lanrith_router_client_inventory_collection_timestamp_seconds{job="router",instance="a"}
+    values: 1+15x18
+  - series: lanrith_router_client_neighbor_info{job="router",instance="a",network="clients",interface="lan",address="192.0.2.1",mac="02:00:00:00:00:01",family="ipv4"}
+    values: 1x18
+  - series: lanrith_attachment_info{job="router",instance="a",network="clients",interface="lan",placement="floor-1"}
+    values: 1x18
+  - series: lanrith_router_client_neighbor_info{job="router",instance="a",network="unknown",interface="other",address="192.0.2.1",mac="02:00:00:00:00:01",family="ipv4"}
+    values: 1x18
+  - series: lanrith_router_client_neighbor_info{job="router",instance="a",network="ambiguous",interface="vlan",address="192.0.2.1",mac="02:00:00:00:00:01",family="ipv4"}
+    values: 1x18
+  - series: lanrith_attachment_info{job="router",instance="a",network="ambiguous",interface="vlan",placement="floor-1"}
+    values: 1x18
+  - series: lanrith_attachment_info{job="router",instance="a",network="ambiguous",interface="vlan",placement="floor-2"}
+    values: 1x18
+  - series: lanrith_expected_router{job="router",instance="missing",directory="enabled"}
+    values: 1x18
+  - series: lanrith_expected_router{job="router",instance="no-tls",directory="disabled"}
+    values: 1x18
+  promql_expr_test:
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 15s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 120s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 135s
+    exp_samples: []
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 150s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 180s
+    exp_samples: []
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 195s
+    exp_samples: []
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 210s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 225s
+    exp_samples: []
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 240s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:collection_current{instance="a"})
+    eval_time: 270s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:directory_tls_healthy{instance="a"})
+    eval_time: 15s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:directory_tls_healthy{instance="a"})
+    eval_time: 150s
+    exp_samples: []
+  - expr: count(lanrith:directory_tls_healthy{instance="a"})
+    eval_time: 165s
+    exp_samples: []
+  - expr: count(lanrith:directory_tls_healthy{instance="a"})
+    eval_time: 210s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:directory_tls_healthy{instance="a"})
+    eval_time: 270s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:chrony_synchronised == 1)
+    eval_time: 15s
+    exp_samples:
+    - labels: '{}'
+      value: 2
+  - expr: count(lanrith:enrollable_neighbor{placement="floor-1"})
+    eval_time: 15s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(lanrith:enrollable_neighbor)
+    eval_time: 150s
+    exp_samples: []
+  - expr: count(lanrith:enrollable_neighbor{network!="clients"})
+    eval_time: 15s
+    exp_samples: []
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="b"})
+    eval_time: 150s
+    exp_samples: []
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="a"})
+    eval_time: 15s
+    exp_samples: []
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="a"})
+    eval_time: 150s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="a"})
+    eval_time: 165s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="a"})
+    eval_time: 210s
+    exp_samples: []
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="missing"})
+    eval_time: 15s
+    exp_samples: []
+  - expr: count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",alertstate="firing",instance="no-tls"})
+    eval_time: 15s
+    exp_samples: []
+  - expr: 'count(lanrith:directory_tls_healthy{instance="a"})'
+    eval_time: 255s
+    exp_samples: []
+# The scraper keeps returning 200 while the source timestamp stops advancing.
+- interval: 30s
+  input_series:
+  - series: 'lanrith_expected_router{job="router",instance="held"}'
+    values: '1x7'
+  - series: 'up{job="router",instance="held"}'
+    values: '1x7'
+  - series: 'node_boot_time_seconds{job="router",instance="held"}'
+    values: '1x7'
+  - series: 'lanrith_router_metrics_collection_success{job="router",instance="held"}'
+    values: '1x5 0 1'
+  - series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="held"}'
+    values: '5x5 180 210'
+  promql_expr_test:
+  - expr: 'count(lanrith:collection_current)'
+    eval_time: 120s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:collection_current)'
+    eval_time: 150s
+    exp_samples: []
+  - expr: 'count(lanrith:collection_current)'
+    eval_time: 180s
+    exp_samples: []
+  - expr: 'count(lanrith:collection_current)'
+    eval_time: 210s
+    exp_samples: [{labels: '{}', value: 1}]
+# Idle directory, then exhausted freshness before the host sample itself expires.
+- interval: 30s
+  input_series:
+  - {series: 'lanrith_expected_router{job="router",instance="policy"}', values: '1x4'}
+  - {series: 'up{job="router",instance="policy"}', values: '1x4'}
+  - {series: 'node_boot_time_seconds{job="router",instance="policy"}', values: '0x4'}
+  - {series: 'lanrith_router_metrics_collection_success{job="router",instance="policy"}', values: '1x4'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="policy"}', values: '1+30x4'}
+  - {series: 'lanrith_router_policy_status_query_timestamp_seconds{job="router",instance="policy"}', values: '6x3 120'}
+  - {series: 'lanrith_router_policy_directory_age_seconds{job="router",instance="policy"}', values: '6x4'}
+  - {series: 'lanrith_router_policy_apply_age_seconds{job="router",instance="policy"}', values: '1x4'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="policy",collector="policy_status"}', values: '1x4'}
+  - {series: 'lanrith_router_policy_helper_ready{job="router",instance="policy"}', values: '1x4'}
+  - {series: 'lanrith_router_policy_last_application{job="router",instance="policy"}', values: '1x4'}
+  promql_expr_test:
+  - expr: 'count(lanrith:policy_application_fresh)'
+    eval_time: 60s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:policy_application_fresh)'
+    eval_time: 90s
+    exp_samples: []
+  - expr: 'count(lanrith:policy_application_fresh)'
+    eval_time: 120s
+    exp_samples: [{labels: '{}', value: 1}]
+# A declared attachment can be complete even when it has no neighbor detail.
+- interval: 30s
+  input_series:
+  - {series: 'lanrith_expected_router{job="router",instance="empty"}', values: '1x2'}
+  - {series: 'up{job="router",instance="empty"}', values: '1x2'}
+  - {series: 'node_boot_time_seconds{job="router",instance="empty"}', values: '1x2'}
+  - {series: 'lanrith_router_metrics_collection_success{job="router",instance="empty"}', values: '1x2'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="empty"}', values: '1+30x2'}
+  - {series: 'lanrith_router_client_inventory_complete{job="router",instance="empty"}', values: '1 0 1'}
+  - {series: 'lanrith_router_client_inventory_collection_timestamp_seconds{job="router",instance="empty"}', values: '1 1 60'}
+  - {series: 'lanrith_attachment_info{job="router",instance="empty",network="lan",interface="en0",placement="west"}', values: '1x2'}
+  promql_expr_test:
+  - expr: 'count(lanrith:reconcilable_attachment)'
+    eval_time: 30s
+    exp_samples: []
+  - expr: 'count(lanrith:reconcilable_attachment)'
+    eval_time: 60s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:enrollable_neighbor)'
+    eval_time: 60s
+    exp_samples: []
+- interval: 15s
+  input_series:
+  - series: lanrith_expected_router{job="router",instance="wan",ids="enabled"}
+    values: 1x12
+  - series: up{job="router",instance="wan"}
+    values: 1x12
+  - series: node_boot_time_seconds{job="router",instance="wan"}
+    values: 1x12
+  - series: lanrith_router_metrics_collection_success{job="router",instance="wan"}
+    values: 1x12
+  - series: lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="wan"}
+    values: 1+15x12
+  - series: lanrith_router_metrics_query_success{job="router",instance="wan",collector="ids_capture"}
+    values: 1x12
+  - series: lanrith_router_ids_stats_fresh{job="router",instance="wan"}
+    values: 1x12
+  - series: lanrith_router_ids_stats_timestamp_seconds{job="router",instance="wan"}
+    values: 1x12
+  - series: lanrith_router_ids_kernel_drops_total{job="router",instance="wan"}
+    values: 0 0 0 3 3x8
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: LanrithIDSKernelDrops
+    exp_alerts: []
+  - eval_time: 60s
+    alertname: LanrithIDSKernelDrops
+    exp_alerts:
+    - exp_labels: {job: router, instance: wan}
+  - eval_time: 60s
+    alertname: LanrithIDSCaptureUnavailable
+    exp_alerts: []
+  - eval_time: 90s
+    alertname: LanrithIDSCaptureUnavailable
+    exp_alerts:
+    - exp_labels: {job: router, instance: wan, ids: enabled}
+# The TLS probe stops while collection and scraping continue. A fresh negative
+# and a later success separate transport from stale evidence. Anchor rotation
+# is observable across both, and the helper ages independently of reader polls.
+- interval: 15s
+  input_series:
+  - {series: 'lanrith_expected_router{job="router",instance="dir",directory="enabled",policy="enforce"}', values: '1x12'}
+  - {series: 'up{job="router",instance="dir"}', values: '1x9 0 1x1'}
+  - {series: 'node_boot_time_seconds{job="router",instance="dir"}', values: '0x12'}
+  - {series: 'lanrith_router_metrics_collection_success{job="router",instance="dir"}', values: '1x6 0 1x4'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="dir"}', values: '0+15x12'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="dir",collector="directory"}', values: '1x6 0 1x4'}
+  - {series: 'lanrith_router_directory_tls_observation_timestamp_seconds{job="router",instance="dir"}', values: '0x6 stale 120+15x4'}
+  - {series: 'lanrith_router_directory_tls_verified{job="router",instance="dir"}', values: '1x6 stale 0 1x3'}
+  - {series: 'lanrith_router_directory_tls_certificate_not_after_seconds{job="router",instance="dir"}', values: '200000x6 stale 0 200000x3'}
+  - {series: 'lanrith_router_directory_tls_endpoints_total{job="router",instance="dir"}', values: '1x11 2'}
+  - {series: 'lanrith_directory_issued_leaf_not_after_seconds{job="router",instance="dir"}', values: '200000x8 220000x3'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="dir",collector="directory_trust"}', values: '1x6 0 1x4'}
+  - {series: 'lanrith_router_directory_trust_certificate_not_after_seconds{job="router",instance="dir",sha256="retiring"}', values: '86400x6 stale'}
+  - {series: 'lanrith_router_directory_trust_certificate_not_after_seconds{job="router",instance="dir",sha256="renewed"}', values: '40000000x6 stale 40000000x4'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="dir",collector="policy_status"}', values: '1x12'}
+  - {series: 'lanrith_router_policy_status_query_timestamp_seconds{job="router",instance="dir"}', values: '0+15x12'}
+  - {series: 'lanrith_router_policy_last_application{job="router",instance="dir"}', values: '0 1x11'}
+  - {series: 'lanrith_router_policy_helper_ready{job="router",instance="dir"}', values: '1x12'}
+  - {series: 'lanrith_router_policy_directory_age_seconds{job="router",instance="dir"}', values: '_ 15+15x7 0+15x3'}
+  - {series: 'lanrith_router_policy_apply_age_seconds{job="router",instance="dir"}', values: '_ 10+15x7 0+15x3'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="dir",collector="policy_reader"}', values: '1x12'}
+  - {series: 'lanrith_router_policy_reader_attempt_timestamp_seconds{job="router",instance="dir"}', values: '0+15x12'}
+  - {series: 'lanrith_router_policy_reader_latest_attempt{job="router",instance="dir",outcome="applied"}', values: '_ 1 stale _ _ _ _ _ _ 1x3'}
+  - {series: 'lanrith_router_policy_reader_latest_attempt{job="router",instance="dir",outcome="collection_failed"}', values: '_ _ 1 stale'}
+  - {series: 'lanrith_router_policy_reader_latest_attempt{job="router",instance="dir",outcome="submission_failed"}', values: '_ _ _ 1 stale'}
+  - {series: 'lanrith_router_policy_reader_latest_attempt{job="router",instance="dir",outcome="rejected"}', values: '_ _ _ _ 1 stale'}
+  - {series: 'lanrith_router_policy_reader_latest_attempt{job="router",instance="dir",outcome="shadow"}', values: '_ _ _ _ _ 1x3 stale'}
+  promql_expr_test:
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSProbeStale",instance="dir"})'
+    eval_time: 90s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",instance="dir"})'
+    eval_time: 90s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSProbeStale",instance="dir"})'
+    eval_time: 105s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",instance="dir"})'
+    eval_time: 105s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSProbeStale",instance="dir"})'
+    eval_time: 120s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",instance="dir"})'
+    eval_time: 120s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSProbeStale",instance="dir"})'
+    eval_time: 135s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",instance="dir"})'
+    eval_time: 135s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSProbeStale",instance="dir"})'
+    eval_time: 150s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",instance="dir"})'
+    eval_time: 150s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSProbeStale",instance="dir"})'
+    eval_time: 165s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTLSUnhealthy",instance="dir"})'
+    eval_time: 165s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithRouterCollectionUnavailable",instance="dir"})'
+    eval_time: 90s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithRouterCollectionUnavailable",instance="dir"})'
+    eval_time: 105s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithRouterCollectionUnavailable",instance="dir"})'
+    eval_time: 120s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithRouterCollectionUnavailable",instance="dir"})'
+    eval_time: 150s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithRouterCollectionUnavailable",instance="dir"})'
+    eval_time: 165s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustExpiring",instance="dir",sha256="retiring"})'
+    eval_time: 90s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustUnknown",instance="dir"})'
+    eval_time: 90s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustExpiring",instance="dir",sha256="retiring"})'
+    eval_time: 105s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustUnknown",instance="dir"})'
+    eval_time: 105s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustExpiring",instance="dir",sha256="retiring"})'
+    eval_time: 120s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustUnknown",instance="dir"})'
+    eval_time: 120s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustExpiring",instance="dir",sha256="retiring"})'
+    eval_time: 135s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustUnknown",instance="dir"})'
+    eval_time: 135s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustExpiring",instance="dir",sha256="retiring"})'
+    eval_time: 165s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryTrustUnknown",instance="dir"})'
+    eval_time: 165s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryLeafExpiring",instance="dir"})'
+    eval_time: 90s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryIssuedLeafMismatch",instance="dir"})'
+    eval_time: 90s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryLeafExpiring",instance="dir"})'
+    eval_time: 105s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryIssuedLeafMismatch",instance="dir"})'
+    eval_time: 105s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryLeafExpiring",instance="dir"})'
+    eval_time: 120s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryIssuedLeafMismatch",instance="dir"})'
+    eval_time: 120s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryLeafExpiring",instance="dir"})'
+    eval_time: 135s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryIssuedLeafMismatch",instance="dir"})'
+    eval_time: 135s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryLeafExpiring",instance="dir"})'
+    eval_time: 180s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryIssuedLeafMismatch",instance="dir"})'
+    eval_time: 180s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 0s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 15s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 45s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 60s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 75s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 90s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 105s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 120s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 135s
+    exp_samples: []
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 150s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(ALERTS{alertname="LanrithDirectoryPolicyApplicationAging",instance="dir"})'
+    eval_time: 165s
+    exp_samples: []
+  - expr: 'count(lanrith:policy_reader_outcome{outcome="applied",instance="dir"})'
+    eval_time: 15s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:policy_reader_outcome{outcome="collection_failed",instance="dir"})'
+    eval_time: 30s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:policy_reader_outcome{outcome="submission_failed",instance="dir"})'
+    eval_time: 45s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:policy_reader_outcome{outcome="rejected",instance="dir"})'
+    eval_time: 60s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:policy_reader_outcome{outcome="shadow",instance="dir"})'
+    eval_time: 75s
+    exp_samples: [{labels: '{}', value: 1}]
+  - expr: 'count(lanrith:policy_reader_outcome{outcome="applied",instance="dir"})'
+    eval_time: 135s
+    exp_samples: [{labels: '{}', value: 1}]
+# A healthy scrape without any TLS families must still identify the affected
+# enabled router. A disabled peer and a failed collector with no queries do
+# not receive a probe diagnosis.
+- interval: 15s
+  input_series:
+  - {series: 'lanrith_expected_router{job="router",instance="empty-tls",directory="enabled"}', values: '1x2'}
+  - {series: 'lanrith_expected_router{job="router",instance="disabled",directory="disabled"}', values: '1x2'}
+  - {series: 'up{job="router",instance="empty-tls"}', values: '1x2'}
+  - {series: 'up{job="router",instance="disabled"}', values: '1x2'}
+  - {series: 'node_boot_time_seconds{job="router",instance="empty-tls"}', values: '0x2'}
+  - {series: 'node_boot_time_seconds{job="router",instance="disabled"}', values: '0x2'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="empty-tls"}', values: '0+15x2'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="disabled"}', values: '0+15x2'}
+  - {series: 'lanrith_router_metrics_collection_success{job="router",instance="empty-tls"}', values: '1 1 0'}
+  - {series: 'lanrith_router_metrics_collection_success{job="router",instance="disabled"}', values: '1x2'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="empty-tls",collector="directory"}', values: '_ 1 stale'}
+  alert_rule_test:
+  - eval_time: 0s
+    alertname: LanrithDirectoryTLSProbeStale
+    exp_alerts: [{exp_labels: {job: router, instance: empty-tls, directory: enabled}}]
+  - eval_time: 15s
+    alertname: LanrithDirectoryTLSProbeStale
+    exp_alerts: [{exp_labels: {job: router, instance: empty-tls, directory: enabled}}]
+  - eval_time: 30s
+    alertname: LanrithDirectoryTLSProbeStale
+    exp_alerts: []
+- interval: 15s
+  input_series:
+  - {series: 'lanrith_expected_router{job="router",instance="exporter",logs="enabled"}', values: '1x24'}
+  - {series: 'lanrith_expected_router{job="router",instance="local",logs="disabled"}', values: '1x24'}
+  - {series: 'up{job="router",instance="exporter"}', values: '1x24'}
+  - {series: 'node_boot_time_seconds{job="router",instance="exporter"}', values: '0x24'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="exporter"}', values: '0+15x24'}
+  - {series: 'lanrith_router_metrics_query_success{job="router",instance="exporter",collector="alloy"}', values: '1x23 0'}
+  - {series: 'lanrith_router_alloy_queue_capacity_bytes{job="router",instance="exporter"}', values: '67108864x24'}
+  - {series: 'lanrith_router_alloy_queue_size_bytes{job="router",instance="exporter"}', values: '0+100x21 0x2'}
+  - {series: 'lanrith_router_alloy_enqueue_failed_records_total{job="router",instance="exporter"}', values: '0x19 1x4'}
+  - {series: 'lanrith_router_alloy_send_failed_records_total{job="router",instance="exporter"}', values: '0x21 1x2'}
+  alert_rule_test:
+  - {eval_time: 15s, alertname: LanrithLogEnqueueFailures, exp_alerts: []}
+  - {eval_time: 15s, alertname: LanrithLogSendFailures, exp_alerts: []}
+  - {eval_time: 15s, alertname: LanrithLogQueueGrowing, exp_alerts: []}
+  - {eval_time: 315s, alertname: LanrithLogQueueGrowing, exp_alerts: [{exp_labels: {job: router, instance: exporter}}]}
+  - {eval_time: 315s, alertname: LanrithLogEnqueueFailures, exp_alerts: [{exp_labels: {job: router, instance: exporter}}]}
+  - {eval_time: 330s, alertname: LanrithLogSendFailures, exp_alerts: [{exp_labels: {job: router, instance: exporter}}]}
+  - {eval_time: 330s, alertname: LanrithLogQueueGrowing, exp_alerts: []}
+  - {eval_time: 330s, alertname: LanrithLogQueueObservationUnavailable, exp_alerts: []}
+  - {eval_time: 360s, alertname: LanrithLogQueueObservationUnavailable, exp_alerts: [{exp_labels: {job: router, instance: exporter, logs: enabled}}]}
+
+- name: tcp reachability and scrape success can coexist with missing router data
+  interval: 15s
+  input_series:
+  - {series: 'lanrith_expected_router{job="router",instance="healthy"}', values: '1x2'}
+  - {series: 'lanrith_expected_router{job="router",instance="missing"}', values: '1x2'}
+  - {series: 'up{job="router",instance="healthy"}', values: '1x2'}
+  - {series: 'up{job="router",instance="missing"}', values: '1x2'}
+  - {series: 'probe_success{job="tcp",instance="missing"}', values: '1x2'}
+  - {series: 'node_boot_time_seconds{job="router",instance="healthy"}', values: '0x2'}
+  - {series: 'node_boot_time_seconds{job="router",instance="missing"}', values: '0x2'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="healthy"}', values: '0+15x2'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="router",instance="missing"}', values: '0+15x2'}
+  - {series: 'lanrith_router_metrics_collection_success{job="router",instance="healthy"}', values: '1x2'}
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: LanrithRouterCollectionUnavailable
+    exp_alerts:
+    - exp_labels: {job: router, instance: missing}
+- interval: 30s
+  input_series:
+  - {series: 'lanrith_expected_router{job="rack",instance="west",ntp="enabled",chrony_accuracy="enabled"}', values: '1x21'}
+  - {series: 'lanrith_expected_router{job="rack",instance="east",ntp="enabled"}', values: '1x21'}
+  - {series: 'lanrith_expected_router{job="rack",instance="no-clock"}', values: '1x21'}
+  - {series: 'up{job="rack",instance="east"}', values: '1x21'}
+  - {series: 'node_boot_time_seconds{job="rack",instance="east"}', values: '1x21'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="rack",instance="east"}', values: '1+30x21'}
+  - {series: 'lanrith_router_chrony_observation_timestamp_seconds{job="rack",instance="east"}', values: '1+30x21'}
+  - {series: 'lanrith_router_metrics_query_success{job="rack",instance="east",collector="chrony"}', values: '1x21'}
+  - {series: 'lanrith_router_chrony_synchronised{job="rack",instance="east"}', values: '0x21'}
+  - {series: 'up{job="rack",instance="west"}', values: '1x13 0 1x6'}
+  - {series: 'node_boot_time_seconds{job="rack",instance="west"}', values: '1x14 440x6'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="rack",instance="west"}', values: '1+30x8 241x3 391+30x8'}
+  - {series: 'lanrith_router_metrics_collection_success{job="rack",instance="west"}', values: '0x21'}
+  - {series: 'lanrith_router_chrony_observation_timestamp_seconds{job="rack",instance="west"}', values: '1 31x6 241+30x6 430 481 517 541 571 601 631'}
+  - {series: 'lanrith_router_metrics_query_success{job="rack",instance="west",collector="chrony"}', values: '1x17 0 1x2'}
+  - {series: 'lanrith_router_chrony_synchronised{job="rack",instance="west"}', values: '1x17 0 1 stale 1'}
+  - {series: 'lanrith_chrony_max_reference_age_seconds{job="rack",instance="west"}', values: '85x21'}
+  - {series: 'lanrith_chrony_max_clock_error_seconds{job="rack",instance="west"}', values: '0.1x21'}
+  - {series: 'lanrith_router_chrony_reference_timestamp_seconds{job="rack",instance="west"}', values: '1 29x6 238+30x9 stale 568 599 640'}
+  - {series: 'lanrith_router_chrony_clock_error_bound_seconds{job="rack",instance="west"}', values: '0.01x7 0.2 0.1x8 stale 0.05x2'}
+  promql_expr_test:
+  # Two routers, including an unrelated west collector failure.
+  - expr: lanrith:chrony_state
+    eval_time: 30s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: 1}
+    - {labels: 'lanrith:chrony_state{job="rack",instance="east"}', value: 0}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 30s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: 1}
+  # Same external clock state, old reference at 120s and large uncertainty at 240s.
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 120s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: 0}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 240s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: 0}
+  # Observer held, then a new observation. The collector separately stops and resumes.
+  - expr: lanrith:chrony_state
+    eval_time: 225s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: -1}
+    - {labels: 'lanrith:chrony_state{job="rack",instance="east"}', value: 0}
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 240s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: 1}
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 375s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 390s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: 1}
+  # Lost scrape, pre-boot observation, restored scrape, future observation, daemon loss.
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 420s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: -1}
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 450s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: -1}
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 480s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: 1}
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 510s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 540s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 570s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: 1}
+  - expr: lanrith:chrony_state{instance="west"}
+    eval_time: 600s
+    exp_samples:
+    - {labels: 'lanrith:chrony_state{job="rack",instance="west"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 630s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="west"}', value: -1}
+- interval: 15s
+  input_series:
+  - {series: 'lanrith_expected_router{job="rack",instance="limits",ntp="enabled",chrony_accuracy="enabled"}', values: '1x7'}
+  - {series: 'up{job="rack",instance="limits"}', values: '1x7'}
+  - {series: 'node_boot_time_seconds{job="rack",instance="limits"}', values: '1x7'}
+  - {series: 'lanrith_router_metrics_collection_timestamp_seconds{job="rack",instance="limits"}', values: '1+15x7'}
+  - {series: 'lanrith_router_chrony_observation_timestamp_seconds{job="rack",instance="limits"}', values: '1+15x7'}
+  - {series: 'lanrith_router_metrics_query_success{job="rack",instance="limits",collector="chrony"}', values: '1x7'}
+  - {series: 'lanrith_router_chrony_synchronised{job="rack",instance="limits"}', values: '1x5 0 1'}
+  - {series: 'lanrith_chrony_max_reference_age_seconds{job="rack",instance="limits"}', values: '15x3 +Inf 15x2'}
+  - {series: 'lanrith_chrony_max_clock_error_seconds{job="rack",instance="limits"}', values: '_ _ 0 -1 0x3'}
+  - {series: 'lanrith_router_chrony_reference_timestamp_seconds{job="rack",instance="limits"}', values: '_ _ 15 30 45 60 75 stale'}
+  - {series: 'lanrith_router_chrony_clock_error_bound_seconds{job="rack",instance="limits"}', values: '_ _ 0x5'}
+  promql_expr_test:
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 15s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="limits"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 30s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="limits"}', value: 1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 45s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="limits"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 60s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="limits"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 90s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="limits"}', value: -1}
+  - expr: lanrith:chrony_accuracy_state
+    eval_time: 105s
+    exp_samples:
+    - {labels: 'lanrith:chrony_accuracy_state{job="rack",instance="limits"}', value: -1}

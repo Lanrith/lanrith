@@ -129,6 +129,7 @@ def exercise(installed, tree, units, run, wait, active):
     directory.mkdir(mode=0o755, exist_ok=True)
     (directory/'boot.json').write_bytes(release.canonical({'schema': 1, 'accepted': True, 'boot_complete': True,
         'image_id': installed['image_id'], 'deployment_sequence': installed['deployment_sequence'],
+        'platform_version': installed['platform_version'], 'selected_entry': installed['uki_name'],
         'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}))
     assert operation.core_accepted(installed)
     run('systemctl', 'start', '--no-block', optional+'.service')

@@ -1,102 +1,285 @@
-#!/usr/bin/python3
-"""Retain or deliberately rotate one protected SSH host identity."""
+#!/usr/bin/python3 -I
+"""Provision, verify, or resume rotation of the SSH identity on encrypted /var."""
 
+import base64
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import tempfile
+
+
+KEY = 'ssh_host_ed25519_key'
+CURRENT = '.host-key-identity'
+PENDING = '.host-key-pending'
+SCRATCH = '.host-key-write'
+GENERATION = re.compile('[0-9a-f]{32}')
+FINGERPRINT = re.compile(r'SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]')
+
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
 
-def flush_directory(directory):
-    descriptor=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+
+def read_file(path, mode, limit=16384):
+    # The directory is root-only. Check type before opening a device or FIFO,
+    # and the opened inode before using its contents. Never follow symlinks.
+    meta = path.lstat()
+    require(stat.S_ISREG(meta.st_mode), f'Unsafe host-key file type: {path.name}')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOATIME)
+    with os.fdopen(fd, 'rb') as stream:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and (mode == 0o600 or info.st_gid == 0) and
+                info.st_nlink == 1 and
+                stat.S_IMODE(info.st_mode) == mode and 0 < info.st_size <= limit,
+                f'Unsafe host-key file: {path.name}')
+        data = stream.read(limit + 1)
+        require(len(data) == info.st_size, f'Incomplete host-key file: {path.name}')
+        return data
+
+
+def matches(path, data, mode):
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        return read_file(path, mode) == data
+    except (FileNotFoundError, ValueError):
+        return False
 
 
-def atomic_file(path, content, mode):
-    descriptor, name=tempfile.mkstemp(prefix='.'+path.name+'.',dir=path.parent)
-    name=Path(name)
-    try:
-        with os.fdopen(descriptor,'wb') as stream:
-            os.fchmod(stream.fileno(),mode)
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name,path)
-        flush_directory(path.parent)
-    finally:
-        name.unlink(missing_ok=True)
+def publish(directory_fd, path, data, mode):
+    # All writers lock the directory. One known scratch name also lets recovery
+    # remove a private copy left by process death during a write.
+    scratch = path.parent/SCRATCH
+    scratch.unlink(missing_ok=True)
+    fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'wb') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fchmod(fd, mode)
+        os.fsync(fd)
+    os.replace(scratch, path)
+    os.fsync(directory_fd)
 
 
-def generate(directory, key):
-    with tempfile.TemporaryDirectory(prefix='.host-key-',dir=directory) as temporary:
-        candidate=Path(temporary)/key.name
-        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(candidate)],
-                       check=True,stdin=subprocess.DEVNULL)
-        info=candidate.lstat()
-        require(stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and
-                stat.S_IMODE(info.st_mode)==0o600,'Generated private host key is unsafe.')
-        descriptor=os.open(candidate,os.O_RDONLY|os.O_NOFOLLOW)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.replace(candidate,key)
-        flush_directory(directory)
+def generate():
+    with tempfile.TemporaryDirectory(dir='/run', prefix='lanrith-ssh-key-') as tmp:
+        path = Path(tmp)/KEY
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-C', '', '-N', '', '-f', str(path)],
+                       check=True, stdin=subprocess.DEVNULL)
+        return read_file(path, 0o600)
+
+
+def derive(private):
+    # Give OpenSSH only the bytes from the validated descriptor. In particular
+    # it cannot consult a restored public sidecar or update persistent atimes.
+    with os.fdopen(os.memfd_create('lanrith-host-key'), 'w+b') as stream:
+        fd = stream.fileno()
+        os.fchmod(fd, 0o600)
+        stream.write(private)
+        stream.flush()
+        public = subprocess.run(['ssh-keygen', '-y', '-P', '', '-f', f'/proc/self/fd/{fd}'],
+                                check=True, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, pass_fds=(fd,)).stdout
+    fields = public.split()
+    require(len(fields) >= 2 and fields[0] == b'ssh-ed25519', 'Expected an Ed25519 private host key.')
+    digest = hashlib.sha256(base64.b64decode(fields[1], validate=True)).digest()
+    return public, 'SHA256:' + base64.b64encode(digest).decode().rstrip('=')
+
+
+def encoded(record):
+    return (json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n').encode()
+
+
+def validate_identity(record):
+    require(isinstance(record, dict) and set(record) == {'generation', 'fingerprint'} and
+            isinstance(record['generation'], str) and
+            (record['generation'] == 'retain' or GENERATION.fullmatch(record['generation'])) and
+            isinstance(record['fingerprint'], str) and FINGERPRINT.fullmatch(record['fingerprint']),
+            'Invalid host-key identity record.')
+    return record
+
+
+def validate_current(record):
+    require(isinstance(record, dict) and set(record) == {'identity', 'previous'} and
+            isinstance(record['previous'], list) and
+            all(isinstance(g, str) and GENERATION.fullmatch(g) for g in record['previous']) and
+            len(set(record['previous'])) == len(record['previous']), 'Invalid host-key generation history.')
+    validate_identity(record['identity'])
+    require(record['identity']['generation'] not in record['previous'], 'Conflicting host-key generations.')
+    return record
+
+
+def generations(names):
+    markers = {name.removeprefix('.rotation-') for name in names if name.startswith('.rotation-')}
+    require(all(GENERATION.fullmatch(gen) for gen in markers), 'Invalid SSH rotation receipt name.')
+    return markers
+
+
+def resume(directory, names, current, rotation, pin):
+    transaction = json.loads(read_file(directory/PENDING, 0o600, 32768))
+    require(isinstance(transaction, dict) and set(transaction) == {'private', 'record'} and
+            isinstance(transaction['private'], str), 'Invalid staged host-key transaction.')
+    record = validate_current(transaction['record'])
+    identity = record['identity']
+    generation = identity['generation']
+    require(pin == identity if pin else generation == rotation,
+            'Boot the image authorizing the pending SSH host-key generation.')
+    private = transaction['private'].encode('ascii')
+    public, fingerprint = derive(private)
+    require(fingerprint == identity['fingerprint'], 'Staged host key differs from its fingerprint.')
+    if current is not None and current != record:
+        before = current['identity']['generation']
+        history = current['previous'] + ([before] if before != 'retain' else [])
+        require(generation != 'retain' and generation != before and record['previous'] == history,
+                'Staged host-key history differs from committed state.')
+    require(generations(names) <= {generation, *record['previous']},
+            'Staged SSH generation conflicts with restored receipts.')
+    marker = '.rotation-' + generation
+    if marker in names:
+        receipt = read_file(directory/marker, 0o600)
+        require(receipt == encoded(identity) or (pin == identity and receipt == (generation + '\n').encode()),
+                'Staged SSH identity conflicts with an existing generation receipt.')
+    if pin or generation == 'retain':
+        # Only an explicitly requested new rotation can replace an old key.
+        require(KEY not in names or matches(directory/KEY, private, 0o600),
+                'Restored private key conflicts with the staged identity.')
+        if not pin:
+            require(KEY + '.pub' not in names or matches(directory/(KEY + '.pub'), public, 0o644),
+                    'Restored public key conflicts with first provisioning.')
+    return record, private, public
+
+
+def prepare(directory, fd, names, current, rotation, pin):
+    active = current['identity'] if current else None
+    previous = list(current['previous']) if current else []
+    consumed = [active['generation'], *previous] if active else []
+    markers = generations(names)
+    if active:
+        require(markers <= set(consumed), 'Restored SSH rotation receipts conflict with the committed generation.')
+    else:
+        # Preserve the generation history of legacy receipts on an authorized
+        # migration. Never adopt the fingerprint of their local private key.
+        previous = sorted(markers - {pin['generation'] if pin else rotation})
+    if active and active['generation'] != 'retain':
+        receipt = directory/('.rotation-' + active['generation'])
+        require(matches(receipt, encoded(active), 0o600), 'Restore the committed SSH rotation receipt.')
+
+    if pin:
+        require(active is None or active == pin, 'Restored SSH identity differs from the signed recovery pin.')
+        private = read_file(directory/KEY, 0o600)
+        public, fingerprint = derive(private)
+        require(pin['fingerprint'] == fingerprint, 'Private host key differs from the signed recovery pin.')
+        if active is None and markers:
+            target = '.rotation-' + pin['generation']
+            require(pin['generation'] in markers and read_file(directory/target, 0o600) in
+                    ((pin['generation']+'\n').encode(), encoded(pin)), 'Legacy SSH rotation receipt differs.')
+        identity = pin
+    elif rotation != 'retain' and rotation not in consumed and rotation not in markers:
+        private = generate()
+        public, fingerprint = derive(private)
+        identity = {'generation': rotation, 'fingerprint': fingerprint}
+        if active and active['generation'] != 'retain':
+            previous.append(active['generation'])
+    else:
+        require(active or not markers, 'Restore or independently authorize the previous SSH rotation.')
+        require(rotation == 'retain' or rotation in consumed, 'Conflicting SSH generation markers require recovery.')
+        if KEY in names:
+            private = read_file(directory/KEY, 0o600)
+            public, fingerprint = derive(private)
+            require(active is None or active['fingerprint'] == fingerprint,
+                    'Private host key differs from the committed fingerprint.')
+            repair_public(directory, fd, names, public)
+            return None
+        require(not (names - {SCRATCH}), 'Incomplete SSH host identity. Restore the private key or authorize rotation.')
+        private = generate()
+        public, fingerprint = derive(private)
+        identity = {'generation': 'retain', 'fingerprint': fingerprint}
+
+    record = {'identity': identity, 'previous': previous}
+    if current == record:
+        repair_public(directory, fd, names, public)
+        return None
+    require(len(encoded(record)) <= 16384, 'Host-key generation history exceeds the supported size.')
+    # The entire candidate reaches stable storage before any active pathname
+    # changes. Neither a crash nor a concurrent invocation can select a new one.
+    publish(fd, directory/PENDING, encoded({'record': record, 'private': private.decode('ascii')}), 0o600)
+    return record, private, public
+
+
+def repair_public(directory, fd, names, public):
+    path = directory/(KEY + '.pub')
+    if not matches(path, public, 0o644):
+        publish(fd, path, public, 0o644)
+    if SCRATCH in names:
+        (directory/SCRATCH).unlink(missing_ok=True)
+        os.fsync(fd)
+
+
+def ensure(directory, fd, rotation, pin):
+    names = set(os.listdir(fd))
+    current = validate_current(json.loads(read_file(directory/CURRENT, 0o600))) if CURRENT in names else None
+    if PENDING in names:
+        candidate = resume(directory, names, current, rotation, pin)
+    else:
+        candidate = prepare(directory, fd, names, current, rotation, pin)
+        if candidate is None:
+            return
+
+    record, private, public = candidate
+    identity = record['identity']
+    files = [(directory/KEY, private, 0o600), (directory/(KEY + '.pub'), public, 0o644)]
+    if identity['generation'] != 'retain':
+        files.append((directory/('.rotation-' + identity['generation']), encoded(identity), 0o600))
+    files.append((directory/CURRENT, encoded(record), 0o600))
+    for path, content, mode in files:
+        if not matches(path, content, mode):
+            publish(fd, path, content, mode)
+    (directory/PENDING).unlink()
+    (directory/SCRATCH).unlink(missing_ok=True)
+    os.fsync(fd)
 
 
 def main(policy_path=Path('/usr/share/lanrith/administration.json')):
-    require(os.geteuid()==0, 'Host-key provisioning requires root.')
-    policy=json.loads(policy_path.read_text())
-    require(isinstance(policy,dict) and policy.get('schema')==1 and
-            set(policy)=={'schema','username','host_key_state','host_key_rotation','serial','root_access'},
+    require(os.geteuid() == 0, 'Host-key provisioning requires root.')
+    policy = json.loads(policy_path.read_text())
+    fields = {'schema', 'username', 'host_key_state', 'host_key_rotation', 'serial', 'root_access'}
+    require(isinstance(policy, dict) and policy.get('schema') == 1 and fields <= set(policy) <= fields | {'host_key_pin'},
             'Invalid administration contract.')
-    directory=Path(policy['host_key_state'])
-    require(directory.is_absolute() and directory.parts[:3]==('/', 'var', 'lib') and '..' not in directory.parts,
+    rotation = policy['host_key_rotation']
+    require(isinstance(rotation, str) and (rotation == 'retain' or GENERATION.fullmatch(rotation)),
+            'Invalid host-key rotation generation.')
+    pin = validate_identity(policy['host_key_pin']) if 'host_key_pin' in policy else None
+    require(pin is None or rotation in ('retain', pin['generation']), 'Signed host-key policy differs from recovery pin.')
+    directory = Path(policy['host_key_state'])
+    require(len(directory.parts) > 3 and directory.parts[:3] == ('/', 'var', 'lib') and '..' not in directory.parts,
             'Invalid host-key state directory.')
-    current=Path('/')
+    current = Path('/')
     for component in directory.parts[1:]:
-        current=current/component
-        if not current.exists() and not current.is_symlink():
-            current.mkdir(mode=0o700)
-        info=current.lstat()
-        require(stat.S_ISDIR(info.st_mode) and info.st_uid==0 and not info.st_mode&0o022,
-                'Unsafe host-key state directory.')
-    directory.chmod(0o700)
-    rotation=policy['host_key_rotation']
-    require(rotation=='retain' or isinstance(rotation,str) and len(rotation)==32 and
-            all(character in '0123456789abcdef' for character in rotation),'Invalid host-key rotation generation.')
-    marker=directory/('.rotation-'+rotation) if rotation!='retain' else None
-    rotate=marker is not None and not marker.exists() and not marker.is_symlink()
-    if marker is not None and not rotate:
-        info=marker.lstat()
-        require(stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and
-                stat.S_IMODE(info.st_mode)==0o600 and info.st_size==33,
-                'Unsafe host-key rotation marker.')
-        descriptor=os.open(marker,os.O_RDONLY|os.O_NOFOLLOW)
+        current /= component
         try:
-            content=os.read(descriptor,34)
-        finally:
-            os.close(descriptor)
-        require(content==(rotation+'\n').encode(),'Host-key rotation marker differs.')
-    key=directory/'ssh_host_ed25519_key'
-    if rotate or not key.exists() and not key.is_symlink():
-        generate(directory,key)
-    info=key.lstat()
-    require(stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and
-            stat.S_IMODE(info.st_mode)==0o600,'Unsafe private host-key file.')
-    public=subprocess.run(['ssh-keygen','-y','-f',str(key)],check=True,capture_output=True).stdout
-    atomic_file(directory/'ssh_host_ed25519_key.pub',public,0o644)
-    if rotate:
-        atomic_file(marker,(rotation+'\n').encode(),0o600)
+            info = current.lstat()
+        except FileNotFoundError:
+            current.mkdir(mode=0o700, exist_ok=True)
+            parent = os.open(current.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(parent)
+            finally:
+                os.close(parent)
+            info = current.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+                'Unsafe host-key state directory.')
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NOATIME)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if stat.S_IMODE(os.fstat(fd).st_mode) != 0o700:
+            os.fchmod(fd, 0o700)
+        ensure(directory, fd, rotation, pin)
+    finally:
+        os.close(fd)
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()

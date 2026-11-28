@@ -10,6 +10,7 @@ import http.client
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import math
+import mmap
 import os
 from pathlib import Path
 import pwd
@@ -17,6 +18,7 @@ import queue
 import signal
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -25,10 +27,12 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith import config, logs, logs_runtime
+from lanrith.dns_metadata import varint
 from test_intent import minimal
 
 
 CHECKS = {'unauthenticated-verified-https', 'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
+          'field-only-queue-and-receiver', 'permanent-auth-rejection-and-recovery', 'receiver-observed-exporter-source',
           'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
           'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
           'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
@@ -37,6 +41,10 @@ CHECKS = {'unauthenticated-verified-https', 'generated-graph-readiness', 'exited
 MARKER = b'LANRITH_SYNTHETIC_QUEUED_RECORD'
 SELF = b'LANRITH_SYNTHETIC_EXPORTER_SELF_RECORD'
 SECRET = b'lanrith-disposable-secret-value'
+UNSELECTED = b'LANRITH_SYNTHETIC_UNSELECTED_FIELD'
+ABSENT_BODY = b'journal message absent'
+REJECTED = 'LANRITH_SYNTHETIC_PERMANENTLY_REJECTED'
+LOCAL_RECOVERY = 'LANRITH_LOCAL_RECOVERY_MARKER'
 RUN = ('import json,sys; from pathlib import Path; from lanrith.logs_runtime import supervise; '
        'supervise(json.loads(sys.argv[1]), startup_seconds=float(sys.argv[2]), interval=.2, observation_path=Path(sys.argv[3]), local=True)')
 
@@ -82,17 +90,23 @@ def journal(root):
     export = root/'journal.export'
     stamp = int(time.time()*1000000)
     with export.open('wb') as stream:
-        def entry(number, unit, message):
+        def entry(number, unit, message, extra=b''):
             stream.write(('__REALTIME_TIMESTAMP='+str(stamp+number)+'\n__MONOTONIC_TIMESTAMP='+str(number+1)+
                           '\n_BOOT_ID='+'1'*32+'\n_MACHINE_ID='+'2'*32+
                           '\n_HOSTNAME=synthetic-router\n_TRANSPORT=stdout\nPRIORITY=6\n_SYSTEMD_UNIT='+unit+
-                          '\nMESSAGE=').encode()+message+b'\n\n')
-        entry(0, 'fixture.service', MARKER+b' password='+SECRET)
-        entry(1, 'alloy.service', SELF)
+                          '\n').encode()+extra)
+            if message is not None:
+                stream.write(b'MESSAGE='+message+b'\n')
+            stream.write(b'\n')
+        extra = b'FIXTURE_UNUSED='+UNSELECTED+b'\n'
+        entry(0, 'fixture.service', MARKER+b' password='+SECRET, extra)
+        entry(1, 'fixture-missing.service', None, extra)
+        entry(2, 'fixture-empty.service', b'', extra)
+        entry(3, 'alloy.service', SELF)
         # More than the production queue's 64 MiB logical capacity. The test
         # retains that capacity instead of substituting a tiny fixture queue.
         for number in range(7200):
-            entry(number+2, 'fixture-burst.service', ('BURST_'+str(number)+' ').encode()+b'x'*16384)
+            entry(number+4, 'fixture-burst.service', ('BURST_'+str(number)+' ').encode()+b'x'*16384)
     (root/'journal').mkdir()
     run('/usr/lib/systemd/systemd-journal-remote', '--split-mode=none',
         '--output='+str(root/'journal/system.journal'), str(export))
@@ -101,17 +115,59 @@ def journal(root):
         path.chmod(0o644)
     assert int(run('journalctl', '--directory='+str(root/'journal'), '--no-pager', '-o', 'cat',
                    '--output-fields=MESSAGE', text=True).stdout.count('BURST_')) == 7200
+    return stamp
 
 
-def append_journal(root, count, marker):
+def embedded(data, field):
+    # ExportLogsServiceRequest, ResourceLogs and ScopeLogs carry only embedded
+    # messages or strings, all length-delimited. Keep repeated log records.
+    offset = 0
+    while offset < len(data):
+        tag, offset = varint(data, offset)
+        size, offset = varint(data, offset)
+        assert tag & 7 == 2 and offset+size <= len(data)
+        if tag >> 3 == field:
+            yield data[offset:offset+size]
+        offset += size
+
+
+def check_received_projection(data, stamp, seen, expected):
+    for resource in embedded(data, 1):
+        labels, = embedded(resource, 1)
+        for scope in embedded(resource, 2):
+            for record in embedded(scope, 2):
+                for index, (unit, body) in enumerate(expected):
+                    timestamp = b'\x09'+((stamp+index)*1000).to_bytes(8, 'little')
+                    if timestamp in record:
+                        # LogRecord.body (5), AnyValue.string_value (1).
+                        assert b'\x2a'+bytes([len(body)+2])+b'\x0a'+bytes([len(body)])+body in record
+                        assert unit in labels and b'journal_boot' in record and b'journal_transport' in record
+                        seen.add(index)
+
+
+def check_queued_projection(directory):
+    seen = set()
+    for file in directory.rglob('*'):
+        if not file.is_file() or not file.stat().st_size:
+            continue
+        with file.open('rb') as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as queued:
+            for marker in (UNSELECTED, SECRET, SELF):
+                assert queued.find(marker) == -1, 'Unselected field or omitted content in persistent queue.'
+            for marker in (ABSENT_BODY, MARKER, b'[REDACTED]'):
+                if queued.find(marker) != -1:
+                    seen.add(marker)
+    assert seen == {ABSENT_BODY, MARKER, b'[REDACTED]'}, 'Queued projection controls missing.'
+
+
+def append_journal(root, count, marker, *, unit='fixture.service', redaction_probe=True):
     export = root/'append.export'
     stamp = int(time.time()*1000000)
     with export.open('wb') as stream:
         for number in range(count):
             stream.write(('__REALTIME_TIMESTAMP='+str(stamp+number)+'\n__MONOTONIC_TIMESTAMP='+str(stamp+number)+
                 '\n_BOOT_ID='+'1'*32+'\n_MACHINE_ID='+'2'*32+
-                '\n_HOSTNAME=synthetic-router\n_TRANSPORT=stdout\nPRIORITY=4\n_SYSTEMD_UNIT=fixture.service'+
-                '\nMESSAGE='+marker+' password='+SECRET.decode()+'\n\n').encode())
+                '\n_HOSTNAME=synthetic-router\n_TRANSPORT=stdout\nPRIORITY=4\n_SYSTEMD_UNIT='+unit+
+                '\nMESSAGE='+marker+(' password='+SECRET.decode() if redaction_probe else '')+'\n\n').encode())
     run('/usr/lib/systemd/systemd-journal-remote', '--split-mode=none',
         '--output='+str(root/'journal/system.journal'), str(export))
     export.unlink()
@@ -138,12 +194,47 @@ def local_records():
     return records
 
 
-def unauthenticated_delivery(binary):
+def wait_for_drain(received):
+    smallest = None
+    last_progress = time.monotonic()
+
+    def drained():
+        nonlocal smallest, last_progress
+        size = logs_runtime.health()['queue_size_bytes']
+        if smallest is None or size < smallest:
+            smallest = size
+            last_progress = time.monotonic()
+        assert time.monotonic()-last_progress < 90, 'Persistent queue drain stalled.'
+        return received['marker'] and size == 0
+
+    until(drained, 300)
+
+
+def exercise_file_failure(root):
+    # The file exporter can write to an open file until its next rotation.
+    # Stop feeding it once the fault is observed so recovery has no bulk backlog.
+    initial = logs_runtime.health(local=True)
+
+    def batch_processed():
+        current = logs_runtime.health(local=True)
+        if (current['local_failed_records'] > initial['local_failed_records'] or
+                current['local_sent_records'] >= initial['local_sent_records']+submitted):
+            return current
+
+    for submitted in range(100, 5001, 100):
+        append_journal(root, 100, 'LANRITH_LOCAL_FAILURE_REMOTE_MARKER')
+        if until(batch_processed, 30)['local_failed_records'] > initial['local_failed_records']:
+            return
+    raise AssertionError('File exporter never rejected a record during the filesystem fault.')
+
+
+def unauthenticated_delivery(binary, *, message='LANRITH_NO_AUTH_SYNTHETIC_RECORD', unit='fixture.service',
+                             redaction_probe=True):
     """An enabled exporter sends over verified TLS with no password or auth header."""
     with tempfile.TemporaryDirectory(prefix='logs-no-auth.') as directory:
         root = Path(directory)
         (root/'journal').mkdir()
-        append_journal(root, 1, 'LANRITH_NO_AUTH_SYNTHETIC_RECORD')
+        append_journal(root, 1, message, unit=unit, redaction_probe=redaction_probe)
         run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
             '-subj', '/CN=logs.example.test', '-addext', 'subjectAltName=DNS:logs.example.test',
             '-keyout', str(root/'collector.key'), '-out', str(root/'collector.crt'))
@@ -190,7 +281,7 @@ def unauthenticated_delivery(binary):
                     env=environment, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
             auth, path, data = received.get(timeout=40)
             assert auth is None and path == '/otlp/v1/logs'
-            assert b'LANRITH_NO_AUTH_SYNTHETIC_RECORD' in data and SECRET not in data
+            assert message.encode() in data and unit.encode() in data and SECRET not in data
             assert process.poll() is None
             until(lambda: logs_runtime.pipeline_healthy(metrics(), minimum_components=7), seconds=10)
         except BaseException:
@@ -252,7 +343,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             str(backing), str(visible), str(account.pw_uid), str(account.pw_gid))
         assert (backing/'proof').read_text() == 'synthetic state'
         assert private.stat().st_mode & 0o777 == 0o700
-        journal(root)
+        journal_stamp = journal(root)
         os.chown(root/'journal', 0, account.pw_gid)
         (root/'journal').chmod(0o750)
         for path in (root/'journal').iterdir():
@@ -281,6 +372,12 @@ else:raise AssertionError('Exporter can traverse the private control directory')
         value = config.normalize(value)
         files = config.render(value)
         assert 'lanrith-log-observations' not in files['etc/alloy/config.alloy']
+        route = next(item for item in json.loads(files['usr/share/lanrith/service-plane.json'])['dependency_routes']
+                     if item['to'] == '192.0.2.31/32')
+        source = json.loads(files['usr/share/lanrith/logs.json'])['source']
+        assert source == route['source']
+        run('ip', 'address', 'add', source+'/32', 'dev', 'lo')
+        run('ip', 'route', 'replace', 'local', route['to'], 'dev', 'lo', 'src', source, 'table', 'local')
         original = logs.render(value, observer=observer)['etc/alloy/config.alloy']
         content = original.replace('/var/log/journal', str(root/'journal')).replace(
             '/var/lib/lanrith-alloy/queue', str(root/'queue')).replace(
@@ -315,6 +412,24 @@ else:raise AssertionError('Exporter can traverse the private control directory')
         notification_worker = threading.Thread(target=consume_notifications, daemon=True)
         notification_worker.start()
 
+        peak_queue_bytes = 0
+
+        def sample_queue_disk():
+            nonlocal peak_queue_bytes
+            while not notification_stop.wait(.05):
+                total = 0
+                for path in (root/'queue').rglob('*'):
+                    try:
+                        info = path.stat()
+                    except FileNotFoundError:
+                        continue  # Compaction renamed a file during this sample.
+                    if stat.S_ISREG(info.st_mode):
+                        total += info.st_blocks*512
+                peak_queue_bytes = max(peak_queue_bytes, total)
+
+        disk_worker = threading.Thread(target=sample_queue_disk, daemon=True)
+        disk_worker.start()
+
         def launch(bad=False):
             command = [str(args.alloy), *logs_runtime.ALLOY[1:-1]]
             command[-1] = '--storage.path='+str(root/('bad-state' if bad else 'state'))
@@ -337,16 +452,55 @@ else:raise AssertionError('Exporter can traverse the private control directory')
 
         received = {'marker': False, 'redacted': False, 'self': False, 'secret': False, 'records': 0,
                     'authenticated': True, 'sni': True, 'path': True, 'local_failure_marker': False}
+        observed_bodies = set()
+        accepted_heartbeats = set()
+        heartbeats = []
+
+        def heartbeat():
+            message = json.dumps({'schema': 1, 'event': 'lanrith-heartbeat', 'boot_id': '11111111-1111-1111-1111-111111111111',
+                'selected_entry': 'lanrith_14.efi', 'image_id': 'lanrith', 'platform_version': '0.2.0',
+                'configuration_sha256': 'a'*64, 'deployment_sequence': 14, 'monotonic_ns': time.monotonic_ns()},
+                separators=(',', ':'))
+            heartbeats.append(message)
+            append_journal(root, 1, message, unit='lanrith-telemetry-heartbeat.service', redaction_probe=False)
+            until(lambda: message in accepted_heartbeats)
+
+        rejected = []
+        accept_requests = threading.Event()
+        accept_requests.set()
         expected_auth = 'Basic '+base64.b64encode(b'synthetic-router:disposable-ingest-password').decode()
 
         class Collector(BaseHTTPRequestHandler):
             def do_POST(self):
+                if self.client_address[0] != source:
+                    self.send_response(403)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
                 length = int(self.headers.get('Content-Length', '0'))
                 assert 0 <= length <= 2*1024*1024
                 data = self.rfile.read(length)
                 if self.headers.get('Content-Encoding') == 'gzip':
                     data = gzip.decompress(data)
                 assert len(data) <= 2*1024*1024
+                if not accept_requests.is_set():
+                    rejected.append(REJECTED.encode() in data)
+                    self.send_response(401)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                # Search every accepted payload, including batches after restart.
+                received['unselected'] = received.get('unselected', False) or UNSELECTED in data
+                received['replayed_rejection'] = received.get('replayed_rejection', False) or REJECTED.encode() in data
+                if MARKER in data or ABSENT_BODY in data:
+                    check_received_projection(data, journal_stamp, observed_bodies,
+                        ((b'fixture.service', MARKER+b' password=[REDACTED]'), (b'fixture-missing.service', ABSENT_BODY),
+                         (b'fixture-empty.service', ABSENT_BODY)))
+                if LOCAL_RECOVERY.encode() in data:
+                    received.setdefault('local_recovery_payload', data)
+                for heartbeat_body in heartbeats:
+                    if heartbeat_body.encode() in data and b'lanrith-telemetry-heartbeat.service' in data:
+                        accepted_heartbeats.add(heartbeat_body)
                 received['marker'] |= MARKER in data
                 received['local_failure_marker'] |= b'LANRITH_LOCAL_FAILURE_REMOTE_MARKER' in data
                 received['redacted'] |= b'[REDACTED]' in data
@@ -399,12 +553,11 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             # Let the journal cursor commit before the forced process crash.
             time.sleep(12)
             assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
-            physical = sum(path.stat().st_size for path in (root/'queue').rglob('*') if path.is_file())
-            assert physical <= 160*1024*1024, 'Queue physical storage exceeded its tested bound.'
             assert (root/'alloy.log').stat().st_size < 2*1024*1024, 'Exporter outage amplified its own log.'
             old_epoch = logs_runtime.read_observation(logs_runtime.LOCAL/'health.json', owner=account.pw_uid)['producer_epoch']
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
+            check_queued_projection(root/'queue')
             assert ready_notifications.empty(), 'Exporter emitted duplicate readiness.'
             process = launch()
             until(lambda: ready(process), 30)
@@ -422,7 +575,19 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             server.socket = context.wrap_socket(server.socket, server_side=True)
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
-            until(lambda: received['marker'] and metric(metrics(), 'otelcol_exporter_queue_size') == 0, 90)
+            # A second source with the correct disposable credential still fails
+            # at this receiver. Verify TLS and SNI for both source paths.
+            client = ssl.create_default_context(cafile=str(root/'collector.crt'))
+            with socket.create_connection(server.server_address, timeout=3, source_address=('127.0.0.1', 0)) as tcp:
+                with client.wrap_socket(tcp, server_hostname='logs.example.test') as tls:
+                    tls.sendall(('POST /otlp/v1/logs HTTP/1.1\r\nHost: logs.example.test\r\nAuthorization: '+
+                                 expected_auth+'\r\nContent-Length: 0\r\nConnection: close\r\n\r\n').encode('ascii'))
+                    response = http.client.HTTPResponse(tls)
+                    response.begin()
+                    assert response.status == 403
+                    response.close()
+            wait_for_drain(received)
+            assert observed_bodies == {0, 1, 2} and not received['unselected']
             assert received['redacted'] and not received['secret'] and not received['self']
             assert received['authenticated'] and received['sni'] and received['path']
             assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
@@ -459,14 +624,13 @@ else:raise AssertionError('Exporter can traverse the private control directory')
             try:
                 os.chown(logs_runtime.LOCAL, 0, 0)
                 logs_runtime.LOCAL.chmod(0o500)
-                append_journal(root, 5000, 'LANRITH_LOCAL_FAILURE_REMOTE_MARKER')
-                until(lambda: logs_runtime.observation(metrics(), local=True)['local_failed_records'] > 0, 30)
+                exercise_file_failure(root)
                 until(lambda: received['local_failure_marker'], 30)
                 assert process.poll() is None and logs_runtime.pipeline_healthy(metrics())
             finally:
                 os.chown(logs_runtime.LOCAL, account.pw_uid, 58010)
                 logs_runtime.LOCAL.chmod(0o2750)
-            stamp = append_journal(root, 1, 'LANRITH_LOCAL_RECOVERY_MARKER')
+            stamp = append_journal(root, 1, LOCAL_RECOVERY)
             def recovered():
                 for row in local_records():
                     attributes = {item['key']: item['value'].get('stringValue') for item in row.get('attributes', [])}
@@ -476,16 +640,35 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                         return True
                 return False
             until(recovered, 15)
+            recovered_bodies = set()
+            recovery_payload = until(lambda: received.get('local_recovery_payload'), 30)
+            check_received_projection(recovery_payload, stamp, recovered_bodies,
+                ((b'fixture.service', LOCAL_RECOVERY.encode()+b' password=[REDACTED]'),))
+            assert recovered_bodies == {0}, 'Collector missed the redacted recovery record at its journal timestamp.'
             local_health = until(lambda: (item if (item := logs_runtime.read_observation(
                 logs_runtime.LOCAL/'health.json', owner=account.pw_uid))['local_failed_records'] > 0 else None), 10)
             assert local_health['local_sent_records'] > 0
+            heartbeat()
+            before_rejection = metric(metrics(), 'otelcol_exporter_send_failed_log_records_total')
+            accept_requests.clear()
+            append_journal(root, 1, REJECTED)
+            until(lambda: any(rejected) and metric(metrics(), 'otelcol_exporter_send_failed_log_records_total') > before_rejection)
+            assert metric(metrics(), 'otelcol_exporter_queue_size') == 0
+            accept_requests.set()
+            heartbeat()
+            failed_sends = int(metric(metrics(), 'otelcol_exporter_send_failed_log_records_total')-before_rejection)
+            assert len(accepted_heartbeats) == 2 and failed_sends > 0
+            assert disk_worker.is_alive() and 0 < peak_queue_bytes <= 160*1024*1024, 'Queue physical storage exceeded its tested bound.'
+            assert not received['replayed_rejection'] and received['authenticated'] and received['sni'] and received['path']
+            assert not received['unselected'] and not received['secret'] and not received['self']
             result = {'schema': 1, 'test': 'offline-journal-https-outage', 'result': 'pass',
                 'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 'implementation_sha256': {name: hashlib.sha256((Path(__file__).parents[1]/name).read_bytes()).hexdigest()
-                    for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py')},
+                    for name in ('lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py', 'lanrith/dns_metadata.py')},
                 'alloy_sha256': digest, 'configuration_sha256': hashlib.sha256(original.encode()).hexdigest(),
-                'checks': sorted(CHECKS), 'queue_capacity_bytes': 67108864, 'queue_physical_bytes': physical,
+                'checks': sorted(CHECKS), 'queue_capacity_bytes': 67108864, 'queue_physical_bytes': peak_queue_bytes,
+                'auth_rejection_failed_records': failed_sends, 'fresh_heartbeat_receipts': len(accepted_heartbeats),
                 'overflow_records': overflow, 'delivered_batches': received['records'],
                 'local_output_bytes': local_bytes, 'local_output_files': len(local_files),
                 'local_failed_records': local_health['local_failed_records'],
@@ -511,6 +694,7 @@ else:raise AssertionError('Exporter can traverse the private control directory')
                         process.wait(timeout=5)
             notification_stop.set()
             notification_worker.join(timeout=2)
+            disk_worker.join(timeout=2)
             notifications.close()
             if server:
                 server.shutdown()

@@ -70,6 +70,16 @@ def contract(value, base, certificate, public, integrations):
     if state is None:
         version = 'base:'+release.file_record(base)['sha256']
         state = {'platform': {'writes': version, 'reads': [version]}}
+    admin = value.get('administration', {})
+    # Assembly installs the provisioning helper and policy together even when
+    # the admitted package base predates this reader.
+    directory = admin.get('host_key_state', '/var/lib/lanrith/ssh-host-keys')
+    receipt_format = image_contract.SSH_V2 + hashlib.sha256(os.fsencode(Path(directory))).hexdigest()
+    rotation = admin.get('host_key_rotation', 'retain')
+    ssh = {'writes': image_contract.SSH_V1, 'reads': [image_contract.SSH_V1, receipt_format]}
+    if 'host_key_pin' in admin or rotation != 'retain':
+        ssh.update(writes=receipt_format, **admin.get('host_key_pin', {'generation': rotation}))
+    state['ssh_identity'] = ssh
     for name, digest in integrations.items():
         release.require(re.fullmatch(r'[a-z][a-z0-9_-]{0,53}', name), 'Invalid state consumer identity.')
         version = 'extension:'+digest
@@ -86,3 +96,13 @@ def install(overlay, public):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(public)
     return policy
+
+
+def slot_initialization_unit(storage):
+    return (
+        '[Unit]\nDescription=Verify the installed A/B slot geometry\nRequires=var.mount\n'
+        'After=systemd-repart.service var.mount\nBefore=lanrith-recovery-key.service\n'
+        '\n[Service]\nType=oneshot\n'
+        f'TimeoutStartSec={storage.get("initialization_timeout_seconds", 120)}s\n'
+        'ExecStart=/usr/bin/lanrith-runtime initialize\n'
+        '\n[Install]\nRequiredBy=multi-user.target\n')

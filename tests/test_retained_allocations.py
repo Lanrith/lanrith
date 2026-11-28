@@ -25,6 +25,21 @@ def declaration():
 
 
 class RetainedAllocationTests(unittest.TestCase):
+    def test_tayga_infrastructure_addresses_cannot_become_static_controller_maps(self):
+        value = declaration()
+        usable = 'fd42:1234:5678:10::84'
+        local_use = '64:ff9b:1::2'
+        excluded = ['fd42:1234:5678:fd65::a00:102', 'fd42:1234:5678:fd65:ffff::1', '1::2']
+        value['access']['rules'][0]['from'] = {'addresses': [usable, local_use, *excluded]}
+        files = config.render(value)
+        manifest = json.loads(files['usr/share/lanrith/nat64-internal.json'])
+        self.assertEqual(set(manifest['source_allocations']['active']), {usable, local_use})
+        maps = {line.split()[2] for line in manifest['text'].splitlines() if line.startswith('map ')}
+        self.assertEqual(maps, {usable, local_use})
+        for source in excluded:
+            with self.subTest(source=source), self.assertRaisesRegex(ReleaseError, 'Retained NAT64 source conflicts'):
+                config.render(value, retained_allocations={source: '10.255.223.132'})
+
     def test_retained_and_retired_addresses_reach_the_image_without_granting_access(self):
         value = declaration()
         retained = {'fd42:1234:5678:10::84': '10.255.223.132', 'fd42:1234:5678:10::85': '10.255.223.133'}

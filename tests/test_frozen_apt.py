@@ -111,7 +111,8 @@ class FrozenAptTests(unittest.TestCase):
 
     def test_all_real_signed_seeds_still_match_the_previously_reviewed_release_hashes(self):
         records=json.loads((ROOT/'builders/snapshot-transports.json').read_bytes())['records']
-        self.assertEqual(len(records),4)
+        self.assertCountEqual([record['suite'] for record in records],
+                              ['trixie','trixie-security','trixie-backports','bookworm','bookworm-security'])
         for record in records:
             path=ROOT/'builders/snapshots'/(record['suite']+'.InRelease')
             self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),record['inrelease']['sha256'])

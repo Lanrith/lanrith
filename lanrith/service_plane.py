@@ -39,9 +39,7 @@ def destination_network(value, address):
 
 def clients(value, feature):
     if feature == 'authoritative':
-        return clients(value, 'dns') + [
-            source for writer in authoritative.writers(value).values()
-            for source in authoritative.writer_sources(value, writer)]
+        return authoritative.direct_clients(value)
     if feature == 'radius':
         radius = value.get('identity', {}).get('radius', {})
         if not radius.get('enabled', False):
@@ -49,15 +47,36 @@ def clients(value, feature):
         return [{'network': radius['network'], 'addresses': list(dict.fromkeys(
             str(ip.ip_network(client['address'])) for client in radius.get('clients', {}).values()))}]
     if feature == 'discovery':
-        return [{'network': key, 'addresses': [
-            str(ip.ip_interface(address).network) for address in network['addresses']] +
-            network.get('additional_subnets', []) + routing.routed_sources(value, key)}
-            for key, network in value['networks'].items() if network.get('forwarding', True)]
+        return discovery.direct_clients(value)
     result = [{'network': key, 'addresses': [
         str(ip.ip_interface(a).network)
         for a in n['addresses'] + n.get('routed_prefixes', []) + n.get('additional_subnets', [])]}
         for key, n in value['networks'].items() if n.get(feature)]
     return result + routing.service_clients(value, feature)
+
+
+EGRESS_TRANSPORT = {'dns': (('tcp', 'udp'), 53), 'dns_tls': (('tcp',), 853),
+                    'ntp': (('udp',), 123), 'ntp_dns': (('tcp', 'udp'), 53),
+                    'radius_proxy': (('udp',), 1812), 'logs': (('tcp',), 443)}
+
+
+def dns_egress_kind(value):
+    return 'dns_tls' if value['services']['dns'].get('tls_forwarding') else 'dns'
+
+
+def wan_destinations(value, kind, family):
+    """Return the WAN dependency of one service in one address family."""
+    if value['uplink'].get(f'ipv{family}') == 'disabled':
+        return []
+    dns = value['services']['dns']
+    if kind == 'dns_tls':
+        upstreams = [peer['address'] for peer in dns['tls_forwarding']['upstreams']]
+    elif kind == 'ntp_dns' or kind == 'dns' and dns.get('upstreams'):
+        upstreams = dns.get('upstreams', ['9.9.9.9', '2620:fe::fe'])
+    else:
+        return ['0.0.0.0/0' if family == 4 else '::/0']
+    return sorted({str(ip.ip_network(resolver)) for resolver in upstreams
+                   if intent.address(resolver).version == family})
 
 
 def egress(value):
@@ -68,25 +87,18 @@ def egress(value):
     """
     plane = topology(value)
     result = []
-    for kind in ('dns', 'ntp', 'ntp_dns'):
-        component = 'ntp' if kind == 'ntp_dns' else kind
+    for kind, component in ((dns_egress_kind(value), 'dns'), ('ntp', 'ntp'), ('ntp_dns', 'ntp')):
         if component not in plane['endpoints'] or kind == 'ntp_dns' and 'dns' in plane['endpoints']:
             continue
         for address in plane['endpoints'][component]:
             family = 'ipv6' if ':' in address else 'ipv4'
             upstream = value['uplink'].get(family, 'ra' if family == 'ipv6' else 'dhcp')
-            if upstream == 'disabled':
+            destinations = wan_destinations(value, kind, ip.ip_address(address).version)
+            if not destinations:
                 continue
-            destinations = ['::/0' if family == 'ipv6' else '0.0.0.0/0']
-            if kind == 'ntp_dns':
-                destinations = [str(ip.ip_network(resolver)) for resolver in
-                    value['services']['dns'].get('upstreams', ['9.9.9.9', '2620:fe::fe'])
-                    if (':' in resolver) == (family == 'ipv6')]
-                if not destinations:
-                    continue
             masquerade = family == 'ipv4' or not value['uplink'].get('downstream_prefix')
             entry = {'kind': kind, 'interface': plane['host_link'], 'address': address,
-                     'destinations': sorted(set(destinations)), 'masquerade': masquerade}
+                     'destinations': destinations, 'masquerade': masquerade}
             if masquerade and upstream == 'static':
                 entry['translated_addresses'] = [str(ip.ip_interface(configured).ip)
                     for configured in value['uplink']['addresses']
@@ -150,6 +162,22 @@ def topology(value):
                      if value['uplink'].get('delivery') == 'on_link' else []}
 
 
+def host_resolver(plane):
+    # The primary service IPv4 prefix is directly connected on the host veth,
+    # even with an IPv6-only WAN. Linux selects this address for local queries.
+    return str(ip.ip_interface(plane['host_addresses'][0]).ip), plane['endpoints']['dns'][0]
+
+
+def host_dns_rules(plane, *, namespace):
+    if 'dns' not in plane['endpoints']:
+        return []
+    source, target = host_resolver(plane)
+    interface = ('iifname "'+plane['service_link']+'"' if namespace else
+                 'oifname "'+plane['host_link']+'"')
+    return [f'{interface} ip saddr {source} ip daddr {target} {protocol} dport 53 accept'
+            for protocol in ('udp', 'tcp')]
+
+
 def render(value):
     active = [name for name in ('dns', 'ntp') if value['services'][name]['enabled']]
     if not attached(value):
@@ -162,7 +190,7 @@ def render(value):
         'BindsTo=nftables.service\nBefore=unbound.service chrony.service discovery-bridge-dns.service\n'
         '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
         'ExecStart=/usr/bin/python3 /usr/lib/lanrith/lanrith/service_runtime.py start\n'
-        'ExecStop=/usr/bin/python3 /usr/lib/lanrith/lanrith/service_runtime.py stop\n'
+        'ExecStopPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/service_runtime.py stop\n'
         'TimeoutStartSec=30s\nTimeoutStopSec=30s\n')
     for feature, unit in (('dns', 'unbound.service'), ('ntp', 'chrony.service')):
         if feature not in active:
@@ -173,9 +201,15 @@ def render(value):
             '[Service]\nNetworkNamespacePath=/run/netns/'+NAMESPACE+'\n')
     if 'dns' in active:
         dns = value['services']['dns']
+        source, target = host_resolver(plane)
+        files['etc/resolv.conf'] = 'nameserver '+target+'\n'
+        files['etc/unbound/unbound.conf'] = (
+            'include-toplevel: "/etc/unbound/unbound.conf.d/*.conf"\n'
+            'remote-control:\n  control-enable: no\n')
         text = ('server:\n  ip-freebind: yes\n  interface: 127.0.0.1\n  interface: ::1\n'
                 '  access-control: 127.0.0.0/8 allow\n  access-control: ::1/128 allow\n'
                 '  access-control: 0.0.0.0/0 refuse\n  access-control: ::/0 refuse\n')
+        text += f'  access-control: {source}/32 allow\n'
         for endpoint in plane['endpoints']['dns']:
             text += '  interface: '+endpoint+'\n'
         for client in clients(value, 'dns'):
@@ -192,10 +226,27 @@ def render(value):
             text += '  outgoing-interface: '+chosen+'\n'
         if value['uplink'].get('ipv6', 'ra') == 'disabled':
             # Keep IPv6 LAN listeners while using IPv4 recursive transport.
-            text += '  do-not-query-address: ::/0\n'
+            blocked = [ip.ip_network('::/0')]
+            if value['uplink'].get('ipv4') == 'disabled':
+                # With no upstream family, retain only the configured local IPv6 dependencies.
+                local = {a for feature in ('authoritative', 'discovery')
+                         for a in plane['endpoints'].get(feature, []) if ':' in a}
+                if dns64.private_active(value):
+                    local.add('::1')
+                for address in sorted(local):
+                    host = ip.ip_network(address)
+                    blocked = [p for subnet in blocked for p in
+                               (subnet.address_exclude(host) if host.subnet_of(subnet) else [subnet])]
+            text += ''.join(f'  do-not-query-address: {subnet}\n' for subnet in blocked)
         if value['uplink'].get('ipv4', 'dhcp') == 'disabled':
             text += '  do-not-query-address: 0.0.0.0/0\n'
-        if dns.get('upstreams'):
+        if 'tls_forwarding' in dns:
+            text += ('  tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"\n'
+                     'forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-first: no\n')
+            for peer in dns['tls_forwarding']['upstreams']:
+                name = peer['authentication_name'].removesuffix('.')
+                text += f'  forward-addr: {peer["address"]}@853#{name}\n'
+        elif dns.get('upstreams'):
             text += 'forward-zone:\n  name: "."\n'
             for upstream in dns['upstreams']:
                 # Address literals avoid a bootstrap resolver dependency.
@@ -204,8 +255,18 @@ def render(value):
         text += stubs
         files['etc/unbound/unbound.conf.d/lanrith.conf'] = text
     if 'ntp' in active:
-        ntp = value['services']['ntp']
-        text = ''.join('pool '+server+' iburst\n' for server in ntp.get('upstreams', ['2.pool.ntp.org']))
+        text = ''
+        for source in intent.ntp_upstreams(value):
+            options = ['iburst']
+            if 'family' in source:
+                options.append(source['family'])
+            if 'maxsources' in source:
+                options.extend(['maxsources', str(source['maxsources'])])
+            text += ' '.join([source['type'], source['address'], *options])+'\n'
+        if 'ratelimit' in value['services']['ntp']:
+            limits = value['services']['ntp']['ratelimit']
+            text += 'ratelimit'+''.join(f' {key} {limits[key]}' for key in ('interval', 'burst', 'leak')
+                                        if key in limits)+'\n'
         text += 'driftfile /var/lib/chrony/chrony.drift\nrtcsync\nmakestep 1 3\ncmdport 0\n'
         for endpoint in plane['endpoints']['ntp'][:2]:
             text += 'bindaddress '+endpoint+'\n'
@@ -234,8 +295,15 @@ def render(value):
                 'BindReadOnlyPaths=/etc/lanrith/chrony-resolv.conf:/etc/resolv.conf\n')
     files.update(dns64.render(value))
     if dns64.private_active(value):
+        dependency = 'Requires'
+        if dns.get('private_dns64_startup') == 'independent':
+            dependency = 'Wants'
+            if authoritative.active(value):
+                # Retry the failed dependency job when the private authority is started again.
+                files['etc/systemd/system/named.service.d/61-lanrith-dns64.conf'] = (
+                    '[Unit]\nWants=lanrith-dns64-private.service\n')
         files['etc/systemd/system/unbound.service.d/61-lanrith-dns64.conf'] = (
-            '[Unit]\nRequires=lanrith-dns64-private.service\nAfter=lanrith-dns64-private.service\n')
+            f'[Unit]\n{dependency}=lanrith-dns64-private.service\nAfter=lanrith-dns64-private.service\n')
     files['etc/lanrith/services.nft'] = namespace_firewall(value, plane)
     return files
 
@@ -263,6 +331,7 @@ def namespace_firewall(value, plane, *, extension_rules=None):
                     if feature == 'radius':
                         lines.append(f'{spelling} saddr {values(sources)} {spelling} daddr {values(targets)} '
                                      f'{protocol} dport 1813 accept')
+    lines += host_dns_rules(plane, namespace=True)
     lines += metrics.client_rules(value, namespace=True)
     lines += namespace_rules(extension_rules)
     lines += ['}', 'chain forward { type filter hook forward priority filter; policy drop; }',
@@ -271,13 +340,20 @@ def namespace_firewall(value, plane, *, extension_rules=None):
               'jump socket_identity', 'ct state established,related accept',
               'ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept',
               'icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept']
-    for feature, uid, port in (('dns', 'unbound', 53), ('ntp', '_chrony', 123)):
+    for feature, uid, kind in (('dns', 'unbound', dns_egress_kind(value)), ('ntp', '_chrony', 'ntp')):
         if feature not in plane['endpoints']:
             continue
         for family, spelling in ((4, 'ip'), (6, 'ip6')):
             sources = [a for a in plane['endpoints'][feature] if ip.ip_address(a).version == family]
-            for protocol in ('tcp', 'udp') if feature == 'dns' else ('udp',):
-                lines.append(f'meta skuid "{uid}" {spelling} saddr {values(sources)} {protocol} dport {port} accept')
+            destinations = [ip.ip_network(target) for target in wan_destinations(value, kind, family)]
+            if not destinations:
+                continue
+            scope = (f'{spelling} daddr {values(target.network_address for target in destinations)} '
+                     if destinations[0].prefixlen else '')
+            protocols, port = EGRESS_TRANSPORT[kind]
+            for protocol in protocols:
+                lines.append(f'meta skuid "{uid}" {spelling} saddr {values(sources)} '
+                             f'{scope}{protocol} dport {port} accept')
     if 'ntp' in plane['endpoints'] and 'dns' not in plane['endpoints']:
         for resolver in value['services']['dns'].get('upstreams', ['9.9.9.9', '2620:fe::fe']):
             spelling = 'ip6' if ':' in resolver else 'ip'
@@ -356,9 +432,14 @@ def local_output(value, plane):
             for protocol in ('tcp', 'udp'):
                 lines.append(f'oifname "lo" meta skuid "unbound" {spelling} daddr {values(targets)} {protocol} dport 53 accept')
     if dns64.private_active(value):
+        reverse = dns64.reverse_stubs(value)
         for spelling, target in (('ip', '127.0.0.1'), ('ip6', '::1')):
             for protocol in ('tcp', 'udp'):
                 lines.append(f'oifname "lo" meta skuid "unbound" {spelling} daddr {target} {protocol} dport {dns64.PORT} accept')
+            if reverse:
+                lines += [f'oifname "lo" meta skuid "unbound" {spelling} daddr {target} tcp dport {dns64.REVERSE_PORT} accept',
+                          f'oifname "lo" meta skuid "unbound" {spelling} saddr {target} ct direction reply '
+                          f'ct state {{ established, related }} tcp sport {dns64.REVERSE_PORT} accept']
 
         # A private CNAME which leaves its authoritative zone returns to the
         # public resolver's managed endpoint, using the same unbound account.

@@ -61,22 +61,33 @@ class RuntimeDiagnosticTests(unittest.TestCase):
 
     def test_telemetry_binds_heartbeat_to_accepted_boot_and_signed_configuration(self):
         value = {'image_id': 'lanrith', 'platform_version': '0.2.0', 'deployment_sequence': 14,
-                 'configuration_sha256': 'a'*64, 'boot': {'schema': 1, 'accepted': True,
-                     'boot_complete': True, 'boot_id': '12345678-1234-1234-1234-123456789abc',
-                     'image_id': 'lanrith', 'platform_version': '0.2.0', 'deployment_sequence': 14,
-                     'selected_entry': 'lanrith_14.efi'}}
-        with patch.object(runtime, 'status', return_value=value), patch.object(runtime.time, 'monotonic_ns',
-                return_value=123456789):
-            self.assertEqual(runtime.telemetry(), {'schema': 1, 'event': 'lanrith-heartbeat',
-                'boot_id': value['boot']['boot_id'], 'selected_entry': 'lanrith_14.efi',
+                 'configuration_sha256': 'a'*64, 'uki_name': 'lanrith_14.efi'}
+        boot_id = '12345678-1234-1234-1234-123456789abc'
+        boot = {'schema': 1, 'accepted': True, 'boot_complete': True, 'boot_id': boot_id,
                 'image_id': 'lanrith', 'platform_version': '0.2.0', 'deployment_sequence': 14,
-                'configuration_sha256': 'a'*64, 'monotonic_ns': 123456789})
-        for change in ({'accepted': False}, {'boot_id': 'wrong'}, {'deployment_sequence': 13}):
-            invalid = json.loads(json.dumps(value))
-            invalid['boot'].update(change)
-            with self.subTest(change=change), patch.object(runtime, 'status', return_value=invalid), \
-                    self.assertRaises(Exception):
+                'selected_entry': 'lanrith_14.efi'}
+        with patch.object(runtime, 'protected_read', return_value=json.dumps(value)), \
+                patch.object(runtime, 'historical_boot', return_value=boot) as history, \
+                patch.object(runtime.time, 'monotonic_ns', return_value=123456789), \
+                patch.object(runtime.time, 'time_ns', return_value=1234567890123456789):
+            self.assertEqual(runtime.telemetry(), {'schema': 1, 'event': 'lanrith-heartbeat',
+                'boot_id': boot_id, 'selected_entry': 'lanrith_14.efi', 'image_id': 'lanrith',
+                'platform_version': '0.2.0', 'deployment_sequence': 14, 'configuration_sha256': 'a'*64,
+                'monotonic_ns': 123456789, 'emitted_unix_ns': 1234567890123456789})
+            history.assert_called_once_with(value)
+        for historical in (None, {**boot, 'accepted': False}):
+            with patch.object(runtime, 'protected_read', return_value=json.dumps(value)), \
+                    patch.object(runtime, 'historical_boot', return_value=historical), \
+                    self.assertRaisesRegex(ReleaseError, 'Accepted boot'):
                 runtime.telemetry()
+
+    def test_completion_requeues_a_failed_target_and_avoids_restarting_a_healthy_gate(self):
+        state = ['systemctl', 'show', '-P', 'ActiveState', 'boot-complete.target']
+        start = ['systemctl', 'start', 'boot-complete.target']
+        for active, expected in (('active', [state]), ('inactive', [state, start]), ('failed', [state, start])):
+            with self.subTest(state=active), patch.object(runtime, 'command', return_value=active) as command:
+                runtime.complete_target()
+                self.assertEqual([call.args[0] for call in command.call_args_list], expected)
 
     def test_blessing_opens_esp_only_for_an_unblessed_counted_entry(self):
         with tempfile.TemporaryDirectory() as temporary:

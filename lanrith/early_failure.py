@@ -9,7 +9,7 @@ import re
 import stat
 import tempfile
 
-from .release import read, require
+from .release import ReleaseError, read, require
 from .update import command
 
 # Legacy migration paths require separate qualification. Fresh-install
@@ -20,12 +20,64 @@ ROLLBACK_COMPATIBILITY_QUALIFIED = False
 ROOT_ABSENT_FALLBACK_QUALIFIED = False
 
 
+EFI_VARIABLES = Path('/sys/firmware/efi/efivars')
+LOADER_VENDOR = '-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f'
+
+
+class FallbackUnavailable(ReleaseError):
+    """A fixed operator-facing reason for withholding fallback."""
+
+
+def require_fallback_policy(installed):
+    if 'fallback_binding' not in installed:
+        raise FallbackUnavailable('This image has no bound previous release.')
+    if 'steady_state' not in installed and not (
+            FALLBACK_AUTHENTICATION_QUALIFIED and ROLLBACK_COMPATIBILITY_QUALIFIED):
+        raise FallbackUnavailable('The signed recovery policy is unqualified for fallback.')
+
+
+def loader_entry(name):
+    data = read(EFI_VARIABLES/(name+LOADER_VENDOR), 4096)
+    require(len(data) >= 8 and (len(data)-4) % 2 == 0, 'Malformed boot selection observation.')
+    value = data[4:].decode('utf-16-le')
+    require(value.endswith('\0') and '\0' not in value[:-1], 'Malformed boot selection observation.')
+    return value[:-1]
+
+
+def boot_selection(*, oneshot=None):
+    """Only the persistent default or the exact confirmed override is eligible."""
+    selected, default = loader_entry('LoaderEntrySelected'), loader_entry('LoaderEntryDefault')
+    if oneshot is not None:
+        require(loader_entry('LoaderEntryOneShot') == oneshot, 'The confirmed one-shot selection changed.')
+        return selected, default
+    try:
+        (EFI_VARIABLES/('LoaderEntryOneShot'+LOADER_VENDOR)).lstat()
+    except FileNotFoundError:
+        return selected, default
+    raise FallbackUnavailable('A one-shot boot choice is already pending.')
+
+
+def accepted_predecessor(installed, *, oneshot=None):
+    selected, default = boot_selection(oneshot=oneshot)
+    stable = re.sub(r'\+[0-9]+(?:-[0-9]+)?(?=\.efi$)', '', selected)
+    if stable != installed['uki_name']:
+        raise FallbackUnavailable('The running boot entry differs from the signed image.')
+    if default == stable:
+        raise FallbackUnavailable('The current image is already the persistent default.')
+    if default != installed['fallback_binding']['release']['uki_name']:
+        raise FallbackUnavailable('The bound previous release is not the persistent default.')
+    return selected, default
+
+
 def failure_identity(value):
     """Validate the minimal identity embedded in the signed failure initrd."""
     fields = {'image_id', 'deployment_sequence', 'uki_name'}
-    require(isinstance(value, dict) and fields <= set(value) and
-            set(value) <= fields | {'tpm_transition', 'fallback_binding', 'rollback_state', 'steady_state'},
+    optional = {'tpm_transition', 'fallback_binding', 'rollback_state', 'steady_state', 'fallback_timeout_seconds'}
+    require(isinstance(value, dict) and fields <= set(value) <= fields | optional,
             'Invalid initrd failure identity.')
+    if 'fallback_timeout_seconds' in value:
+        require(type(value['fallback_timeout_seconds']) is int and 1 <= value['fallback_timeout_seconds'] <= 86400,
+                'Invalid automatic fallback timeout.')
     image = value['image_id']
     sequence = value['deployment_sequence']
     require(isinstance(image, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,47}', image) and
@@ -253,24 +305,14 @@ def observe_failed_boot(installed):
             'Initrd failure handling is unavailable in normal userspace.')
     failure_identity(installed)
     require('fallback_binding' in installed, 'Failed boot has no authenticated fallback binding.')
-    root = Path('/sys/firmware/efi/efivars')
-    vendor = '-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f'
-    def entry(name):
-        data = read(root/(name+vendor), 4096)
-        require(len(data) >= 6 and (len(data)-4) % 2 == 0, 'Malformed boot selection observation.')
-        return data[4:].decode('utf-16-le').rstrip('\0')
-    selected, default = entry('LoaderEntrySelected'), entry('LoaderEntryDefault')
-    stable = re.sub(r'\+[0-9]+(?:-[0-9]+)?(?=\.efi$)', '', selected)
-    require(stable == installed['uki_name'] and default != stable and
-            default == installed['fallback_binding']['release']['uki_name'],
-            'Failed boot has no distinct accepted default.')
+    selected, default = accepted_predecessor(installed)
     bound = installed.get('tpm_transition', {}).get('fallback')
     require(bound is None or default == bound['uki_name'], 'Failed migration default differs from its bound bridge.')
     observation = inspect_bound_fallback(installed)
     require(isinstance(observation, dict) and observation.get('authorized_to_boot') is False and
             observation.get('sequence') == installed['fallback_binding']['release']['sequence'],
             'Failed boot fallback observation differs from its binding.')
-    require((entry('LoaderEntrySelected'), entry('LoaderEntryDefault')) == (selected, default),
+    require(boot_selection() == (selected, default),
             'Boot selection changed during fallback observation.')
     return {'schema': 1, 'scope': 'failed-boot-observation',
             'sequence': observation['sequence'], 'authorized_to_boot': False}
@@ -339,10 +381,7 @@ def failed_boot(installed):
     """A qualified failed candidate returns to the bound accepted default."""
     require(os.geteuid() == 0 and Path('/etc/initrd-release').is_file(),
             'Initrd failure handling is unavailable in normal userspace.')
-    require(FALLBACK_AUTHENTICATION_QUALIFIED or 'steady_state' in installed,
-            'Automatic fallback is blocked pending authenticated fallback qualification.')
-    require(ROLLBACK_COMPATIBILITY_QUALIFIED or 'steady_state' in installed,
-            'Automatic fallback is blocked pending state and TPM rollback qualification.')
+    require_fallback_policy(installed)
     observe_failed_boot(installed)
     observation = observe_rollback_compatibility(installed)
     require(isinstance(observation, dict) and observation.get('authorized_to_boot') is False,

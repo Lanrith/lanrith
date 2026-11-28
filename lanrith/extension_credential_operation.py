@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from . import credential_operation as core, credential_store, image_operation
+from . import credential_operation as core, credential_store, image_operation, runtime
 from . import extension_credential_values as values
 from .policy_runtime import read
 from .release import canonical, require, unique
@@ -54,15 +54,8 @@ def ready_unit(extension):
 def core_accepted(value):
     """A prior boot's persisted acceptance alone cannot enable optional setup."""
     try:
-        if image_operation.accepted_identity(value) != image_operation.identity(value):
-            return False
-        observation = json.loads(read(Path('/run/lanrith/boot.json'), 4096), object_pairs_hook=unique)
-        return isinstance(observation, dict) and type(observation.get('schema')) is int and \
-            observation['schema'] == 1 and observation.get('accepted') is True and \
-            observation.get('boot_complete') is True and observation.get('image_id') == value['image_id'] and \
-            type(observation.get('deployment_sequence')) is int and \
-            observation['deployment_sequence'] == value['deployment_sequence'] and \
-            observation.get('boot_id') == Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        runtime.require_accepted_boot(value)
+        return True
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return False
 
@@ -157,11 +150,11 @@ def serve(connection, extension):
 
 
 def ready(value, extension, *, committed=True):
+    if not eligible(value, extension):
+        return False
     if value.get('credential_delivery') == 'image':
         return core.image_ready(catalog(value, extension), extension=extension)
     store = store_for(value, extension)
-    if not eligible(value, extension):
-        return False
     with store.lock():
         return store.admitted() or not committed and store.prepared()
 

@@ -34,7 +34,7 @@ def command(*args):
 
 def query(name, arguments):
     mode = stat.S_IMODE(Path('/run/kea/kea4-ctrl-socket').stat().st_mode)
-    assert mode == 0o660, f'Kea administrative socket has incompatible mode {mode:04o}.'
+    assert mode == 0o600, f'Kea administrative socket has incompatible mode {mode:04o}.'
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
         stream.settimeout(2)
         stream.connect('/run/kea/kea4-ctrl-socket')
@@ -54,68 +54,26 @@ def query(name, arguments):
     return value['arguments']['leases']
 
 
-def collector_access():
-    """Exercise the base collector and private observer's capability-empty role."""
-    account = pwd.getpwnam('_kea')
-    program = '''
-import json,os,pathlib,socket,struct,sys
-assert os.getuid()==os.geteuid()==0
-status=dict(line.split(':',1) for line in pathlib.Path('/proc/self/status').read_text().splitlines())
-assert int(status['CapEff'],16)==int(status['CapBnd'],16)==0 and status['NoNewPrivs'].strip()=='1'
-with socket.socket(socket.AF_UNIX) as connection:
- connection.settimeout(2)
- try: connection.connect('/run/kea/kea4-ctrl-socket')
- except PermissionError: sys.exit(10)
- _,uid,_=struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
- assert uid==int(sys.argv[1])
- connection.sendall(b'{"command":"lease4-get-page","arguments":{"from":"0.0.0.0","limit":128}}')
- connection.shutdown(socket.SHUT_WR)
- raw=bytearray()
- while True:
-  block=connection.recv(4096)
-  if not block: break
-  raw.extend(block);assert len(raw)<=65536
- value=json.loads(raw);assert value['result']==0 and len(value['arguments']['leases'])==1
-'''
-    for groups, expected in ((str(account.pw_gid), 0), ('', 10)):
-        result = subprocess.run(['setpriv', '--reuid=0', '--regid=0',
-            *(['--groups='+groups] if groups else ['--clear-groups']), '--bounding-set=-all',
-            '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs',
-            sys.executable, '-c', program, str(account.pw_uid)], capture_output=True, timeout=5)
-        assert result.returncode == expected, (
-            'Declared capability-empty collector access differs: '+str(result.returncode)+' expected '+str(expected))
-
-
-def generated_collector_access(unit):
-    """Check the generated RADIUS collector's distinct existing DAC envelope.
-
-    The generated unit replaces the base unit and retains DAC access for its
-    journal/host evidence. A capability-empty observer test does not qualify
-    that different service. This check covers its socket access only.
-    """
-    lines = unit.splitlines()
-    for field in ('User=root', 'Group=root', 'NoNewPrivileges=yes',
-                  'CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH'):
-        assert lines.count(field) == 1
-    assert not any(line.startswith('SupplementaryGroups=') for line in lines)
-    program = '''
-import json,os,pathlib,socket
-assert os.getuid()==os.geteuid()==0 and os.getgid()==os.getegid()==0 and os.getgroups()==[]
-status=dict(line.split(':',1) for line in pathlib.Path('/proc/self/status').read_text().splitlines())
-assert int(status['CapEff'],16)==int(status['CapBnd'],16)==6 and status['NoNewPrivs'].strip()=='1'
-with socket.socket(socket.AF_UNIX) as connection:
- connection.settimeout(2);connection.connect('/run/kea/kea4-ctrl-socket')
- connection.sendall(b'{"command":"lease4-get-page","arguments":{"from":"0.0.0.0","limit":128}}')
- connection.shutdown(socket.SHUT_WR);raw=bytearray()
- while True:
-  block=connection.recv(4096)
-  if not block: break
-  raw.extend(block);assert len(raw)<=65536
- value=json.loads(raw);assert value['result']==0 and len(value['arguments']['leases'])==1
-'''
-    command('setpriv', '--reuid=0', '--regid=0', '--clear-groups',
-            '--bounding-set=-all,+dac_override,+dac_read_search',
-            '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs', sys.executable, '-c', program)
+def reader_access(group_id, uid=65534):
+    """A reader's only Kea access is through the lease facade."""
+    program = """
+import json,socket,sys
+with socket.socket(socket.AF_UNIX) as client:
+ try: client.connect('/run/kea/kea4-ctrl-socket')
+ except PermissionError: pass
+ else: raise AssertionError('Reader reached administrative IPC')
+with socket.socket(socket.AF_UNIX) as client:
+ client.settimeout(2)
+ client.connect('/run/lanrith-kea-leases/leases.sock')
+ client.sendall(b'{"command":"lease4-get-by-hw-address","arguments":{"hw-address":"02:00:00:00:22:79"}}')
+ with client.makefile('rb') as stream: response=json.load(stream)
+ assert response['result']==0 and len(response['arguments']['leases'])==1
+ row,=response['arguments']['leases']
+ assert set(row)=={'ip-address','hw-address','subnet-id','state','cltt','valid-lft'}
+ assert row['ip-address']=='192.168.22.120' and row['subnet-id']==79
+"""
+    command('setpriv', '--reuid='+str(uid), '--regid='+str(uid), '--groups='+str(group_id),
+            '--bounding-set=-all', '--no-new-privs', sys.executable, '-c', program)
 
 
 def qualify(output):
@@ -134,13 +92,16 @@ def qualify(output):
     value['networks']['devices']['dhcp4']['id'] = 79
     value = config.normalize(value)
     files = config.render(value)
-    generated_unit = files['usr/lib/systemd/system/lanrith-policy-bindings.service']
     raw = files['etc/kea/kea-dhcp4.conf'].encode()
     post = files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf']
     assert 'ExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n' in post
-    collector_unit = ROOT/'mkosi/base/mkosi.extra/usr/lib/systemd/system/lanrith-policy-bindings.service'
-    assert all(line in collector_unit.read_text().splitlines() for line in
-               ('User=root', 'Group=root', 'SupplementaryGroups=_kea', 'CapabilityBoundingSet=', 'NoNewPrivileges=yes'))
+    group_id = 2300  # private fixture group
+    observer = Path('/run/lanrith-kea-observer.py')
+    observer.write_bytes((ROOT/'lanrith/kea_observer.py').read_bytes())
+    observer.chmod(0o644)
+    reader = Path('/run/lanrith-kea-leases')
+    reader.mkdir(mode=0o750)
+    os.chown(reader, account.pw_uid, group_id)
     # Hosted checkouts can have non-traversable home directories. Stage the
     # exact runtime bytes on this private /run mount; do not change checkout or
     # home permissions to let the service identity read build-time sources.
@@ -212,12 +173,20 @@ def qualify(output):
                         '--inh-caps=-all,+net_bind_service,+net_raw',
                         '--ambient-caps=-all,+net_bind_service,+net_raw', '--no-new-privs',
                         sys.executable, str(helper), str(process.pid))
-                    collector_access()
-                    generated_collector_access(generated_unit)
-                    if not iteration:
-                        checks.extend(['capability-empty root collector with declared _kea group can read',
-                                       'capability-empty root without _kea group denied',
-                                       'generated RADIUS collector retains its declared DAC socket access'])
+                    with subprocess.Popen(['setpriv', '--reuid='+str(account.pw_uid), '--regid='+str(group_id),
+                            '--clear-groups', '--bounding-set=-all', '--no-new-privs', sys.executable,
+                            str(observer), 'leases', '79', '192.168.22.0/24'], umask=0o077) as broker:
+                        try:
+                            deadline = time.monotonic()+3
+                            while not (reader/'leases.sock').is_socket():
+                                assert time.monotonic() < deadline and broker.poll() is None
+                                time.sleep(0.02)
+                            reader_access(group_id)
+                        finally:
+                            broker.terminate()
+                            broker.wait(timeout=3)
+                            (reader/'leases.sock').unlink(missing_ok=True)
+                    checks.append('capability-empty nonroot reader can query only scoped lease IPC')
                     for name, arguments in query_types:
                         leases = query(name, arguments)
                         assert len(leases) == 1 and leases[0]['ip-address'] == lease['address']
@@ -258,13 +227,8 @@ def qualify(output):
             'native_configuration_modified': False, 'service_uid': account.pw_uid,
             'effective_and_bounding_capabilities': ['CAP_NET_BIND_SERVICE', 'CAP_NET_RAW'],
             'no_new_privileges': True, 'full_systemd_sandbox_qualified': False,
-            'socket_mode': '0660', 'generated_post_start_operation': True,
-            'collector_dac_capabilities': [], 'collector_supplementary_group': '_kea',
-            'generated_collector_socket_access': {
-                'capabilities': ['CAP_DAC_OVERRIDE', 'CAP_DAC_READ_SEARCH'],
-                'supplementary_groups': [],
-                'unit_sha256': hashlib.sha256(generated_unit.encode()).hexdigest(),
-                'complete_binding_producer_qualified': False},
+            'socket_mode': '0600', 'generated_post_start_operation': True,
+            'collector_direct_socket_access': False,
             'source_sha256': {name: hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in
                 ('lanrith/config.py', 'lanrith/build.py', 'lanrith/kea_runtime.py', 'tests/kea_control_native.py',
                  'lanrith/policy_agent.py', 'tests/test_radius.py', 'tests/native.py',

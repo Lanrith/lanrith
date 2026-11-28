@@ -205,17 +205,7 @@ def render(value, retained=None):
         # until an explicit migration has authenticated and transferred it.
         tmpfiles = f'd {parent} - - - -\n' if name == 'nat64-internal' else ''
         files['usr/lib/tmpfiles.d/80-lanrith-'+name+'.conf'] = tmpfiles+f'd {state} - - - -\n'
-        files['usr/lib/systemd/system/lanrith-'+name+'-network.service'] = (
-            '[Unit]\nDescription=Configure IPv6 translation routes\n'
-            'Requires=nftables.service systemd-networkd.service\n'
-            'After=nftables.service systemd-networkd.service systemd-sysusers.service systemd-tmpfiles-setup.service\n'
-            f'BindsTo=nftables.service\nBefore=lanrith-{name}.service\n'
-            '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
-            'Environment=PYTHONPATH=/usr/lib/lanrith\n'
-            f'ExecStart=/usr/bin/python3 -m lanrith.translation_runtime start {name}\n'
-            f'ExecStop=/usr/bin/python3 -m lanrith.translation_runtime stop {name}\n'
-            'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
-            'CapabilityBoundingSet=CAP_NET_ADMIN\nRestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6\n')
+        files['usr/lib/systemd/system/lanrith-'+name+'-network.service'] = translation.network_unit(name)
         files['usr/lib/systemd/system/lanrith-'+name+'.service'] = (
             '[Unit]\nDescription=Retained IPv6 translation and tuple identities\n'
             f'Requires=lanrith-{name}-network.service nftables.service{policy_dependency}\n'

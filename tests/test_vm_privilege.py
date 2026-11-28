@@ -15,14 +15,20 @@ from vm import (FIREWALL_LISTENERS, INACTIVE_OPTIONAL_UNITS, PrivilegeBoundaryEr
                 check_process_capabilities, firewall_failure, unprivileged_control_boundary)
 
 
+# These required template units do not expose a network listener.
+CORE_INFRASTRUCTURE = {'nftables.service', 'systemd-networkd.service', 'lanrith-services.service',
+                       'systemd-journal-flush.service'}
+
+
 class PrivilegeBoundaryTests(unittest.TestCase):
     def test_required_core_services_are_not_misclassified_as_inactive_optional_units(self):
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        self.assertNotIn('chrony.service', runtime_plan.required_units(value))
+        value['services']['ntp'] = {'enabled': True, 'upstreams': ['192.0.2.123']}
         required = set(runtime_plan.required_units(value))
         self.assertIn('chrony.service', required)
         self.assertFalse(required & set(INACTIVE_OPTIONAL_UNITS))
-        infrastructure = {'nftables.service', 'systemd-networkd.service', 'lanrith-services.service'}
-        self.assertEqual(set(FIREWALL_LISTENERS), required-infrastructure)
+        self.assertEqual(set(FIREWALL_LISTENERS), required-CORE_INFRASTRUCTURE)
         self.assertIn('chronyd-restricted.service', INACTIVE_OPTIONAL_UNITS)
         self.assertIn('chrony-wait.service', INACTIVE_OPTIONAL_UNITS)
 
@@ -104,8 +110,9 @@ class PrivilegeBoundaryTests(unittest.TestCase):
                          any(isinstance(name, ast.Name) and name.id == 'listeners'
                              for name in node.targets))
         value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
-        infrastructure = {'nftables.service', 'systemd-networkd.service', 'lanrith-services.service'}
-        self.assertEqual(set(listeners), set(runtime_plan.required_units(value))-infrastructure)
+        required = set(runtime_plan.required_units(value))-CORE_INFRASTRUCTURE
+        self.assertEqual(set(listeners), required | {'chrony.service'})
+        self.assertIn("listeners = [unit for unit in listeners if unit in required_units]", program)
         guest.ready.assert_called_once_with()
 
 

@@ -1,10 +1,15 @@
 """Check mandatory defaults independently of an owner's ordinary access list."""
 
 import copy
+import json
+import ipaddress
+import subprocess
+import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
-from lanrith import config
+from lanrith import config, firewall, firewall_activation, service_plane
 from lanrith.release import ReleaseError
 
 
@@ -88,6 +93,7 @@ class FirewallDefaultsTests(unittest.TestCase):
         self.assertNotIn('ip daddr { 172.20.20.1 } udp dport 53 accept', text)
 
     def test_service_egress_is_selected_and_account_scoped(self):
+        self.value['services']['ntp'] = {'enabled': True, 'upstreams': ['192.0.2.123']}
         files = config.render(self.value)
         text = files['etc/lanrith/services.nft']
         self.assertIn('meta skuid "unbound" ip saddr', text)
@@ -97,13 +103,127 @@ class FirewallDefaultsTests(unittest.TestCase):
         self.value['services']['ntp'] = {'enabled': False}
         self.assertNotIn('meta skuid "_chrony"', config.render(self.value)['etc/lanrith/services.nft'])
 
+    def test_public_resolver_and_both_filters_agree_on_wan_destinations(self):
+        for upstreams, disabled_v4 in (([], False), (['2001:db8::53', '2001:db8::54'], False),
+                                        (['192.0.2.53', '2001:db8::53'], False),
+                                        (['192.0.2.53', '2001:db8::53'], True)):
+            with self.subTest(upstreams=upstreams, disabled_v4=disabled_v4):
+                self.value['uplink']['ipv4'] = 'disabled' if disabled_v4 else 'dhcp'
+                self.value['services']['dns']['upstreams'] = upstreams
+                rendered = config.render(self.value)
+                dns = rendered['etc/unbound/unbound.conf.d/lanrith.conf']
+                self.assertEqual([line.split()[-1] for line in dns.splitlines() if 'forward-addr:' in line], upstreams)
+                host = [line for line in rendered['etc/nftables.conf'].splitlines()
+                        if 'iifname "lr-services" oifname "wan"' in line and 'dport 53' in line]
+                namespace = [line for line in rendered['etc/lanrith/services.nft'].splitlines()
+                             if line.startswith('meta skuid "unbound"') and 'dport 53' in line]
+                model = [path for path in service_plane.egress(config.normalize(self.value)) if path['kind'] == 'dns']
+                for family, spelling in ((4, 'ip'), (6, 'ip6')):
+                    expected = {address for address in upstreams if (':' in address) == (family == 6)}
+                    active = (bool(expected) or not upstreams) and (family == 6 or not disabled_v4)
+                    entries = [path for path in model if (':' in path['address']) == (family == 6)]
+                    targets = {target for entry in entries for target in entry['destinations']}
+                    self.assertEqual(targets, ({str(ipaddress.ip_network(addr)) for addr in expected} or
+                                     {'::/0' if family == 6 else '0.0.0.0/0'}) if active else set())
+                    for protocol in ('tcp', 'udp'):
+                        for rules in (host, namespace):
+                            selected = [line for line in rules if spelling+' saddr' in line
+                                        and protocol+' dport 53 accept' in line]
+                            self.assertEqual(bool(selected), active)
+                            destinations = set()
+                            for line in selected:
+                                if ' daddr ' in line:
+                                    scope = line.split(' daddr ', 1)[1].split(protocol+' dport')[0]
+                                    destinations.update(scope.strip('{} ').split(', '))
+                                else:
+                                    self.assertFalse(expected)
+                            self.assertEqual(destinations, expected if active else set())
+
+    def test_dns_over_tls_scopes_both_wan_filters_to_exact_tcp_endpoints(self):
+        value = config.normalize(self.value)
+        peer = '2001:db8:1::53'
+        value['services']['dns']['tls_forwarding'] = {
+            'trust': 'system', 'upstreams': [{'address': peer, 'authentication_name': 'dns.example.test'}]}
+        plane = service_plane.topology(value)
+        host = [line.strip() for line in firewall.core_forward(value, plane)
+                if 'iifname "lr-services" oifname "wan"' in line and 'dport 123' not in line]
+        namespace = [line for line in service_plane.namespace_firewall(value, plane).splitlines()
+                     if line.startswith('meta skuid "unbound"') and ' dport ' in line]
+        self.assertEqual(host, [f'iifname "lr-services" oifname "wan" ip6 saddr {{ {plane["endpoints"]["dns"][1]} }} '
+                                f'ip6 daddr {peer} tcp dport 853 accept'])
+        self.assertEqual(namespace, [f'meta skuid "unbound" ip6 saddr {{ {plane["endpoints"]["dns"][1]} }} '
+                                     f'ip6 daddr {{ {peer} }} tcp dport 853 accept'])
+        self.assertEqual([p['kind'] for p in service_plane.egress(value) if p['kind'].startswith('dns')], ['dns_tls'])
+
+    def test_recovery_floor_allows_only_explicitly_administered_management(self):
+        self.value['hardware']['interfaces']['rescue'] = {'name': 'rescue0', 'match': {'mac': '02:00:00:00:01:03'}}
+        self.value['networks']['rescue'] = {'interface': 'rescue', 'role': 'management', 'addresses': ['192.0.2.1/28']}
+        def policies():
+            files = config.render(self.value)
+            return files, files[firewall_activation.FLOOR.lstrip('/')]
+        files, floor = policies()
+        self.assertEqual(floor.count('policy drop;'), 3)
+        self.assertNotIn('tcp ', floor)
+        self.value['administration']['networks'].append('rescue')
+        self.value['administration']['ssh_port'] = 2222
+        self.value['networks']['rescue']['additional_subnets'] = ['192.0.2.64/28']
+        files, floor = policies()
+        self.assertIn('iifname "rescue0" ip saddr 192.0.2.0/28 ip daddr 192.0.2.1 tcp dport 2222', floor)
+        self.assertIn('ct direction reply ct state established accept', floor)
+        self.assertNotIn('lan.10', floor)
+        self.assertNotIn('192.0.2.64/28', floor)
+        self.assertNotIn('flush ruleset', floor)
+        for unit in ('ssh.service.d/10-lanrith-firewall.conf', 'systemd-networkd.service.d/60-lanrith-firewall-floor.conf'):
+            prerequisite = files['etc/systemd/system/'+unit]
+            self.assertIn('Requires=lanrith-firewall-floor.service', prerequisite)
+            self.assertIn('After=lanrith-firewall-floor.service', prerequisite)
+        start = files['etc/systemd/system/nftables.service.d/60-lanrith-activation.conf']
+        self.assertIn('ExecReload=\nExecStop=\nExecStopPost=/usr/sbin/nft -f '+firewall_activation.FLOOR, start)
+        self.assertIn('RuntimeDirectoryPreserve=yes', start)
+        self.assertNotIn('ip_forward', files[firewall_activation.HARDENING.lstrip('/')])
+        simple = config.render(config.load(ROOT/'examples/simple.yaml'))
+        self.assertEqual(simple[firewall_activation.FORWARDING.lstrip('/')],
+                         'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=0\n')
+
+    def test_activation_finishes_behind_floor_and_restart_retains_kernel_objects(self):
+        nft = firewall_activation.NFT
+        hooks = [{'chain': {'family': 'inet', 'table': 'lanrith', 'type': 'filter', 'hook': hook,
+                            'name': hook, 'policy': 'drop'}} for hook in ('input', 'forward', 'output')]
+        table = {'table': {'family': 'inet', 'name': 'lanrith'}}
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(subprocess, 'run') as run:
+            stamp = Path(root)/'installed'
+            run.side_effect = subprocess.CalledProcessError(1, 'nft')
+            with self.assertRaises(subprocess.CalledProcessError):
+                firewall_activation.activate(stamp)
+            self.assertFalse(stamp.exists())
+            run.reset_mock(side_effect=True)
+            run.return_value.stdout = json.dumps({'nftables': [table, *hooks[:2]]}).encode()
+            with self.assertRaises(RuntimeError):
+                firewall_activation.activate(stamp)
+            self.assertFalse(stamp.exists())
+            self.assertEqual(run.call_count, 2)
+            run.reset_mock()
+            run.return_value.stdout = json.dumps({'nftables': [table, *hooks]}).encode()
+            firewall_activation.activate(stamp)
+            self.assertTrue(stamp.exists())
+            self.assertEqual(run.call_args_list[0].kwargs['input'].decode().splitlines(), [
+                'include "/etc/nftables.conf"', f'include "{firewall_activation.FLOOR}"'])
+            actions = [call.args[0] for call in run.call_args_list]
+            self.assertEqual(actions[1:], [[nft, '-j', '-t', 'list', 'table', 'inet', 'lanrith'],
+                ['/usr/lib/systemd/systemd-sysctl', '--strict', firewall_activation.FORWARDING, firewall_activation.HARDENING],
+                [nft, 'delete', 'table', 'inet', 'lanrith_recovery']])
+            run.reset_mock()
+            firewall_activation.activate(stamp)
+            self.assertEqual([call.args[0] for call in run.call_args_list], actions[1:])
+
     def test_selected_masquerading_includes_routed_sources_without_granting_access(self):
         self.value['networks']['home']['routed_prefixes'] = ['10.30.0.0/16']
         self.value['access'] = {'rules': []}
         text = self.firewall()
         self.assertIn('ip saddr 10.30.0.0/16 oifname "wan" masquerade', text)
         forward = text[text.index('chain forward'):text.index('chain output')]
-        self.assertNotIn('iifname "lan.10" oifname "wan"', forward)
+        self.assertFalse(any('iifname "lan.10" oifname "wan"' in rule and not rule.endswith(' drop')
+                             for rule in forward.splitlines()))
         self.value['networks']['home']['forwarding'] = False
         self.assertNotIn('ip saddr 10.30.0.0/16 oifname "wan" masquerade', self.firewall())
 

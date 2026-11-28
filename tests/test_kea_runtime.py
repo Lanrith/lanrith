@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stderr
 import io
+import json
 import os
 from pathlib import Path
 import socket
@@ -12,10 +13,19 @@ import unittest
 from unittest.mock import patch
 import time
 
-from lanrith import kea_runtime
+from lanrith import kea_listeners, kea_runtime
 
 
 class KeaStartupTests(unittest.TestCase):
+    def test_interface_check_handles_iproute2_empty_rows_for_filtered_links(self):
+        scope = {'lan': ('192.0.2.1', 24)}
+        lan = {'ifname': 'lan', 'ifindex': 8, 'flags': ['UP', 'LOWER_UP'],
+               'addr_info': [{'local': '192.0.2.1', 'prefixlen': 24}]}
+        for rows, result in (([{}, lan], {8}), ([{}, {}], None)):
+            with self.subTest(rows=rows), patch.object(kea_listeners.subprocess, 'check_output',
+                                                      return_value=json.dumps(rows).encode()):
+                self.assertEqual(kea_listeners.interfaces(scope), result)
+
     def test_cli_has_no_path_override_and_wrong_actor_cannot_prepare_ipc(self):
         for arguments in ([], ['--path', '/other'], ['0'], ['-1'], ['2', '3'], ['not-a-pid']):
             self.assertEqual(kea_runtime.main(arguments), 64)
@@ -69,7 +79,7 @@ class KeaStartupTests(unittest.TestCase):
                 server.listen()
                 server.settimeout(1)
                 kea_runtime.constrain(path, 0, os.getpid(), time.monotonic()+2)
-                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o660)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
                 connection, _ = server.accept()
                 with connection:
                     connection.settimeout(1)

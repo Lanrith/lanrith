@@ -37,6 +37,23 @@ class DebianPolicyTests(unittest.TestCase):
                 self.evaluate(status, urgency)
 
 
+class SensorBackportTests(unittest.TestCase):
+    def test_full_backport_revision_is_checked_and_missing_sid_is_rejected(self):
+        version = '1:8.0.8-1~bpo13+2'
+        record = dict(package='suricata', version=version, source='suricata', source_version=version,
+                      provenance='debian-metadata')
+        row = {'status': 'resolved', 'fixed_version': '1:8.0.7-1'}
+        tracker = {'suricata': {'CVE-example': {'releases': {'sid': row}}}}
+        self.assertEqual(gate.sensor_backport_assessment([record], tracker), ([], 1))
+        row['fixed_version'] = '1:8.0.8-1'
+        self.assertEqual(len(gate.sensor_backport_assessment([record], tracker)[0]), 1)
+        for missing in [{}, {'suricata': {}}, {'suricata': {'CVE-example': {'releases': {}}}}]:
+            with self.subTest(feed=missing), self.assertRaises(SystemExit):
+                gate.sensor_backport_assessment([record], missing)
+        with self.assertRaises(SystemExit):
+            gate.sensor_backport_assessment([dict(record, provenance='local-policy')], tracker)
+
+
 class SignedKernelTests(unittest.TestCase):
     def setUp(self):
         self.metadata = {'Package': 'linux-image-6.12.113+deb13-amd64', 'Version': '6.12.113-1',

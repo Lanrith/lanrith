@@ -12,6 +12,15 @@ import subprocess
 import tempfile
 
 
+def check_chrony(root):
+    chronyd = ['chroot', str(root), '/usr/sbin/chronyd']
+    version = subprocess.run([*chronyd, '-v'], check=True, capture_output=True, text=True, timeout=10)
+    if '+SCFILTER' not in version.stdout.split():
+        raise ValueError('The assembled chronyd must support the required level-one syscall filter.')
+    subprocess.run([*chronyd, '-F', '1', '-p', '-f', '/etc/chrony/chrony.conf'],
+                   check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=10)
+
+
 def enabled_socket_units(root):
     """Verify vendor boot sockets explicitly, including their service pairing."""
     names = set()
@@ -70,6 +79,54 @@ def policy_compiler_dependencies(root):
             raise ValueError('Policy profile compiler dependency is unavailable: '+relative)
 
 
+def finalize_binding_worker(root):
+    """Select the collector interface actually shipped in the authenticated package."""
+    marker = root/'usr/share/router-policy-agent/binding-worker-v1'
+    system = root/'etc/systemd/system'
+    current = system/'lanrith-policy-bindings.service.d/65-lanrith-kea.conf'
+    if not current.is_file() or not marker.exists():
+        return
+    info = marker.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or
+            info.st_size != 18 or marker.read_bytes() != b'binding-worker-v1\n'):
+        raise ValueError('Binding worker capability has unsafe metadata or unsupported contents.')
+    vendor = root/'usr/lib/systemd/system'
+    (vendor/'lanrith-policy-evidence.socket').write_text(
+        '[Unit]\nDescription=Accept a private policy ownership evidence request\n'
+        '[Socket]\nListenStream=/run/lanrith-policy-evidence.sock\nSocketMode=0600\n'
+        'Accept=yes\nMaxConnections=1\nRemoveOnStop=yes\n')
+    (vendor/'lanrith-policy-evidence@.service').write_text(
+        '[Unit]\nDescription=Collect local accounting, lease and placement evidence\n'
+        '[Service]\nType=exec\nUser=lanrith-policy-evidence\nGroup=lanrith-policy-evidence\n'
+        'SupplementaryGroups=systemd-journal\nUMask=0077\n'
+        'ExecStart=/usr/bin/router-policy-collector -binding-worker\n'
+        'StandardInput=socket\nStandardOutput=socket\nStandardError=journal\n'
+        'RuntimeDirectory=lanrith-policy-evidence\nRuntimeDirectoryMode=0700\n'
+        'RuntimeDirectoryPreserve=yes\nRuntimeMaxSec=32s\nTimeoutStopSec=1s\n'
+        'CapabilityBoundingSet=\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\n'
+        'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
+        'ProtectKernelLogs=yes\nProtectControlGroups=yes\nRestrictNamespaces=yes\n'
+        'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nIPAddressDeny=any\n'
+        'InaccessiblePaths=-/run/kea -/run/lanrith-policy -/run/router-policy-reader '
+        '-/var/lib/lanrith -/run/router-policy-ipc\nMemoryMax=128M\nMemorySwapMax=0\nTasksMax=32\n')
+    identity = root/'usr/lib/sysusers.d/80-lanrith-policy-evidence.conf'
+    identity.write_text('u lanrith-policy-evidence - "Policy accounting evidence" /nonexistent /usr/sbin/nologin\n')
+    # The image's /etc may be immutable at boot. Provision the evidence
+    # account while the image still permits writes to its account database.
+    subprocess.run(['chroot', str(root), '/usr/bin/systemd-sysusers',
+                    '/usr/lib/sysusers.d/80-lanrith-policy-evidence.conf'],
+                   check=True, stdin=subprocess.DEVNULL, timeout=30)
+    worker = system/'lanrith-policy-evidence@.service.d'
+    worker.mkdir(exist_ok=True)
+    os.replace(current, worker/current.name)
+    current.with_name('70-lanrith-worker.conf').write_text(
+        '[Unit]\nRequires=lanrith-policy-evidence.socket\nAfter=lanrith-policy-evidence.socket\n'
+        '[Service]\nExecStart=\nExecStart=/usr/lib/lanrith/policy-runtime bindings-worker-loop\n'
+        'SupplementaryGroups=\nRestrictAddressFamilies=\nRestrictAddressFamilies=AF_UNIX\n'
+        'InaccessiblePaths=-/run/kea -/run/lanrith-kea-leases -/run/lanrith-policy-evidence '
+        '-/var/log/journal -/run/log/journal -/run/router-policy-reader -/run/router-policy-ipc\n')
+
+
 def finalize_policy(root):
     """Compile and consume the policy baseline inside an isolated netns."""
     source = root/'usr/lib/lanrith-build/policy-baseline.json'
@@ -79,6 +136,7 @@ def finalize_policy(root):
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
         raise ValueError('Build-only policy compiler input has unsafe metadata.')
     policy_compiler_dependencies(root)
+    finalize_binding_worker(root)
     scratch = root/'run/lanrith-policy-build'
     if scratch.exists() or scratch.is_symlink():
         raise ValueError('Policy profile scratch path already exists.')
@@ -168,6 +226,14 @@ remove_obsolete_helpers(root)
 remove_vpp_hugepage_default(root)
 finalize_policy(root)
 check(root)
+health_units = json.loads((root/'usr/share/lanrith/health.json').read_bytes())['units']
+if 'chrony.service' in health_units:
+    check_chrony(root)
+if 'unbound.service' in health_units:
+    control = subprocess.run(['chroot', str(root), '/usr/sbin/unbound-checkconf', '-o', 'control-enable'],
+                             check=True, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+    if control.stdout.strip() != 'no':
+        raise ValueError('The assembled Unbound configuration must disable administrative control.')
 administration = json.loads((root/'usr/share/lanrith/administration.json').read_text())
 installed = json.loads((root/'usr/share/lanrith/installed.json').read_text())
 os_release = root/'usr/lib/os-release'
@@ -210,6 +276,9 @@ if username != 'admin':
 apply_root_access(root, username, ROOT_ACCESS)
 users = {row[0]: {'uid': int(row[2]), 'gid': int(row[3])}
          for line in (root/'etc/passwd').read_text().splitlines() if line and (row := line.split(':'))}
+for client in AVAHI_CLIENTS:
+    if client not in users or sum(entry['uid'] == users[client]['uid'] for entry in users.values()) != 1:
+        raise ValueError('A selected local Avahi client needs a distinct installed Unix account.')
 expected = json.loads((root/'usr/share/lanrith/service-identities.json').read_text())
 for name, identity in expected.items():
     if name == 'admin':
@@ -236,14 +305,18 @@ if integration_identities.exists():
         members = {username if name == 'admin' else name for name in item.get('members', [])}
         if groups.get(item['name']) != {'gid': item['gid'], 'members': members}:
             raise ValueError('An integration service group changed during assembly.')
+# An older admitted base can still carry the previous vendor activation link.
+for location in ('usr/lib', 'etc'):
+    link = root/location/'systemd/system/boot-complete.target.requires/systemd-boot-check-no-failures.service'
+    if link.is_symlink():
+        link.unlink()
 for parent, unit in (('boot-complete.target.requires', 'lanrith-health.service'),
-                     ('boot-complete.target.requires', 'systemd-boot-check-no-failures.service'),
                      ('multi-user.target.wants', 'lanrith-observation.service')):
     link = root/'usr/lib/systemd/system'/parent/unit
     if not link.is_symlink() or link.readlink() != Path('/usr/lib/systemd/system')/unit:
         raise ValueError('Final assembly lost a required boot-acceptance activation.')
 required = ['default.target', 'multi-user.target', 'boot-complete.target',
-            'systemd-boot-check-no-failures.service', 'lanrith-health.service', 'lanrith-observation.service']
+            'lanrith-health.service', 'lanrith-observation.service']
 required.extend(json.loads((root/'usr/share/lanrith/installed.json').read_text())['integration_health_units'])
 # Verifying a target alone can miss a broken socket's implicit service link.
 # Include each unmasked boot socket so that pairing errors fail before VM boot.

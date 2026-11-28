@@ -20,14 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lanrith import config, directory_runtime
 from test_directory import fixture
-from test_radius import declaration as radius_fixture
+from test_radius import declaration as radius_fixture, provider_export
 
 
 CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
           'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
           'reader-and-observer-exact-egress', 'managed-source-return', 'other-identities-destination-port-source-interface-denied',
-          'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
-IMPLEMENTATION = ('lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
+          'independent-observer-identity', 'private-fresh-observation', 'installed-trust-overlap-and-rotation', 'disabled-components-remove-paths'}
+IMPLEMENTATION = ('lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py', 'lanrith/release.py',
                   'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
                   'lanrith/config.py', 'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
                   'tests/test_directory.py', 'tests/test_radius.py', 'tests/test_policy_agent.py', 'tests/test_intent.py')
@@ -128,7 +128,7 @@ def certificates(root):
         run('openssl', 'x509', '-req', '-in', str(root/'server.csr'), '-CA', str(root/'ca.crt'),
             '-CAkey', str(root/'ca.key'), '-CAcreateserial', '-days', days, '-extfile', str(extension),
             '-out', str(root/(name+'.crt')), *validity)
-    run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
+    run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '400',
         '-subj', '/CN=Other synthetic authority', '-keyout', str(root/'other.key'), '-out', str(root/'other.crt'))
     for path in root.glob('*.key'):
         path.chmod(0o600)
@@ -196,6 +196,8 @@ def qualify(result):
             addresses = addresses or ['192.168.10.30', 'fd42:1234:5678:10::30']
             host = addresses[0] if literal else 'directory.example.test'
             settings['url'] = ('ldaps' if mode == 'ldaps' else 'ldap+starttls')+'://'+('['+host+']' if ':' in host else host)
+            if managed:
+                value['identity']['radius']['admission']['provider_policy'] = provider_export(directory_url=settings['url'])
             if not literal:
                 settings['addresses'] = addresses
             value['observability']['metrics']['enabled'] = metrics
@@ -263,8 +265,19 @@ def qualify(result):
             install(mode='starttls')
             observe(False, mode='starttls', certificate='wrong-name')
             observe(False, mode='starttls', certificate='expired')
+            def installed_certificates():
+                return directory_runtime.trust_expiries(time.monotonic()+2)
+            retiring = installed_certificates()
+            assert len(retiring) == 1 and 0 < next(iter(retiring.values())) - time.time() < 180*86400
+            authority.write_bytes((root/'ca.crt').read_bytes()+(root/'other.crt').read_bytes())
+            overlap = installed_certificates()
+            assert len(overlap) == 2 and retiring.items() <= overlap.items()
+            observe(True, mode='starttls')
             authority.write_bytes((root/'other.crt').read_bytes())
             observe(False, mode='starttls')
+            renewed = installed_certificates()
+            assert len(renewed) == 1 and renewed.keys().isdisjoint(retiring)
+            assert renewed.items() <= overlap.items() and next(iter(renewed.values())) - time.time() > 180*86400
             authority.write_bytes((root/'ca.crt').read_bytes())
             observe(False, mode='plaintext')
             elapsed = observe(False, mode='slow')

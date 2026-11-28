@@ -3,4 +3,4 @@
 import sys
 sys.path.insert(0, '/usr/lib/lanrith')
 from lanrith.hardware import main
-sys.exit(main(['status']))
+sys.exit(main(['status', *sys.argv[1:]]))

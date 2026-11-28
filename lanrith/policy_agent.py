@@ -106,11 +106,11 @@ def nat64_egress(value):
             for output in outputs]
 
 
-def baseline(value, retained_allocations=None):
+def baseline(value, retained_allocations=None, *, access_backend="tun"):
     """Keep ordered owner intent separate from short-lived delegated grants."""
     policy = value.get('identity', {}).get('policy', {})
     require(policy.get('enabled', False), 'Policy helper contract requires an enabled identity policy.')
-    return _baseline(value, retained_allocations)
+    return _baseline(value, retained_allocations, access_backend)
 
 
 def bounded_baseline(value, accounts, retained_allocations=None):
@@ -120,7 +120,7 @@ def bounded_baseline(value, accounts, retained_allocations=None):
     effective admitted image registry after account overlays; nothing reads the
     owner configuration or account registry at runtime for this contract.
     """
-    result = _baseline(value, retained_allocations)
+    result = _baseline(value, retained_allocations, 'bounded')
     scopes = dhcp4.host_scopes(value, accounts)
     egress = nat64_egress(value)
     if scopes:
@@ -133,7 +133,7 @@ def bounded_baseline(value, accounts, retained_allocations=None):
     return result
 
 
-def _baseline(value, retained_allocations):
+def _baseline(value, retained_allocations, access_backend):
     policy = value.get('identity', {}).get('policy', {})
     managed = policy.get('networks', []) if policy.get('enabled', False) else []
     zones = []
@@ -181,6 +181,18 @@ def _baseline(value, retained_allocations):
             'protocol': endpoint['protocol'], 'ports': sorted(endpoint['ports']), 'destination_only': True})
     translations = intent.translations(value)
     source_manifests = translation.manifests(value, retained_allocations)
+    core_egress = service_plane.egress(value)
+    if access_backend == 'tun' and (value['services']['dns'].get('upstreams') or
+                                    value['services']['dns'].get('tls_forwarding')):
+        # The released schema only models iterative DNS. The TUN profile pins
+        # the exact forward-only nft rules and does not delegate those paths.
+        core_egress = [path for path in core_egress if path['kind'] not in ('dns', 'dns_tls')]
+    elif access_backend == 'legacy':
+        # Retained comparison builds generate a separate helper filter. Keep
+        # its previously supported DNS transport behind the exact host rules.
+        for path in core_egress:
+            if path['kind'] == 'dns':
+                path['destinations'] = ['::/0' if ':' in path['address'] else '0.0.0.0/0']
     n46 = translations.get('nat46')
     result = {
         'schema_version': 1, 'generation': 'pending', 'zones': zones,
@@ -198,7 +210,7 @@ def _baseline(value, retained_allocations):
         'network_model': {'schema_version': 1, 'managed_networks': managed,
                           'uplink_interface': value['hardware']['interfaces'][value['uplink']['interface']]['name'],
                           'rules': rules, 'core_services': core_services(value),
-                          'core_egress': service_plane.egress(value),
+                          'core_egress': core_egress,
                           'asymmetric_replies': asymmetric_replies(value),
                           'uplink_nat': intent.uplink_nat(value),
                           'service_prefixes': [str(prefix) for prefix in intent.service_networks(value)]
@@ -246,7 +258,7 @@ def runtime_contract(value, *, access_backend="tun"):
             'nas_prefixes': sorted(set(str(ip.ip_network(client['address']))
                                            for client in radius['clients'].values())),
             'kea_user': '_kea',
-            'kea_socket': '/run/kea/kea4-ctrl-socket',
+            'kea_socket': '/run/lanrith-kea-leases/leases.sock',
             'subnet_id': subnet_id,
             'ipv4_prefix': str(ipv4),
             'vlan': admission['vlan'],
@@ -301,13 +313,41 @@ def render(value, *, observer=None, access_backend="tun"):
     if value.get('translation', {}).get('nat64', {}).get('enabled'):
         translators += ['lanrith-nat64.service', 'lanrith-nat64-internal.service']
     translation_dependencies = (' '+' '.join(translators)) if translators else ''
+    device_units = {}
+    if access_backend == 'tun':
+        # 99-systemd.rules exports these stable aliases after interface naming.
+        devices = []
+        units_dir = 'usr/lib/systemd/system/'
+        for name in contract['guard_interfaces']:
+            device = 'sys-subsystem-net-devices-'+name.replace('-', r'\x2d')+'.device'
+            devices.append(device)
+            device_units[units_dir+device+'.d/50-lanrith-policy.conf'] = (
+                f'[Unit]\nDescription=Policy guard interface {name}\nJobRunningTimeoutSec=45s\n'
+                'Wants=lanrith-policy-guard-retry.timer\n')
+        names = ' '.join(devices)
+        device_units[units_dir+'lanrith-policy-guards.service.d/50-links.conf'] = (
+            f'[Unit]\nBindsTo={names}\nAfter={names}\n')
+        device_units[units_dir+'lanrith-policy-guard-retry.timer'] = (
+            '[Unit]\nDescription=Retry the declared policy stack after link arrival\n'
+            + ''.join(f'ConditionPathExists=/sys/class/net/{name}\n' for name in contract['guard_interfaces'])
+            + '[Timer]\nOnActiveSec=5s\nAccuracySec=1s\nRemainAfterElapse=no\n'
+              'Unit=lanrith-policy-guard-retry.target\n')
+        # A timer aimed at the long-lived helper stays elapsed until the helper
+        # stops. Replugging during its ordered stop would lose the new request.
+        # This transient target waits out any teardown before queuing a start.
+        device_units[units_dir+'lanrith-policy-guard-retry.target'] = (
+            '[Unit]\nDescription=Resume policy after ordered device teardown\n'
+            'After=lanrith-policy-guards.service lanrith-policy-helper.service\n'
+            'StopWhenUnneeded=yes\nOnSuccess=lanrith-policy-helper.service\n')
     guards = (
         '[Unit]\nDescription=Install the image-owned policy guard schema\n'
-        'Requires=nftables.service systemd-networkd.service systemd-sysctl.service\n'
+        'Requires=nftables.service systemd-sysctl.service\nWants=systemd-networkd.service\n'
         'After=nftables.service systemd-networkd.service systemd-sysctl.service\nBindsTo=nftables.service\n'
         'Before=lanrith-policy-bootstrap.service'+translation_dependencies+'\n\n'
         '[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=root\nGroup=root\nUMask=0077\n'
+        'ExecStartPre=/usr/bin/systemctl --quiet is-active systemd-networkd.service\n'
         'ExecStart=/usr/lib/lanrith/policy-runtime install-guards\nTimeoutStartSec=60s\n'
+        'ExecStopPost=-/usr/sbin/nft flush set inet lanrith tp_started\n'
         'NoNewPrivileges=yes\nCapabilityBoundingSet=CAP_NET_ADMIN\nProtectSystem=strict\nProtectHome=yes\n'
         'PrivateTmp=yes\nRestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\n')
     bootstrap = (
@@ -316,16 +356,14 @@ def render(value, *, observer=None, access_backend="tun"):
         'After=var.mount lanrith-policy-guards.service'+translation_dependencies+'\n'
         'Before=lanrith-policy-bindings.service lanrith-policy-helper.service\n\n'
         '[Service]\nType=oneshot\nRemainAfterExit=yes\nUser=root\nGroup=root\nUMask=0077\n'
-        'StateDirectory=lanrith/policy-agent\nStateDirectoryMode=0700\n'
-        f'LoadCredential={reference}:{credential}\n'
         'ExecStart=/usr/lib/lanrith/policy-runtime bootstrap\nTimeoutStartSec=60s\n'
-        'NoNewPrivileges=yes\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_CHOWN CAP_DAC_OVERRIDE\n'
+        'NoNewPrivileges=yes\nCapabilityBoundingSet=CAP_NET_ADMIN\n'
         'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
         'ReadWritePaths=/run /var/lib/lanrith/policy-agent /var/lib/lanrith/policy-enrollment\n'
         'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\n')
     radius = value.get('identity', {}).get('radius', {})
     binding_dependencies = ' kea-dhcp4-server.service freeradius.service' if radius.get('enabled', False) else ''
-    binding_capabilities = ('CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH' if radius.get('enabled', False) else '')
+    binding_groups = 'SupplementaryGroups=systemd-journal\n' if contract['binding_collector'] else ''
     binding_families = 'AF_UNIX AF_NETLINK' if radius.get('enabled', False) else 'AF_UNIX'
     bindings_unit = (
         '[Unit]\nDescription=Refresh deny-by-default policy ownership evidence\n'
@@ -334,7 +372,7 @@ def render(value, *, observer=None, access_backend="tun"):
         'Before=lanrith-policy-helper.service\n\n'
         '[Service]\nType=exec\nUser=root\nGroup=root\nUMask=0077\n'
         'ExecStart=/usr/lib/lanrith/policy-runtime bindings-loop\nRestart=on-failure\nRestartSec=2s\n'
-        'NoNewPrivileges=yes\nCapabilityBoundingSet='+binding_capabilities+'\nProtectSystem=strict\nProtectHome=yes\n'
+        +binding_groups+'NoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nProtectHome=yes\n'
         'PrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
         'ProtectKernelLogs=yes\nProtectControlGroups=yes\n'
         'ReadWritePaths=/run/lanrith-policy/bindings /run/lanrith-policy/collector\n'
@@ -367,18 +405,29 @@ def render(value, *, observer=None, access_backend="tun"):
         'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=512M\nMemorySwapMax=0\n'
         'TasksMax=64\nLimitNOFILE=4096\n'+
         (f'SupplementaryGroups={observer["gid"]}\n' if observer is not None else ''))
+    reader_setup = (
+        '[Unit]\nDescription=Prepare private directory reader inputs\n'
+        'Requires=lanrith-policy-bootstrap.service\nAfter=lanrith-policy-bootstrap.service\n\n'
+        '[Service]\nType=oneshot\nUser=root\nGroup=root\nUMask=0077\n'
+        f'LoadCredential={reference}:{credential}\n'
+        'ExecStart=/usr/lib/lanrith/policy-runtime prepare-reader\nTimeoutStartSec=15s\n'
+        'NoNewPrivileges=yes\nCapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE\n'
+        'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nPrivateNetwork=yes\n'
+        'ReadWritePaths=/run\nRestrictAddressFamilies=AF_UNIX\nRestrictNamespaces=yes\nLimitCORE=0\n')
     reader = (
         '[Unit]\nDescription=Read fresh directory policy over verified TLS\n'
-        'Requires=lanrith-policy-helper.service\nAfter=lanrith-policy-helper.service systemd-networkd.service\n\n'
+        'Requires=lanrith-policy-helper.service lanrith-policy-reader-setup.service\n'
+        'After=lanrith-policy-helper.service lanrith-policy-reader-setup.service systemd-networkd.service\n\n'
         '[Service]\nType=exec\nUser=router-policy-reader\nGroup=router-policy-reader\n'
         'ExecStart=/usr/bin/router-policy-reader -config-directory /run/router-policy-reader\n'
-        'Restart=on-failure\nRestartSec=5s\nUMask=0077\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n'
+        'StandardError=journal\nRestart=on-failure\nRestartSec=5s\nUMask=0077\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n'
         'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
         'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nRestrictNamespaces=yes\nRestrictRealtime=yes\n'
         'RestrictSUIDSGID=yes\nLockPersonality=yes\nMemoryMax=256M\nMemorySwapMax=0\n'
         'TasksMax=64\nLimitNOFILE=1024\n')
     return {
+        **device_units,
         **({'etc/xtables/connlabel.conf': '127 lanrith-identity\n'} if access_backend == 'tun' else {}),
         'etc/router-policy-agent/runtime/runtime.json': canonical(contract).decode(),
         # nft sends the complete immutable schema as one atomic transaction and
@@ -386,9 +435,15 @@ def render(value, *, observer=None, access_backend="tun"):
         # same 16 MiB limit already enforced by the policy process.
         'usr/lib/sysctl.d/60-lanrith-policy-netlink.conf':
             'net.core.wmem_max = 16777216\nnet.core.rmem_max = 16777216\n',
+        # Create at first boot without changing a retained store's ownership
+        # or mode before bootstrap checks it.
+        'usr/lib/tmpfiles.d/76-router-policy-enrollment.conf':
+            'd /var/lib/lanrith/policy-agent :0700 :root :root -\n'
+            'd /var/lib/lanrith/policy-enrollment :0700 :root :root -\n',
         'usr/lib/systemd/system/lanrith-policy-guards.service': guards,
         'usr/lib/systemd/system/lanrith-policy-bootstrap.service': bootstrap,
         'usr/lib/systemd/system/lanrith-policy-bindings.service': bindings_unit,
         'usr/lib/systemd/system/lanrith-policy-helper.service': helper,
+        'usr/lib/systemd/system/lanrith-policy-reader-setup.service': reader_setup,
         'usr/lib/systemd/system/lanrith-policy-reader.service': reader,
     }

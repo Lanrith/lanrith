@@ -11,31 +11,12 @@ import subprocess
 import sys
 import time
 
-from . import early_failure, factory, recovery_console, recovery_select, release, update
+from . import factory, recovery_console, recovery_select, release
+from .factory import automatic_fallback
 
 
 POLICY = Path('/usr/share/lanrith/failure-console.json')
 CREDENTIAL = Path('/usr/share/lanrith/failure-console.hash')
-
-
-def automatic_fallback():
-    """Attempt the same bounded fallback as the non-console emergency path."""
-    try:
-        identity = json.loads(release.read(Path('/usr/share/lanrith/initrd-failure.json'), 65536),
-                              object_pairs_hook=release.unique)
-        if not ('steady_state' in identity or early_failure.FALLBACK_AUTHENTICATION_QUALIFIED and
-                early_failure.ROLLBACK_COMPATIBILITY_QUALIFIED):
-            return False
-        factory.bounded_fallback(early_failure.failure_identity(identity))
-    except (release.ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
-        # Never print exception text or identity data to a recorded serial console.
-        # A broken output stream must not prevent the authenticated menu attempt.
-        try:
-            print(factory.fallback_diagnostic(error), flush=True)
-        except OSError:
-            pass
-        return False
-    return True
 
 
 def wait_for_reboot():
@@ -48,15 +29,21 @@ def policy(value):
     release.require(isinstance(value, dict) and set(value) == {'schema', 'tty'} and
                     type(value['schema']) is int and value['schema'] == 1 and
                     isinstance(value['tty'], str) and
-                    re.fullmatch(r'(?:tty(?:S|AMA|USB|ACM)|hvc)[0-9]{1,3}', value['tty']),
+                    recovery_console.TERMINAL.fullmatch(value['tty']),
                     'Invalid failure console policy.')
     return value
 
 
-def fixed_menu(*, read_command, write, select, reboot):
+def fixed_menu(*, read_command, write, select, reboot, eligibility):
     """Provide fixed status, confirmed fallback selection and explicit reboot."""
-    selected = False
-    write('Failure recovery: status, fallback, reboot, exit. No shell is available.\n')
+    selected = None
+    reason = eligibility()
+    guidance = ('Use the bootloader menu on the firmware console for manual recovery, '
+                'or boot independently signed recovery media on its prepared terminal.\n')
+    if reason:
+        write('Failure recovery: status, exit.\n'+reason+' '+guidance)
+    else:
+        write('Failure recovery: status, fallback, reboot, exit. No shell is available.\n')
     for _ in range(32):
         command = read_command()
         if not isinstance(command, str) or len(command) > 32:
@@ -65,10 +52,18 @@ def fixed_menu(*, read_command, write, select, reboot):
         if command == 'exit':
             return
         if command == 'status':
-            write('One-shot fallback selected.\n' if selected else 'No fallback selected in this session.\n')
+            if selected:
+                write('One-shot fallback selected.\n')
+            else:
+                reason = eligibility()
+                write(reason+' '+guidance if reason else 'Use fallback to verify the bound previous release.\n')
         elif command == 'fallback':
             if selected:
                 write('Fallback already selected. Use reboot or exit.\n')
+                continue
+            reason = eligibility()
+            if reason:
+                write(reason+' '+guidance)
                 continue
             try:
                 def confirm(sequence, digest):
@@ -82,10 +77,10 @@ def fixed_menu(*, read_command, write, select, reboot):
                 release.require(isinstance(result, dict) and type(result.get('sequence')) is int and
                                 result.get('default_changed') is False and result.get('automatic_reboot') is False,
                                 'Invalid fallback selection result.')
-                selected = True
+                selected = result
                 write('Fallback selected once. Use reboot to start it.\n')
             except (release.ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError):
-                selected = False
+                selected = None
                 write('Fallback selection failed. Check the recovery state before rebooting.\n')
         elif command == 'reboot':
             if not selected:
@@ -93,7 +88,7 @@ def fixed_menu(*, read_command, write, select, reboot):
                 continue
             write('Requesting reboot to the selected fallback.\n')
             try:
-                reboot()
+                reboot(selected)
             except (release.ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError):
                 write('Reboot request failed. The one-shot selection may still be pending.\n')
                 continue
@@ -135,7 +130,7 @@ def main():
                 return line.rstrip('\r\n') if line.endswith('\n') else None
             fixed_menu(read_command=read_command, write=sys.stdout.write,
                        select=lambda confirm: recovery_select.select_bound(confirm=confirm),
-                       reboot=lambda: update.command(['systemctl', '--force', 'reboot']))
+                       reboot=recovery_select.reboot_selected, eligibility=recovery_select.unavailable_reason)
             return 0
         sys.stdout.write('Authentication failed.\n')
         sys.stdout.flush()

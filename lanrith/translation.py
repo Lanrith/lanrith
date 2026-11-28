@@ -6,9 +6,10 @@ separate: a TAYGA route or static map must never be treated as authorization.
 
 import hashlib
 import ipaddress as ip
+import re
 
-from . import intent
-from .release import canonical, require
+from . import intent, nat64_allocations
+from .release import HEX, canonical, require
 
 
 def source_identities(value):
@@ -34,11 +35,43 @@ def allocate(value, retained=None):
     their addresses. Only active identities are candidates for access policy.
     """
     retained = {} if retained is None else retained
-    require(isinstance(retained, dict) and len(retained) <= 4096, 'Invalid retained translation allocations.')
+    require(isinstance(retained, dict), 'Invalid retained translation allocations.')
     component = intent.translations(value).get('nat64-internal')
     if component is None:
         require(not retained, 'Retained NAT64 allocations reference a disabled translator.')
         return {'reserved': {}, 'active': {}}
+    pool = ip.ip_network(component['pool'])
+    if 'schema' in retained:
+        validate_history(retained, value.get('release', {}).get('image_id', 'lanrith'),
+                         value['hardware'].get('machine_id'), str(pool))
+        retained = retained['reserved']
+    sources = [source for source in source_identities(value)
+               if nat64_allocations.mappable_source(ip.ip_address(source), component)]
+    reserved = reservations(component, retained, sources)
+    return {'reserved': reserved, 'active': {key: reserved[key] for key in sources}}
+
+
+def allocation_inputs(value, retained):
+    """Bind both computed mappings and their accepted source release to the build."""
+    result = {'translation_allocations': allocate(value, retained)}
+    if 'schema' in retained:
+        result['translation_history_sha256'] = hashlib.sha256(canonical(retained)).hexdigest()
+    return result
+
+
+def validate_history(history, image_id, machine_id, pool):
+    require(isinstance(history, dict) and set(history) == {'schema', 'image_id', 'machine_id', 'deployment_sequence',
+            'configuration_sha256', 'pool', 'reserved'} and type(history['schema']) is int and history['schema'] == 1
+            and type(history['deployment_sequence']) is int and 1 <= history['deployment_sequence'] <= 999999999
+            and isinstance(image_id, str) and re.fullmatch(r'[a-z][a-z0-9-]{0,47}', image_id)
+            and isinstance(machine_id, str) and re.fullmatch(r'[a-f0-9]{32}', machine_id)
+            and history['machine_id'] == machine_id and history['image_id'] == image_id and history['pool'] == pool
+            and isinstance(history['configuration_sha256'], str) and HEX.fullmatch(history['configuration_sha256']),
+            'Invalid reservation history or different release identity or pool.')
+
+
+def reservations(component, retained, sources=()):
+    require(isinstance(retained, dict) and len(retained) <= 4096, 'Invalid retained translation allocations.')
     pool = ip.ip_network(component['pool'])
     # The last /28 or /24 is reserved for stable sources. TAYGA static maps
     # reserve these addresses against its dynamic allocator.
@@ -48,11 +81,13 @@ def allocate(value, retained=None):
     reserved = {}
     for original, translated in retained.items():
         source, target = intent.address(original, 6), intent.address(translated, 4)
-        require(str(source) == original and str(target) == translated and first <= int(target) < int(pool.broadcast_address)
-                and target not in occupied, 'Duplicate, noncanonical or out-of-range retained source allocation.')
+        require(nat64_allocations.mappable_source(source, component),
+                'Retained NAT64 source conflicts with a translator prefix, control or reserved address.')
+        require(str(source) == original and str(target) == translated and first <= int(target) < int(pool.broadcast_address) and
+                target not in occupied, 'Duplicate, noncanonical or out-of-range retained source allocation.')
         occupied.add(target)
         reserved[original] = translated
-    for source in source_identities(value):
+    for source in sources:
         if source in reserved:
             continue
         candidate = first + int.from_bytes(hashlib.sha256(source.encode()).digest()[:4], 'big') % (size-1)
@@ -64,13 +99,57 @@ def allocate(value, retained=None):
                 break
         else:
             require(False, 'Stable translator source allocation is exhausted.')
-    active = {key: reserved[key] for key in source_identities(value)}
-    return {'reserved': dict(sorted(reserved.items())), 'active': active}
+    return dict(sorted(reserved.items()))
+
+
+def route_contexts(value, component, allocations, routes):
+    """Compile ingress and source samples for read-only forwarding lookups."""
+    from .tun_policy import client_prefixes
+
+    def attachment(raw):
+        address = ip.ip_address(raw)
+        return next(interface for prefix, interface in routes if address in prefix)
+
+    samples = {4: set(), 6: set()}
+    name = component['interface']
+    for key, network in value['networks'].items():
+        if not network.get('forwarding', True):
+            continue
+        local = {ip.ip_interface(raw).ip for raw in intent.gateway_addresses(network)}
+        if name == 'nat64':
+            prefixes = [ip.ip_interface(raw).network for raw in network['addresses']]
+        else:
+            prefixes = client_prefixes(value, key)
+        for prefix in prefixes:
+            if name == 'nat46' and prefix.version != 4:
+                continue
+            # Pick a possible peer without probing a gateway or broadcast address.
+            peer = next((host for host in prefix.hosts() if host not in local), None)
+            if peer:
+                samples[peer.version].add((network['name'], str(peer)))
+    wan = value['hardware']['interfaces'][value['uplink']['interface']]['name']
+    active = allocations['active'] if name == 'nat64-internal' else {}
+    for source in active:
+        samples[6].add((attachment(source), source))
+    if name == 'nat46':
+        return {'clients': sorted(samples[4]),
+                'servers': {entry['ipv6']: attachment(entry['ipv6'])
+                            for entry in component['mappings'].values()}}
+    if name == 'nat64':
+        # A read-only Internet lookup needs no lease, DNS record or live endpoint.
+        public = next((a for a in value['uplink'].get('gateways', [])
+                       if ip.ip_address(a).version == 4 and ip.ip_address(a).is_global), '192.0.0.9')
+        peers = [(wan, public)] if value['uplink'].get('ipv4') != 'disabled' else []
+    else:
+        peers = sorted(samples[4])
+    return {'clients': sorted(samples[6]), 'peers': peers}
 
 
 def manifests(value, retained=None):
+    from .tun_policy import route_scopes
     components = intent.translations(value)
     allocations = allocate(value, retained)
+    routes = route_scopes(value, 6) if components else []
     result = []
     for name, component in components.items():
         path = '/etc/tayga'+('' if name == 'nat64' else '-'+name)+'.conf'
@@ -97,6 +176,7 @@ def manifests(value, retained=None):
                        'addresses': [component['ipv4']+'/32', component['ipv6']+'/128'],
                        'routes': [component['pool'], component['prefix']],
                        'source_allocations': allocations if name == 'nat64-internal' else {},
+                       'route_contexts': route_contexts(value, component, allocations, routes),
                        'authorization': 'none'})
     return result
 
@@ -105,6 +185,21 @@ def evidence(value, retained=None):
     result = manifests(value, retained)
     return {'schema': 1, 'translators': result,
             'sha256': hashlib.sha256(canonical(result)).hexdigest(), 'runtime_qualified': False}
+
+
+def network_unit(name):
+    return (
+        '[Unit]\nDescription=Configure translator interface and routes\n'
+        'Wants=systemd-networkd.service\n'
+        'After=nftables.service systemd-networkd.service systemd-sysusers.service systemd-tmpfiles-setup.service\n'
+        f'BindsTo=nftables.service\nBefore=lanrith-{name}.service\n'
+        '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+        'RuntimeDirectory=lanrith-translator-locks\nRuntimeDirectoryMode=0700\nRuntimeDirectoryPreserve=yes\n'
+        'Environment=PYTHONPATH=/usr/lib/lanrith\n'
+        f'ExecStart=/usr/bin/python3 -m lanrith.translation_runtime start {name}\n'
+        f'ExecStop=/usr/bin/python3 -m lanrith.translation_runtime stop {name}\n'
+        'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
+        'CapabilityBoundingSet=CAP_NET_ADMIN\nRestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6\n')
 
 
 def render_native(value, retained=None):
@@ -122,16 +217,7 @@ def render_native(value, retained=None):
         files['usr/lib/sysusers.d/80-lanrith-'+name+'.conf'] = f'u {account} - "IP translation" /\n'
         if manifest['component'] == 'nat64':
             files['usr/lib/tmpfiles.d/80-lanrith-'+name+'.conf'] = f'd {state} 0750 {account} {account} -\n'
-        files['usr/lib/systemd/system/lanrith-'+name+'-network.service'] = (
-            '[Unit]\nDescription=Configure translator interface and routes\n'
-            'Requires=nftables.service systemd-networkd.service\n'
-            'After=nftables.service systemd-networkd.service systemd-sysusers.service systemd-tmpfiles-setup.service\n'
-            f'BindsTo=nftables.service\nBefore=lanrith-{name}.service\n'
-            '[Service]\nType=oneshot\nRemainAfterExit=yes\nEnvironment=PYTHONPATH=/usr/lib/lanrith\n'
-            f'ExecStart=/usr/bin/python3 -m lanrith.translation_runtime start {name}\n'
-            f'ExecStop=/usr/bin/python3 -m lanrith.translation_runtime stop {name}\n'
-            'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
-            'CapabilityBoundingSet=CAP_NET_ADMIN\nRestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6\n')
+        files['usr/lib/systemd/system/lanrith-'+name+'-network.service'] = network_unit(name)
         # The existing admitted 0.9.6 package installs this path. All three
         # components use it; package/path renaming is independent of behavior.
         binary = '/usr/lib/lanrith/tayga-internal'

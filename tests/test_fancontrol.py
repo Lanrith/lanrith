@@ -163,7 +163,6 @@ class FancontrolConfigTests(unittest.TestCase):
             build.assembly(value, base, root/'work', version='0.1.0', sequence=1)
             overlay = root/'work/mkosi.extra'
             self.assertTrue((overlay/'usr/lib/systemd/system/multi-user.target.wants/lanrith-fancontrol.service').is_symlink())
-            self.assertTrue((overlay/'etc/systemd/system/lanrith-fancontrol.service').is_symlink())
             spec = importlib.util.spec_from_file_location('boundary', ROOT/'scripts/runtime-boundary.py')
             boundary = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(boundary)

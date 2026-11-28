@@ -259,13 +259,18 @@ def observation(installed):
 
 
 def ensure_recovery_marker(installed, root, *, allow_enrollment):
-    """Never replace a missing recovery method during a bound migration."""
+    """Verify legacy acknowledgements privately, including before a bound migration."""
+    from . import recovery_enrollment
     from .factory import recovery
     require(type(allow_enrollment) is bool, 'Invalid recovery enrollment policy.')
-    marker = root/installed['state_directory'].lstrip('/')/'recovery-key-enrolled'
+    directory = root/installed['state_directory'].lstrip('/')
+    marker = directory/recovery_enrollment.MARKER
     if not marker.exists():
-        require(allow_enrollment, 'Existing recovery enrollment is required for migration.')
-        recovery(installed, root=str(root))
+        if not allow_enrollment:
+            legacy = directory/recovery_enrollment.LEGACY
+            require(legacy.exists(), 'Existing recovery enrollment is required for migration.')
+            validate_existing_recovery_marker(legacy)
+        recovery(installed, root=str(root), verification_only=not allow_enrollment)
     return marker
 
 
@@ -297,7 +302,15 @@ def unlock(installed, device, *, allow_recovery_enrollment=True, reporter=None):
         transition = validate_transition(installed['tpm_transition'])
         require(command(['cryptsetup', 'luksUUID', device]).strip() == transition['luks_uuid'],
                 'TPM migration belongs to another encrypted state volume.')
-    state_tokens(installed, luks)
+    try:
+        state_tokens(installed, luks)
+    except ReleaseError:
+        if not allow_recovery_enrollment or 'tpm_transition' in installed:
+            raise
+        from .recovery_enrollment import header, repair_partial
+        repair_partial(installed, device, luks)
+        luks = header(device)
+        state_tokens(installed, luks)
     stage('token-preflight')
     identifiers = tpm_tokens(luks)
     require(identifiers and all(token_test(device, item) for item in identifiers),
@@ -313,7 +326,8 @@ def unlock(installed, device, *, allow_recovery_enrollment=True, reporter=None):
         # token before proving the existing recovery ceremony was recorded.
         stage('recovery-preflight')
         marker = ensure_recovery_marker(installed, SYSROOT, allow_enrollment=False)
-        validate_existing_recovery_marker(marker)
+        from .recovery_enrollment import verified
+        require(verified(marker.parent, device, luks), 'Existing offline recovery verification is required.')
         from .tpm_migration import migrate
         disk, active = verified_root('/sysroot')
         stage('migration')
@@ -327,7 +341,8 @@ def unlock(installed, device, *, allow_recovery_enrollment=True, reporter=None):
     stage('recovery-verify')
     luks = json.loads(command(['cryptsetup', 'luksDump', '--dump-json-metadata', device]))
     tokens = state_tokens(installed, luks)
-    require('systemd-recovery' in tokens and marker.is_file() and not marker.is_symlink(),
+    from .recovery_enrollment import verified
+    require('systemd-recovery' in tokens and verified(marker.parent, device, luks),
             'Measured state requires completed offline recovery enrollment.')
     identifiers = tpm_tokens(luks)
     require(all(token_test(device, item) for item in identifiers) and pcr15() == ZERO,

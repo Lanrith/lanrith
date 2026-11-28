@@ -6,6 +6,7 @@ are synthetic; this is not full-image, encryption, SSH or backend acceptance.
 """
 
 import argparse
+from contextlib import contextmanager
 import base64
 import copy
 import datetime
@@ -20,7 +21,7 @@ import tarfile
 import tempfile
 import time
 
-from lanrith import build, config, extension_observations, logs, release
+from lanrith import build, config, image_operation, runtime, extension_observations, logs, release
 from test_systemd_credential import CredentialACLTests
 from test_intent import minimal
 from test_credential_image import fixture
@@ -174,41 +175,175 @@ def generated_log_staging(tree, units, raw, value):
     assert Path('/run/lanrith-logs/no-auth-proof').read_text() == 'passed'
 
 
-def native_radius_clients(policy, network):
-    """Every declared NAS reaches the authenticated proxy; unknown MACs stay denied."""
-    import ipaddress
+@contextmanager
+def log_peer(root, first, second):
+    """A synthetic ingest peer with separate TLS and client authentication."""
+    from http.client import HTTPSConnection
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import ssl
+    from threading import Thread
 
+    def header(raw):
+        return 'Basic '+base64.b64encode(b'fixture:'+raw.removesuffix(b'\n')).decode()
+
+    allowed = {header(first), header(second)}
+    class Peer(BaseHTTPRequestHandler):
+        def do_POST(self):
+            assert self.path == '/ingest' and self.rfile.read(int(self.headers['Content-Length'])) == b'fixture'
+            self.send_response(204 if self.headers.get('Authorization') in allowed else 401)
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    certificate, key = root/'peer.crt', root/'peer.key'
+    run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+        '-subj', '/CN=fixture-ingest', '-addext', 'subjectAltName=IP:127.0.0.1',
+        '-keyout', str(key), '-out', str(certificate))
+    with HTTPServer(('127.0.0.1', 0), Peer) as server:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certificate, key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        worker = Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        def authenticate(expected):
+            # The mounted image fixture selects the input. Each POST uses a
+            # new TLS connection and checks the fixture peer's certificate.
+            raw = Path('/usr/lib/lanrith/credentials/core/ingest').read_bytes()
+            client = HTTPSConnection('127.0.0.1', server.server_port, timeout=3,
+                                     context=ssl.create_default_context(cafile=certificate))
+            try:
+                client.request('POST', '/ingest', body=b'fixture', headers={'Authorization': header(raw)})
+                assert client.getresponse().status == expected
+            finally:
+                client.close()
+        try:
+            yield authenticate, lambda: allowed.remove(header(first))
+        finally:
+            server.shutdown()
+            worker.join(timeout=3)
+
+
+def independent_readers(tree, units, catalog):
+    """Start ordinary service jobs with the image gates and actual PID1 transport."""
+    script = Path('/usr/lib/lanrith/fixture-scoped-reader.py')
+    script.write_text('import os,pathlib,sys\n'
+        'credentials=pathlib.Path(os.environ["CREDENTIALS_DIRECTORY"])\n'
+        'assert {p.name for p in credentials.iterdir()} == set(sys.argv[1:])\n'
+        'assert all((credentials/n).read_bytes() for n in sys.argv[1:])\n'
+        'try: pathlib.Path("/usr/lib/lanrith/credentials/core/ingest").read_bytes()\n'
+        'except PermissionError: pass\n'
+        'else: raise AssertionError("sibling image credential was readable")\n')
+    consumers = [('tsig-base64', 'lanrith-dns-state', 'named'),
+                 ('bgp-token', 'lanrith-routing-credentials', 'frr'),
+                 ('radius-secret', 'lanrith-radius-runtime', 'freeradius')]
+    for kind, helper, daemon in consumers:
+        references = sorted(i['reference'] for i in catalog['credentials'] if i['format'] == kind)
+        generated = (tree/'usr/lib/systemd/system'/(helper+'.service')).read_text()
+        loads = [line for line in generated.splitlines() if line.startswith('LoadCredential=')]
+        assert sorted(line.split('=', 1)[1].split(':', 1)[0] for line in loads) == references
+        for name in (helper, daemon):
+            unit = name+'.service'
+            dropin = units/(unit+'.d')
+            dropin.mkdir(exist_ok=True)
+            shutil.copyfile(tree/'etc/systemd/system'/(unit+'.d')/'50-lanrith-credentials.conf',
+                            dropin/'50-lanrith-credentials.conf')
+        (units/(helper+'.service')).write_text('[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+            'User=fixture-app\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n'+'\n'.join(loads)+'\n'
+            'ExecStart=/usr/bin/python3 '+str(script)+' '+' '.join(references)+'\n')
+        # The package daemons use the materialized output of this named prerequisite.
+        (units/(daemon+'.service')).write_text('[Unit]\nRequires='+helper+'.service\nAfter='+helper+
+            '.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
+    # Earlier native RADIUS qualification used a production drop-in and helper.
+    # Remove only that fixture's daemon drop-in before checking startup isolation.
+    (units/'freeradius.service.d/60-lanrith.conf').unlink(missing_ok=True)
+    run('systemctl', 'daemon-reload')
+    for _, helper, daemon in consumers:
+        run('systemctl', 'start', daemon+'.service')
+        assert active(daemon+'.service') and active(helper+'.service')
+    failed = subprocess.run(['systemctl', 'start', 'alloy.service'], capture_output=True, timeout=35)
+    assert failed.returncode != 0 and not active('alloy.service')
+
+
+def radius_markers(generation):
+    return {name: hashlib.sha256((generation+'/'+name).encode()).hexdigest()
+            for name in ('radius_wired', 'radius_wireless', 'radius_upstream')}
+
+
+@contextmanager
+def radius_peer(policy, network, marker):
     upstream = policy['proxy']['address']
-    run(*network, 'ip', 'address', 'add', upstream+('/128' if ':' in upstream else '/32'), 'dev', 'lo')
     with tempfile.TemporaryDirectory(prefix='radius-proxy.') as temporary:
         proof = Path(temporary)/'packets'
-        backend = subprocess.Popen([*network, 'python3', str(Path(__file__).with_name('radius_proxy_fixture.py')),
-            upstream, str(proof)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        try:
-            for _ in range(50):
-                if Path(str(proof)+'.ready').exists(): break
-                assert backend.poll() is None
-                time.sleep(.1)
-            for index, client in enumerate(policy['clients'], 1):
-                prefix = ipaddress.ip_network(client['address'])
-                source = str(prefix.network_address+(1 if prefix.num_addresses > 1 else 0))
-                run(*network, 'ip', 'address', 'add', source+'/32', 'dev', 'lo')
-                packet = ('User-Name = "020000000001"\nUser-Password = "020000000001"\n'
-                    'Calling-Station-Id = "02:00:00:00:00:01"\nService-Type = Call-Check\n'
-                    'NAS-Port = 5\nMessage-Authenticator = 0x00\nPacket-Src-IP-Address = '+source+'\n')
-                result = subprocess.run([*network, 'radclient', '-t', '3', '-r', '1',
-                    policy['listeners'][0]+':1812', 'auth', 'A'*32], input=packet.encode(),
-                    capture_output=True, timeout=10)
-                assert b'Access-Reject' in result.stdout, result.stdout+result.stderr
-                assert proof.exists() and int(proof.read_text()) >= index, \
-                    'Configured NAS did not reach the authenticated proxy: '+client['name']
-        finally:
-            backend.terminate()
-            backend.wait(timeout=5)
+        with subprocess.Popen([*network, 'python3', str(Path(__file__).with_name('radius_proxy_fixture.py')),
+                               upstream, str(proof)], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL) as backend:
+            try:
+                backend.stdin.write(marker.encode()+b'\n')
+                backend.stdin.close()
+                wait(lambda: Path(str(proof)+'.ready').exists() or backend.poll() is not None)
+                assert backend.poll() is None, 'Synthetic RADIUS upstream failed to bind.'
+                yield proof
+            finally:
+                backend.terminate()
+
+
+def radius_request(policy, network, source, marker):
+    packet = ('User-Name = "020000000001"\nUser-Password = "020000000001"\n'
+              'Calling-Station-Id = "02:00:00:00:00:01"\nService-Type = Call-Check\n'
+              'NAS-Port = 5\nMessage-Authenticator = 0x00\nPacket-Src-IP-Address = '+source+'\n')
+    result = subprocess.run([*network, 'radclient', '-x', '-t', '4', '-r', '1',
+                             policy['listeners'][0]+':1812', 'auth', marker],
+                            input=packet.encode(), capture_output=True, timeout=8)
+    return [row.split()[1] for row in result.stdout.splitlines() if row.startswith(b'Received ')]
+
+
+def native_radius_clients(policy, network, markers, *, crossed=False):
+    # Expected source-to-reference assignments are independent of the renderer.
+    cases = [('192.168.10.40', 'radius_wired', 'radius_wireless'),
+             ('192.168.10.33', 'radius_wireless', 'radius_wired')]
+    with radius_peer(policy, network, markers['radius_upstream']) as proof:
+        for index, (source, reference, other) in enumerate(cases, 1):
+            replies = radius_request(policy, network, source, markers[reference])
+            assert replies == [b'Access-Reject'], 'Missing authenticated NAS reply for '+reference
+            assert proof.read_text() == str(index), 'Missing authenticated upstream request for '+reference
+            if crossed:
+                assert not radius_request(policy, network, source, markers[other]), 'Cross-assigned NAS key accepted.'
+                assert proof.read_text() == str(index), 'Cross-assigned NAS reached upstream.'
+    if crossed:
+        with radius_peer(policy, network, markers['radius_wired']) as proof:
+            replies = radius_request(policy, network, cases[0][0], markers['radius_wired'])
+            assert b'Access-Accept' not in replies
+            assert Path(str(proof)+'.received').exists() and not proof.exists(), 'Cross-assigned upstream key accepted.'
+
+
+def radius_mount(markers, *, expect_inode):
+    """Read the package paths inside the running MainPID's mount namespace."""
+    pid = run('systemctl', 'show', '--property=MainPID', '--value', 'freeradius.service').decode().strip()
+    assert int(pid) > 1
+    ns = ['nsenter', '--target', pid, '--mount', '--']
+    config_dir = '/etc/freeradius/3.0/'
+    for name in ('clients.conf', 'proxy.conf'):
+        path = config_dir+name
+        visible = run(*ns, 'runuser', '-u', 'freerad', '--', 'cat', path)
+        if name == 'proxy.conf':
+            assert all(marker.encode() in visible for marker in markers.values()), 'Incomplete mounted generation.'
+            assert int(run(*ns, 'stat', '-c', '%i', path)) == expect_inode
+            options = run(*ns, 'findmnt', '-n', '-o', 'VFS-OPTIONS', '--mountpoint', path)
+            assert b'ro' in options.strip().split(b','), 'Writable credential bind mount.'
+            denied = subprocess.run([*ns, 'runuser', '-u', 'fixture-other', '--', 'test', '-r', path], timeout=10)
+            assert denied.returncode != 0, 'An unrelated user can read the credential generation.'
+        else:
+            assert visible.startswith(b'#') and b'secret' not in visible
+        # Check write access without changing the content on a failing test.
+        denied = subprocess.run([*ns, 'runuser', '-u', 'freerad', '--', 'python3', '-c',
+                                 'import os,sys;os.close(os.open(sys.argv[1],os.O_WRONLY))', path],
+                                capture_output=True, timeout=10)
+        assert denied.returncode != 0, 'Daemon can write '+name
 
 
 def native_radius_startup(files, policy, references):
-    """Cold start and restart the packaged daemon with the real generated sandbox."""
+    """Exercise storage recovery, publication, and the real daemon's read-only bind."""
+    import grp
     units = Path('/run/systemd/system')
     units.mkdir(exist_ok=True)
     for name in ('lanrith-services.service', 'nftables.service'):
@@ -218,13 +353,14 @@ def native_radius_startup(files, policy, references):
     run('ip', 'netns', 'add', 'lanrith-services')
     network = ['nsenter', '--net=/run/netns/lanrith-services', '--']
     run(*network, 'ip', 'link', 'set', 'lo', 'up')
-    for address in policy['listeners']:
-        run(*network, 'ip', 'address', 'add',
-            address+('/128' if ':' in address else '/32'), 'dev', 'lo')
+    for address in [*policy['listeners'], policy['proxy']['address'], '192.168.10.40', '192.168.10.33']:
+        run(*network, 'ip', 'address', 'add', address+('/128' if ':' in address else '/32'), 'dev', 'lo')
     store = Path('/var/lib/lanrith/credentials')
     store.mkdir(parents=True, mode=0o700, exist_ok=True)
-    for name in references:
-        (store/name).write_bytes(b'A'*32)
+    first, second = radius_markers('first'), radius_markers('second')
+    assert references == set(first)
+    for name, marker in first.items():
+        (store/name).write_text(marker)
         (store/name).chmod(0o600)
     metadata = Path('/usr/share/lanrith')
     metadata.mkdir(parents=True, exist_ok=True)
@@ -238,36 +374,78 @@ def native_radius_startup(files, policy, references):
     entry.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0,"/usr/lib/lanrith")\n'
                      'from lanrith.radius_runtime import main\nsys.exit(main())\n')
     entry.chmod(0o755)
+    ready = 'fixture-radius-ready.service'
+    (units/ready).write_text('[Unit]\nRequires=freeradius.service\nAfter=freeradius.service\n'
+                             '[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
     run('systemctl', 'daemon-reload')
-    assert not Path('/run/lanrith-radius').exists()
+    root = Path('/run/lanrith-radius')
+    root.mkdir()
+    group = grp.getgrnam('freerad').gr_gid
+    run('mount', '-t', 'tmpfs', '-o', f'size=64k,mode=0700,gid={group}', 'tmpfs', str(root))
+    published = root/'radius.conf'
+    filler = root/'space-pressure'
+    filler.write_bytes(bytes(65536))
+    daemon, stager = 'freeradius.service', 'lanrith-radius-runtime.service'
     shutil.rmtree('/var/log/freeradius', ignore_errors=True)
     try:
-        run('systemctl', 'start', 'freeradius.service')
-        run('systemctl', 'is-active', '--quiet', 'freeradius.service')
-        assert Path('/var/log/freeradius').is_dir()
-        fragment = Path('/run/lanrith-radius/clients.conf')
-        before = fragment.stat()
-        assert before.st_uid == 0 and stat.S_IMODE(before.st_mode) == 0o640
-        for user in ('freerad', 'fixture-other'):
-            denied = subprocess.run(['runuser', '-u', user, '--', 'python3', '-c',
-                'from pathlib import Path;Path("/run/lanrith-radius/clients.conf").write_bytes(b"changed")'],
-                capture_output=True, timeout=10)
-            assert denied.returncode != 0
-        denied = subprocess.run(['runuser', '-u', 'freerad', '--', str(entry), 'stage'],
-                                capture_output=True, timeout=10)
+        # Release real tmpfs pressure only after the stager itself reports ENOSPC.
+        run('systemctl', 'start', '--no-block', ready)
+        wait(lambda: b'retrying staging after ENOSPC' in run('journalctl', '-b', '-u', stager, '-o', 'cat'))
+        assert not published.exists() and not active(daemon)
+        filler.unlink()
+        wait(lambda: active(ready))
+        assert active(daemon) and Path('/var/log/freeradius').is_dir()
+        before = published.stat()
+        assert (before.st_uid, before.st_gid, stat.S_IMODE(before.st_mode)) == (0, group, 0o640)
+        radius_mount(first, expect_inode=before.st_ino)
+        denied = subprocess.run(['runuser', '-u', 'freerad', '--', str(entry), 'stage'], capture_output=True, timeout=10)
         assert denied.returncode != 0
-        run('systemctl', 'restart', 'freeradius.service')
-        run('systemctl', 'is-active', '--quiet', 'freeradius.service')
-        assert fragment.stat().st_ino != before.st_ino
-        native_radius_clients(policy, network)
-    except AssertionError:
-        diagnostic = subprocess.run(['journalctl', '-b', '--no-pager', '-n', '50',
-            '-u', 'freeradius.service', '-u', 'lanrith-radius-runtime.service'], capture_output=True, timeout=10)
-        print(diagnostic.stdout[-12000:].decode(errors='replace'), flush=True)
-        raise
+
+        for name, marker in second.items():
+            (store/name).write_text(marker)
+        (root/'.pending').write_bytes(b'interrupted scratch')
+        run('systemctl', 'start', stager)
+        assert published.stat().st_ino != before.st_ino and list(root.iterdir()) == [published]
+        run('systemctl', 'reload', daemon)
+        radius_mount(first, expect_inode=before.st_ino)
+        native_radius_clients(policy, network, first)
+        run('systemctl', 'restart', daemon)
+        radius_mount(second, expect_inode=published.stat().st_ino)
+        native_radius_clients(policy, network, second, crossed=True)
+
+        run('systemctl', 'stop', daemon)
+        before = published.stat()
+        filler.write_bytes(bytes(os.statvfs(root).f_bavail * os.statvfs(root).f_frsize))
+        started = time.monotonic()
+        failed = subprocess.run(['systemctl', 'start', daemon], capture_output=True, timeout=31)
+        duration = time.monotonic()-started
+        assert failed.returncode and not active(daemon) and 10 <= duration < 30
+        assert published.stat().st_ino == before.st_ino
+        filler.unlink()
+        invalid = 'invalid synthetic credential'
+        manifest = metadata/'radius.json'
+        for fault in ('credential', 'manifest owner', 'manifest syntax'):
+            run('systemctl', 'reset-failed')
+            (store/'radius_wired').write_text(invalid if fault == 'credential' else second['radius_wired'])
+            os.chown(manifest, 1 if fault == 'manifest owner' else 0, 0)
+            manifest.write_text('{}' if fault == 'manifest syntax' else files['usr/share/lanrith/radius.json'])
+            started = time.monotonic()
+            failed = subprocess.run(['systemctl', 'start', daemon], capture_output=True, timeout=12)
+            assert failed.returncode and not active(daemon) and time.monotonic()-started < 10, fault
+            assert published.stat().st_ino == before.st_ino and list(root.iterdir()) == [published]
+        manifest.write_text(files['usr/share/lanrith/radius.json'])
+        run('systemctl', 'reset-failed')
+        run('systemctl', 'start', daemon)
+        radius_mount(second, expect_inode=published.stat().st_ino)
+        journal = run('journalctl', '-b', '-u', stager, '-u', daemon, '-o', 'cat')
+        assert b'ENOSPC; service remains closed' in journal
+        assert not any(marker.encode() in journal for marker in [*first.values(), *second.values(), invalid])
+        print(f'Nested NAS and proxy keys, pinned rotation and recoverable startup passed. '
+              f'Persistent ENOSPC withheld startup in {duration:.2f}s.', flush=True)
     finally:
-        run('systemctl', 'stop', 'freeradius.service')
+        run('systemctl', 'stop', daemon)
         run('ip', 'netns', 'delete', 'lanrith-services')
+        run('umount', str(root))
 
 
 def native_dns64_startup():
@@ -321,6 +499,7 @@ def native_service_authentication(root):
 
     value = radius_declaration()
     value['identity'] = {'radius': value['identity']['radius']}
+    value['identity']['radius']['clients']['wireless']['address'] = '192.168.10.32/27'
     value['identity']['radius']['admission'] = {'network': 'devices'}
     value['access']['rules'] = []
     files = config.render(value)
@@ -332,12 +511,8 @@ def native_service_authentication(root):
             path.parent.mkdir(parents=True, exist_ok=True)
             # Distribution module links may point to files in mods-available.
             path.write_text(text)
-    from lanrith import radius_runtime
     policy = json.loads(files['usr/share/lanrith/radius.json'])
     references = {item['reference'] for item in credential_config.catalog(config.normalize(value))['credentials']}
-    secrets = {name: 'A'*32 for name in references}
-    Path('/etc/freeradius/3.0/clients.conf').write_text(radius_runtime.clients_configuration(policy, secrets))
-    Path('/etc/freeradius/3.0/proxy.conf').write_text(radius_runtime.proxy_configuration(policy, secrets))
     run('freeradius', '-Cx', '-lstdout')
     native_radius_startup(files, policy, references)
     native_dns64_startup()
@@ -425,23 +600,51 @@ def main():
         run('systemctl', 'daemon-reload')
         run('systemd-analyze', 'verify', '--man=no', '--recursive-errors=no',
             *[str(path) for path in units.glob('*credential*')])
-        for slot, expected in (('first', first), ('second', second), ('first', first)):
-            run('systemctl', 'stop', 'fixture-image-reader.service', 'lanrith-credential-ready.service')
-            # Replace this disposable fixture's mounted image input. No shared
-            # credential state participates in the simulated slot selection.
-            shutil.rmtree('/usr/lib/lanrith/credentials')
-            shutil.copytree(root/slot/'mkosi.extra/usr/lib/lanrith/credentials', '/usr/lib/lanrith/credentials')
-            started = time.monotonic()
-            run('systemctl', 'start', 'fixture-image-reader.service')
-            assert time.monotonic()-started < 20
-            observed = json.loads(Path('/var/lib/fixture-image-reader/observed.json').read_bytes())
-            assert observed == {i['reference']: hashlib.sha256(expected[i['reference']]).hexdigest()
-                                for i in catalog['credentials']}
+        with log_peer(root, first['ingest'], second['ingest']) as (authenticate, retire):
+            retired = False
+            for slot, expected, status in (('first', first, 204), ('second', second, 204), ('first', first, 204),
+                                          ('first', first, 401), ('second', second, 204), ('first', first, 401)):
+                run('systemctl', 'stop', 'fixture-image-reader.service', 'lanrith-credential-ready.service')
+                # Replace this disposable fixture's mounted image input. No shared
+                # credential state participates in the simulated slot selection.
+                shutil.rmtree('/usr/lib/lanrith/credentials')
+                shutil.copytree(root/slot/'mkosi.extra/usr/lib/lanrith/credentials', '/usr/lib/lanrith/credentials')
+                started = time.monotonic()
+                run('systemctl', 'start', 'fixture-image-reader.service')
+                assert time.monotonic()-started < 20
+                observed = json.loads(Path('/var/lib/fixture-image-reader/observed.json').read_bytes())
+                assert observed == {i['reference']: hashlib.sha256(expected[i['reference']]).hexdigest()
+                                    for i in catalog['credentials']}
+                if status == 401 and not retired:
+                    retire()
+                    retired = True
+                authenticate(status)
+        installed = json.loads((tree/'usr/share/lanrith/installed.json').read_bytes())
+        optional = next(name for name, row in installed['extension_credential_catalogs'].items()
+                        if not row['core_required'])
+        required = next(name for name, row in installed['extension_credential_catalogs'].items()
+                        if row['core_required'])
+        run('systemctl', 'start', required+'.service')
+        failed = subprocess.run(['systemctl', 'start', optional+'.service'], capture_output=True, timeout=35)
+        assert failed.returncode and not active(optional+'.service')
+        Path(installed['state_directory']).chmod(0o700)  # Normally set by appliance initialization.
+        image_operation.save_accepted(installed)
+        runtime.publish_boot(installed, Path(installed['uki_name']), accepted=True)
         for identity in selected:
             run('systemctl', 'start', identity+'.service')
             observed = json.loads(Path('/var/lib/fixture-'+identity+'/observed.json').read_bytes())
             assert observed['uid'] != 0 and int(observed['CapEff'], 16) == 0 and observed['NoNewPrivs'] == '1'
             assert observed['sha256'] == hashlib.sha256(first[identity+'/bootstrap']).hexdigest()
+        # A direct restart must consult the visible promotion again, even on
+        # the same boot when a previous activation successfully loaded its file.
+        run('systemctl', 'stop', optional+'.service')
+        pending = {'schema': 1, 'target': image_operation.identity(installed), 'previous': None,
+                   'operation': None, 'manual': True}
+        image_operation.atomic(image_operation.promotion_path(installed), pending)
+        failed = subprocess.run(['systemctl', 'start', optional+'.service'], capture_output=True, timeout=35)
+        assert failed.returncode and not active(optional+'.service')
+        image_operation.finish_promotion(installed)
+        run('systemctl', 'start', optional+'.service')
         # Unrelated users and the operator cannot read the immutable inputs.
         for user in ('fixture-operator', 'fixture-other', 'fixture-app'):
             result = subprocess.run(['runuser', '-u', user, '--', 'python3', '-c',
@@ -464,6 +667,7 @@ def main():
             assert failed.returncode != 0 and time.monotonic()-started < 20
             assert not active('fixture-image-reader.service')
             run('systemctl', 'reset-failed')
+        independent_readers(tree, units, catalog)
         source.write_bytes(first['ingest']); source.chmod(0o600)
         run('systemctl', 'start', 'lanrith-credential-ready.service')
         generated_log_staging(tree, units, first['ingest'].removesuffix(b'\n'), value)
@@ -506,10 +710,13 @@ def main():
             'checks': ['basic-router-no-credential-requirement', 'dns-authority-without-writer-credentials',
                        'radius-proxy-without-directory-credentials', 'enabled-log-without-authentication',
                        'radius-native-cold-start-restart-and-readonly-fragments', 'all-radius-nas-clients-reach-authenticated-proxy',
+                       'radius-bounded-storage-recovery', 'radius-atomic-rotation-and-nested-credentials',
                        'dns64-native-sandbox-cold-start-restart',
                        'nine-native-credentials-at-first-start', 'no-upload-or-mutable-credential-store',
                        'native-loadcredential-unprivileged-reader', 'operator-and-unrelated-user-read-denial',
-                       'image-set-rotation-and-fallback-selection', 'missing-and-malformed-input-fast-failure',
+                       'image-set-rotation-and-fallback-selection', 'fresh-log-peer-authentication-through-retirement',
+                       'missing-and-malformed-input-fast-failure',
+                       'independent-service-credential-startup', 'optional-credential-current-boot-commit',
                        'required-and-optional-extension-image-credentials', 'generated-log-credential-staging',
                        'snmp-image-input-with-separate-engine-state', 'snmp-fresh-engine-directory-before-sandbox',
                        'pid1-named-user-acl-and-owning-group-denial', 'no-secret-in-journal'],

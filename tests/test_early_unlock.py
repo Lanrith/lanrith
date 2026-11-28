@@ -77,6 +77,32 @@ class EarlyUnlockTests(unittest.TestCase):
 
 
 
+    def test_partial_inspection_requires_one_orphan_and_the_full_original_tpm_policy(self):
+        from lanrith import recovery_enrollment
+        wrong = {'tokens': {'0': {'type': 'systemd-tpm2', 'keyslots': ['0'], 'tpm2-pcrs': [7]}},
+                 'keyslots': {'0': {}, '1': {}}}
+        for slots in ({'0': {}}, wrong['keyslots'], {**wrong['keyslots'], '2': {}}):
+            with self.subTest(slots=list(slots)), patch.object(recovery_enrollment, 'command') as command, \
+                    patch.object(unlock, 'token_test') as probe, self.assertRaises(ReleaseError):
+                recovery_enrollment.repair_partial(self.installed(), '/dev/synthetic', {**wrong, 'keyslots': slots})
+            command.assert_not_called()
+            probe.assert_not_called()
+
+    def test_migration_and_verification_only_boot_cannot_start_partial_enrollment_repair(self):
+        from lanrith import recovery_enrollment
+        for migration in (False, True):
+            installed = self.installed()
+            if migration:
+                installed['tpm_transition'] = {'luks_uuid': 'synthetic'}
+            with self.subTest(migration=migration), patch.object(unlock, 'in_initrd'), \
+                    patch.object(unlock, 'OBSERVATION', Path('/unused-synthetic-observation')), \
+                    patch.object(unlock, 'command', side_effect=['{}','synthetic']), \
+                    patch('lanrith.tpm_migration.validate', side_effect=lambda obj: obj), \
+                    patch.object(factory, 'state_tokens', side_effect=ReleaseError('incomplete header')), \
+                    patch.object(recovery_enrollment, 'repair_partial') as repair, self.assertRaises(ReleaseError):
+                unlock.unlock(installed, '/dev/synthetic', allow_recovery_enrollment=migration)
+            repair.assert_not_called()
+
     def test_bound_migration_cannot_enroll_a_replacement_recovery_method(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(factory, 'recovery') as recovery:
             root = Path(directory)
@@ -86,8 +112,11 @@ class EarlyUnlockTests(unittest.TestCase):
             marker = root/'var/lib/lanrith/recovery-key-enrolled'
             marker.parent.mkdir(parents=True)
             marker.touch()
-            self.assertEqual(unlock.ensure_recovery_marker(self.installed(), root, allow_enrollment=False), marker)
-            recovery.assert_not_called()
+            with patch.object(unlock, 'validate_existing_recovery_marker') as validate:
+                self.assertEqual(unlock.ensure_recovery_marker(self.installed(), root, allow_enrollment=False),
+                                 marker.with_name('recovery-key-verified'))
+            validate.assert_called_once_with(marker)
+            recovery.assert_called_once_with(self.installed(), root=str(root), verification_only=True)
 
     def test_migration_recovery_marker_rejects_unsafe_metadata(self):
         directory = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
@@ -132,7 +161,7 @@ class EarlyUnlockTests(unittest.TestCase):
         root = Path(temporary.name)
         state = root/'var/lib/lanrith'
         state.mkdir(parents=True)
-        (state/'recovery-key-enrolled').touch()
+        (state/'recovery-key-verified').touch()
         metadata = {'tokens': {'0': {'type': 'systemd-tpm2', 'keyslots': ['0']},
                                '1': {'type': 'systemd-recovery'}}}
         events = []
@@ -140,7 +169,7 @@ class EarlyUnlockTests(unittest.TestCase):
             events.append(args[0])
             return json.dumps(metadata) if args[:2] == ['cryptsetup', 'luksDump'] else ''
         with patch.object(unlock, 'SYSROOT', root), patch.object(unlock, 'OBSERVATION', root/'observation'), \
-                patch.object(unlock, 'in_initrd'), patch.object(unlock, 'command', side_effect=command), \
+                patch('lanrith.recovery_enrollment.verified', return_value=True), patch.object(unlock, 'in_initrd'), patch.object(unlock, 'command', side_effect=command), \
                 patch.object(factory, 'enrollment_tokens', return_value=['systemd-tpm2', 'systemd-recovery']), \
                 patch.object(factory, 'initialize'), patch.object(factory, 'recovery') as recovery, \
                 patch.object(unlock, 'token_test', side_effect=[True, True, late]), \
@@ -180,7 +209,7 @@ class EarlyUnlockTests(unittest.TestCase):
                 if failure == 'legacy-retired':
                     current['tokens']['0']['keyslots'] = []
                 root = Path(directory)
-                marker = root/'var/lib/lanrith/recovery-key-enrolled'
+                marker = root/'var/lib/lanrith/recovery-key-verified'
                 marker.parent.mkdir(parents=True)
                 marker.touch()
                 barrier = [False]
@@ -197,7 +226,7 @@ class EarlyUnlockTests(unittest.TestCase):
                         return True
                     return (failure == 'strong-still-unlocks') if identifier == '2' else failure != 'legacy-lost'
                 with patch.object(unlock, 'SYSROOT', root), patch.object(unlock, 'OBSERVATION', root/'observation'), \
-                        patch.object(unlock, 'in_initrd'), patch.object(unlock, 'command', side_effect=command), \
+                        patch('lanrith.recovery_enrollment.verified', return_value=True), patch.object(unlock, 'in_initrd'), patch.object(unlock, 'command', side_effect=command), \
                         patch.object(factory, 'state_tokens', return_value=['systemd-tpm2', 'systemd-recovery']), \
                         patch.object(factory, 'initialize'), patch.object(factory, 'verified_root', return_value=('/dev/test', set())), \
                         patch.object(tpm_migration, 'validate', return_value=installed['tpm_transition']), \

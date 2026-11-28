@@ -6,9 +6,11 @@ cannot find a session. The UART receive counter tracks keyboard input even
 while a foreground program owns the terminal.
 """
 
-import re
 import json
+import os
+import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,13 +22,22 @@ UNIT = 'serial-getty@'+TTY+'.service'
 SERIAL_STATUS = Path('/proc/tty/driver/serial')
 TIMEOUT = POLICY.get('timeout_seconds', 300)
 POLL_SECONDS = 2
+PERMIT = Path('/run/lanrith-serial-watchdog/getty')
 
 
-@dataclass
-class State:
-    pid: int = 0
+@dataclass(frozen=True)
+class Sample:
+    # None denotes unknown visibility, an empty string a confirmed empty unit.
+    invocation: str | None
+    active: bool = False
     rx: int | None = None
-    last_input: float = 0
+
+
+@dataclass(frozen=True)
+class State:
+    invocation: str = ''
+    rx: int | None = None
+    deadline: float | None = None
 
 
 def receive_count(status=SERIAL_STATUS):
@@ -43,67 +54,96 @@ def receive_count(status=SERIAL_STATUS):
     return None
 
 
-def main_pid():
+def has_login_child(pid):
+    return bool(Path(f'/proc/{pid}/task/{pid}/children').read_text().strip())
+
+
+def observe():
     try:
         result = subprocess.run(
-            ['systemctl', 'show', '--property=MainPID', '--value', UNIT],
-            capture_output=True, text=True, check=False, timeout=5,
+            ['systemctl', 'show', '-p', 'MainPID,ControlPID,InvocationID', UNIT],
+            capture_output=True, text=True, check=True, timeout=POLL_SECONDS,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return 0
-    if result.returncode:
-        return 0
-    try:
-        return int(result.stdout.strip())
-    except ValueError:
-        return 0
+        fields = dict(line.split('=', 1) for line in result.stdout.splitlines())
+        main = int(fields['MainPID'])
+        control = int(fields['ControlPID'])
+        if main == control == 0:
+            return Sample('')
+        invocation = fields['InvocationID']
+        if not re.fullmatch('[a-f0-9]{32}', invocation) or main < 0 or control < 0 or 1 in (main, control):
+            return Sample(None)
+        if main:
+            return Sample(invocation, has_login_child(main), receive_count())
+
+        # ExecStartPre waits here before agetty can accept any credentials.
+        # Verify the same proc interface used for logins from the watcher's
+        # own mount namespace, including on recovery from an observation fault.
+        has_login_child(control)
+        PERMIT.write_text(f'{invocation} {control}\n')
+        return Sample('')
+    except (KeyError, OSError, ValueError, subprocess.SubprocessError):
+        return Sample(None)
 
 
-def has_login_child(pid):
-    if pid <= 1:
-        return False
-    try:
-        children = Path(f'/proc/{pid}/task/{pid}/children').read_text()
-    except OSError:
-        return False
-    return bool(children.strip())
+def wait_for_supervision():
+    expected = f'{os.environ["INVOCATION_ID"]} {os.getpid()}\n'
+    while True:
+        try:
+            if PERMIT.read_text() == expected:
+                return
+        except FileNotFoundError:
+            pass
+        time.sleep(.1)
 
 
-def advance(state, pid, active, rx, now):
-    """Return the next state and whether the authenticated session expired."""
-    if not active or not pid:
+def advance(state, sample, now):
+    if sample.invocation is None:
+        if state.deadline is None:
+            state = State(deadline=now + TIMEOUT)
+    elif not sample.invocation or (not sample.active and sample.invocation != state.invocation):
         return State(), False
-    if state.pid != pid:
-        return State(pid, rx, now), False
-    if rx is not None and rx != state.rx:
-        return State(pid, rx, now), False
-    return State(pid, state.rx, state.last_input), now - state.last_input >= TIMEOUT
+    else:
+        # login waits for its shell, then exits. Once seen, a transient empty
+        # child list cannot establish logout within this systemd invocation.
+        if sample.invocation != state.invocation:
+            deadline = now + TIMEOUT
+            if not state.invocation and state.deadline is not None:
+                deadline = state.deadline  # First verified login after a gap.
+            state = State(sample.invocation, sample.rx, deadline)
+        elif sample.rx is not None:
+            deadline = state.deadline
+            if state.rx is not None and state.rx != sample.rx:
+                deadline = now + TIMEOUT
+            state = State(sample.invocation, sample.rx, deadline)
+    return state, now >= state.deadline
 
 
 def main():
     state = State()
+    visible = True
     while True:
-        pid = main_pid()
-        rx = receive_count()
-        state, expired = advance(state, pid, has_login_child(pid), rx, time.monotonic())
+        started = time.monotonic()
+        sample = observe()
+        if visible and sample.invocation is None:
+            print('serial session observation unavailable', flush=True)
+        visible = sample.invocation is not None
+        observed = time.monotonic() if visible else started
+        state, expired = advance(state, sample, observed)
         if expired:
-            # Recheck to avoid logging out a new session after a getty restart
-            # or a new keystroke between the poll and the restart request.
-            if main_pid() == pid and has_login_child(pid) and receive_count() == rx:
+            # Give a replacement login or newly received input its own deadline.
+            sample = observe()
+            state, expired = advance(state, sample, time.monotonic())
+            if expired:
+                if sample.invocation is None:
+                    sys.exit('serial observation deadline reached; closing supervised getty')
                 print('serial administration idle deadline reached; restarting getty', flush=True)
-                try:
-                    result = subprocess.run(
-                        ['systemctl', 'restart', UNIT], check=False, timeout=15,
-                    )
-                except (OSError, subprocess.TimeoutExpired) as error:
-                    print(f'failed to restart serial getty: {error}', flush=True)
-                else:
-                    if result.returncode == 0:
-                        state = State()
-                    else:
-                        print(f'failed to restart serial getty: exit {result.returncode}', flush=True)
-        time.sleep(POLL_SECONDS)
+                # A failed request must also close admission via BindsTo.
+                subprocess.run(['systemctl', '--no-block', 'restart', UNIT], check=True, timeout=POLL_SECONDS)
+        time.sleep(max(0, POLL_SECONDS - (time.monotonic() - started)))
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:] == ['--wait-for-supervision']:
+        wait_for_supervision()
+    else:
+        main()

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shutil
 import stat
 import tempfile
 
@@ -22,6 +23,30 @@ def read_regular(path, maximum, *, private=False):
         if len(result) > maximum:
             raise ValueError('DNS input exceeds its bound.')
         return result
+
+
+class IncompleteRestore(ValueError):
+    """A journal survives without its matching base zone."""
+
+
+def existing_zone(target, owner):
+    try:
+        metadata = target.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != owner or metadata.st_mode & 0o022:
+        raise ValueError('Existing persistent DNS zone has unsafe metadata.')
+    return True
+
+
+def needs_seed(target, owner):
+    if existing_zone(target, owner):
+        return False
+    try:
+        target.with_name(target.name+'.jnl').lstat()
+    except FileNotFoundError:
+        return True
+    raise IncompleteRestore(f'Incomplete DNS restore for {target.name[3:]}: journal present without base zone.')
 
 
 def prepare(manifest, credentials, runtime, *, root=Path('/')):
@@ -49,25 +74,40 @@ def prepare(manifest, credentials, runtime, *, root=Path('/')):
                 seed['target'] != '/var/cache/bind/'+Path(seed['source']).name):
             raise ValueError('Invalid persistent DNS seed.')
         source, target = root/seed['source'].lstrip('/'), root/seed['target'].lstrip('/')
-        content_zone = read_regular(source, 1024*1024)
         if target.parent.is_symlink() or not target.parent.is_dir():
             raise ValueError('Invalid persistent DNS directory.')
+        if not needs_seed(target, bind.pw_uid):
+            continue
         descriptor, temporary = tempfile.mkstemp(prefix='.lanrith-seed-', dir=target.parent)
         try:
             with os.fdopen(descriptor, 'wb') as stream:
-                stream.write(content_zone)
+                source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(source_fd, 'rb') as zone:
+                    info = os.fstat(zone.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+                        raise ValueError('Invalid DNS seed metadata.')
+                    shutil.copyfileobj(zone, stream)
+                    if stream.tell() != info.st_size:
+                        raise ValueError('DNS seed size changed while copying.')
                 stream.flush()
-                os.fsync(stream.fileno())
                 os.fchmod(stream.fileno(), 0o640)
                 os.fchown(stream.fileno(), bind.pw_uid, bind.pw_gid)
+                os.fsync(stream.fileno())
+            if not needs_seed(target, bind.pw_uid):
+                continue
             try:
                 # Link a complete file without replacing an existing name.
                 # A killed initializer cannot leave a partially written zone.
                 os.link(temporary, target, follow_symlinks=False)
             except FileExistsError:
-                metadata = target.lstat()
-                if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != bind.pw_uid or metadata.st_mode & 0o022:
-                    raise ValueError('Existing persistent DNS zone has unsafe metadata.') from None
+                if not existing_zone(target, bind.pw_uid):
+                    raise ValueError('Concurrent DNS seed disappeared.') from None
+            else:
+                directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         finally:
             os.unlink(temporary)
     descriptor, temporary = tempfile.mkstemp(prefix='.keys-', dir=runtime)
@@ -89,5 +129,7 @@ if __name__ == '__main__':
         manifest = json.loads(read_regular(Path('/usr/share/lanrith/authoritative.json'), 1024*1024))
         prepare(manifest, Path(os.environ.get('CREDENTIALS_DIRECTORY', '/run/credentials/lanrith-dns-state.service')),
                 Path('/run/lanrith-dns'))
+    except IncompleteRestore as error:
+        raise SystemExit(str(error)) from None
     except Exception:
         raise SystemExit('Unable to prepare authoritative DNS state.') from None

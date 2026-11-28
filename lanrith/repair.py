@@ -172,6 +172,7 @@ def inspect_contracts(current_root, fallback_root, certificate, *, image_id, ret
                     retained['trust'] == current_contract['trust'] and
                     current_contract['state'].keys() <= retained['state'].keys(),
                     'Retained state inventory differs from the accepted image.')
+    image_contract.check_ssh_reader(retained, fallback_contract)
     for name in retained['state'].keys() & fallback_contract['state'].keys():
         release.require(retained['state'][name]['writes'] in fallback_contract['state'][name]['reads'],
                         'Fallback cannot read retained state.')

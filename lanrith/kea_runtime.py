@@ -39,12 +39,11 @@ def constrain(path, uid, pid, deadline):
             require((peer_pid, peer_uid, peer_gid) == (pid, uid, gid))
         # O_PATH plus the procfs descriptor link changes this checked inode,
         # rather than following a replaced pathname. No request is sent to Kea.
-        # Only the daemon and declared service collectors share this group.
-        # Collectors drop DAC capabilities and cannot use owner-only IPC.
-        os.chmod('/proc/self/fd/'+str(descriptor), 0o660)
+        # Only the daemon identity and its constrained observation helpers need IPC.
+        os.chmod('/proc/self/fd/'+str(descriptor), 0o600)
         current = path.lstat()
         require((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino) and
-                current.st_uid == uid and current.st_gid == gid and stat.S_IMODE(current.st_mode) == 0o660 and
+                current.st_uid == uid and current.st_gid == gid and stat.S_IMODE(current.st_mode) == 0o600 and
                 time.monotonic() <= deadline)
     finally:
         os.close(descriptor)
@@ -56,7 +55,7 @@ def ready(pid):
     require(0 < uid < (1 << 32) and 0 < account.pw_gid < (1 << 32) and os.getuid() == os.geteuid() == uid and
             os.getgid() == os.getegid() == account.pw_gid and
             type(pid) is int and 1 < pid <= (1 << 31)-1)
-    deadline = time.monotonic()+10
+    deadline = time.monotonic()+3
     while True:
         try:
             constrain(ENDPOINT, uid, pid, deadline)

@@ -91,7 +91,7 @@ class StagingFaultError(release.ReleaseError):
         super().__init__('Inactive-slot interruption failed: '+json.dumps(diagnostic, sort_keys=True))
 
 
-def interrupt_staging(guest, disk, sequence, accepted, *, timeout=900):
+def interrupt_staging(guest, disk, sequence, accepted, upload_path, *, timeout=900):
     """Cut guest power only after a real inactive-slot GPT write is visible."""
     regular(disk)
     release.require(type(sequence) is int and type(accepted) is int and sequence > accepted > 0,
@@ -124,7 +124,7 @@ def interrupt_staging(guest, disk, sequence, accepted, *, timeout=900):
     # Files drain both streams even if the child emits more than a pipe holds.
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         process = subprocess.Popen(guest.ssh_arguments(
-            f'sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/{sequence}'),
+            'sudo lanrith-runtime promote '+shlex.quote(upload_path)),
             stdin=subprocess.DEVNULL, stdout=output, stderr=errors, env=guest.environment)
         try:
             while time.monotonic() < deadline:
@@ -244,7 +244,8 @@ class Guest:
         self.firmware = regular(Path('/usr/share/OVMF/OVMF_CODE_4M.secboot.fd'))
         variables = regular(Path('/usr/share/OVMF/OVMF_VARS_4M.fd'))
         firmware = ['virt-fw-vars', '--input', str(variables), '--output', str(work/'vars.fd'),
-                    '--enroll-cert', str(secret/'test.crt'), '--add-mok', OWNER, str(secret/'test.crt')]
+                    '--enroll-cert', str(secret/'test.crt'), '--add-db', OWNER, str(secret/'test.crt'),
+                    '--add-mok', OWNER, str(secret/'test.crt')]
         firmware += (['--secure-boot'] if secure_boot else
                      ['--set-false', 'SecureBootEnable', '--set-fallback-no-reboot'])
         run(*firmware)
@@ -356,6 +357,24 @@ class Guest:
         if answer is not None:
             self.serial.sendall(answer.encode()+b'\r')
 
+    def verify_disposable_copy(self, timeout=600):
+        # The generated key and prompt can arrive in different serial reads. Only this
+        # private fixture consumes both; diagnostics never receive captured key text.
+        prompt = b'Offline recovery key: '
+        with self.console.condition:
+            self.console.condition.wait_for(lambda: prompt in self.console.data or self.console.closed, timeout=timeout)
+            before, found, after = self.console.data.partition(prompt)
+            matches = set(re.findall(rb'\b(?:[cbdefghijklnrtuv]{8}-){7}[cbdefghijklnrtuv]{8}\b', before))
+            release.require(found and len(matches) == 1, 'Disposable recovery copy could not be verified.')
+            copy = bytearray(matches.pop())
+            self.console.data = after
+        try:
+            self.serial.sendall(copy+b'\r')
+            if getattr(self, 'retain_recovery_copy', False):
+                self.recovery_key = copy.copy()
+        finally:
+            copy[:] = bytes(len(copy))
+
     def expect_any(self, patterns, timeout=600):
         deadline = time.monotonic()+timeout
         expressions = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
@@ -378,7 +397,7 @@ class Guest:
         buffer = self.buffer
         flags = {name: marker.lower() in buffer.lower() for name, marker in (
             ('secure-boot-rejection', b'Security Violation'), ('kernel-started', b'Linux version'),
-            ('emergency-mode', b'emergency mode'), ('recovery-prompt', b'RECOVERY-KEY-STORED'),
+            ('emergency-mode', b'emergency mode'), ('recovery-prompt', b'Offline recovery key: '),
             ('bootloader-menu', b'Linux Boot Manager'), ('kernel-panic', b'Kernel panic'),
             ('guest-reboot', b'Rebooting'), ('guest-shutdown', b'systemd-shutdown'),
             ('pid1-freeze', b'Freezing execution'))}
@@ -409,7 +428,12 @@ class Guest:
         literals = set()
         for message in ('Factory installation failed closed.', 'Runtime operation failed.',
                         'Automatic fallback unavailable; holding for recovery.',
-                        'Entering emergency mode. Boot verified signed recovery media.'):
+                        'Entering emergency mode. Boot verified signed recovery media.',
+                        'This image has no bound previous release.',
+                        'The signed recovery policy is unqualified for fallback.',
+                        'Automatic fallback verification failed.',
+                        'Automatic fallback was already attempted during this boot.',
+                        'A one-shot boot choice is already pending.'):
             if message.encode() in buffer:
                 literals.add(message)
         for executable in ('bootctl', 'cryptsetup', 'dd', 'dmsetup', 'findmnt', 'ip', 'lsblk',
@@ -739,7 +763,12 @@ sha256sum /var/lib/lanrith/ssh-host-keys/ssh_host_ed25519_key.pub \
 import json
 print(json.dumps(lease_snapshot('/var/lib/kea/kea-leases4.csv'), sort_keys=True, separators=(',', ':')))
 PY
-journalctl --quiet --no-pager -t lanrith-qualification | grep -q synthetic-persistent-state
+dir=/var/log/journal/$(cat /etc/machine-id)
+first_boot=$(cat /var/lib/lanrith/qualification-state/journal-boot)
+first_marker=$(cat /var/lib/lanrith/qualification-state/journal-marker)
+journalctl --directory="$dir" --quiet -n1 -o cat "_BOOT_ID=$first_boot" _TRANSPORT=syslog _UID=0 \
+  SYSLOG_IDENTIFIER=lanrith-journal-flush "MESSAGE=$first_marker" | grep -Fxq "$first_marker"
+journalctl --directory="$dir" --quiet --no-pager -t lanrith-qualification | grep -q synthetic-persistent-state
 '''
 
 
@@ -909,6 +938,7 @@ for unit in dpkg-db-backup.service dpkg-db-backup.timer; do
     test "$(systemctl show --property=ActiveState --value "$unit")" = inactive
 done
 python3 - <<'PY'
+import json
 from pathlib import Path
 import pwd
 import subprocess
@@ -934,6 +964,7 @@ networkd_allowed = sum(1 << bit for bit in (10, 11, 12, 13, 21, 39))
 services = {'systemd-networkd.service': {'pid': networkd,
     'uid': pwd.getpwnam('systemd-network').pw_uid, 'mask': networkd_allowed,
     'group': dict(line.split('=', 1) for line in properties)['ControlGroup']}}
+required_units = json.loads(Path('/usr/share/lanrith/health.json').read_bytes())['units']
 for unit, account, names, mask, resources in (
         ('unbound.service', 'unbound', set('cap_chown cap_dac_override cap_setgid cap_setuid '
                                 'cap_net_bind_service'.split()), 0, ('536870912', '64', '8192')),
@@ -941,6 +972,10 @@ for unit, account, names, mask, resources in (
          sum(1 << bit for bit in (10, 13)), ('268435456', '64', '4096')),
         ('chrony.service', '_chrony', {'cap_net_bind_service', 'cap_sys_time'},
          sum(1 << bit for bit in (10, 25)), ('134217728', '32', '1024'))):
+    if unit not in required_units:
+        if subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0:
+            raise SystemExit(unit+' unexpectedly active outside the signed service selection.')
+        continue
     rows = subprocess.check_output(['systemctl', 'show', '--property', 'MainPID',
         '--property', 'NoNewPrivileges', '--property', 'ProtectSystem', '--property', 'PrivateTmp',
         '--property', 'MemoryDenyWriteExecute', '--property', 'SystemCallFilter',
@@ -1008,26 +1043,23 @@ def boot(guest, *, manual=False, first=False, root_access=True):
             expect(rb'(?:Please enter passphrase|Please enter password|Password:).*', PASSPHRASE)
     if first:
         if manual:
-            # Creating the LUKS volume and unlocking it for the root system
-            # are separate operations. Recovery enrollment can ask again.
+            # The generator may ask for the initial state passphrase before real-root enrollment.
             for _ in range(8):
-                event = guest.expect_any([rb'Type RECOVERY-KEY-STORED[^\r\n]*: ',
+                event = guest.expect_any([rb'Press Enter on this console to record the offline recovery key: ',
                     rb'Please enter (?:current )?(?:passphrase|password)[^\r\n]*: ?',
-                    rb'(?:You are in|Entering) emergency mode',
-                    rb'Press Enter on this console to record the offline recovery key: '])
+                    rb'(?:You are in|Entering) emergency mode'])
                 release.require(event != 2, 'Installed initrd entered emergency mode: '+guest.last_diagnostic)
-                if event == 3:
-                    guest.serial.sendall(b'\r')
-                    continue
                 if event == 0:
-                    guest.serial.sendall(b'RECOVERY-KEY-STORED\r')
+                    guest.serial.sendall(b'\r')
                     break
                 guest.serial.sendall(PASSPHRASE.encode()+b'\r')
             else:
                 raise release.ReleaseError('Manual state boot repeated too many unlock prompts.')
         else:
             expect(rb'Press Enter on this console to record the offline recovery key: ', '')
-            expect(rb'Type RECOVERY-KEY-STORED.*: ', 'RECOVERY-KEY-STORED')
+        guest.verify_disposable_copy()
+        if manual:
+            expect(rb'Current state passphrase: ', PASSPHRASE)
     guest.ready(root_access=root_access)
 
 
@@ -1065,19 +1097,39 @@ def firewall_failure(guest):
             return subprocess.run(['systemctl', *arguments], check=check,
                                   capture_output=True, timeout=40)
 
-        def inactive():
-            for unit in listeners:
-                if command('is-active', '--quiet', unit, check=False).returncode == 0:
-                    raise RuntimeError('A listener survived a missing firewall.')
+        def chain(table, name):
+            raw = subprocess.check_output(['nft', '-j', 'list', 'chain', 'inet', table, name], timeout=10)
+            return next(item['chain'] for item in json.loads(raw)['nftables'] if 'chain' in item)
 
+        def inactive():
+            if chain('lanrith_recovery', 'forward').get('policy') != 'drop':
+                raise RuntimeError('Firewall recovery did not close forwarding.')
+            for unit in listeners:
+                # A configured dedicated management port keeps SSH under the
+                # independently installed, interface-scoped recovery rules.
+                rescue = unit == 'ssh.service' and b'lanrith-firewall-floor.service' in command(
+                    'show', '--property=Requires', '--value', unit).stdout.split()
+                active = command('is-active', '--quiet', unit, check=False).returncode == 0
+                if active != rescue:
+                    raise RuntimeError('Listener state differs from its recovery firewall dependency.')
+
+        required_units = json.loads(Path('/usr/share/lanrith/health.json').read_bytes())['units']
+        for unit in listeners:
+            if unit not in required_units and command('is-active', '--quiet', unit, check=False).returncode == 0:
+                raise RuntimeError('An unselected listener is active.')
+        listeners = [unit for unit in listeners if unit in required_units]
         time.sleep(3)
         record = {'result': 'fail'}
+        base_chain = None
         try:
             network_hardening()
             record['effective_kernel_hardening'] = True
             for unit in listeners:
                 if command('is-active', '--quiet', unit, check=False).returncode != 0:
                     raise RuntimeError('A selected listener was inactive before the probe.')
+            base_chain = chain('lanrith', 'forward')['handle']
+            if command('reload', 'nftables.service', check=False).returncode == 0:
+                raise RuntimeError('Signed-image host policy accepted a live reload.')
             command('stop', 'nftables.service')
             inactive()
             record['stopped_with_firewall'] = True
@@ -1096,6 +1148,8 @@ def firewall_failure(guest):
             command('reset-failed', check=False)
             command('start', 'nftables.service')
             command('start', *listeners)
+            if base_chain is not None and chain('lanrith', 'forward')['handle'] != base_chain:
+                raise RuntimeError('Firewall restart replaced live runtime-owned objects.')
             receipt.write_text(json.dumps(record, sort_keys=True)+'\\n')
         ''')
     print('Native VM: verifying listener shutdown and firewall-failure admission.', flush=True)
@@ -1141,7 +1195,7 @@ def provisioning_failure(value, base, initrd, work, secret):
             # closing PCR 15. Complete that ceremony, then inject the post-start
             # failure and prove that it still cannot switch to the root system.
             guest.serial.sendall(b'\r')
-            guest.expect(rb'Type RECOVERY-KEY-STORED[^\r\n]*: ', 'RECOVERY-KEY-STORED')
+            guest.verify_disposable_copy()
             guest.expect(rb'(?:You are in|Entering) emergency mode')
         # A failed target alone previously let the distribution's switch-root
         # service proceed. Observe beyond normal root startup, including sshd,
@@ -1150,7 +1204,7 @@ def provisioning_failure(value, base, initrd, work, secret):
         while time.monotonic() < deadline:
             release.require(guest.process.poll() is None and not guest.console.closed,
                             'Provisioning failure reset or stopped the guest.')
-            release.require(b'RECOVERY-KEY-STORED' not in guest.buffer,
+            release.require(b'Offline recovery key: ' not in guest.buffer,
                             'Failed provisioning continued into the installed root.')
             try:
                 with socket.create_connection(('127.0.0.1', guest.port), timeout=0.5) as client:
@@ -1271,6 +1325,10 @@ systemctl stop kea-dhcp4-server.service
 printf 'address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\\n192.168.10.123,02:00:00:00:02:01,,3600,4102444800,1,0,0,synthetic,0,\\n' > /var/lib/kea/kea-leases4.csv
 printf synthetic-credential > /var/lib/lanrith/qualification-state/credentials
 printf synthetic-enrollment > /var/lib/lanrith/qualification-state/enrollment
+tr -d '-' < /proc/sys/kernel/random/boot_id > /var/lib/lanrith/qualification-state/journal-boot
+invocation=$(systemctl show systemd-journal-flush.service -p InvocationID --value)
+test -n "$invocation"
+echo "lanrith-journal-flush-$invocation" > /var/lib/lanrith/qualification-state/journal-marker
 chmod 0600 /var/lib/lanrith/qualification-state/*
 logger -t lanrith-qualification synthetic-persistent-state
 journalctl --sync
@@ -1313,12 +1371,16 @@ done''')
         guest.ssh('sudo lanrith-runtime promote '+second_path, timeout=900)
         guest.close()
         boot(guest)
-        release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
-                        'One-shot update did not boot the new deployment.')
+        candidate = json.loads(guest.ssh('lanrith-runtime status').stdout)
+        release.require(candidate['deployment_sequence'] == 10 and
+                        (candidate.get('boot') or {}).get('accepted') is False,
+                        'Expected a healthy one-shot boot awaiting explicit acceptance.')
         check_state(guest, state, 'Update changed populated state or host identity.')
         rejected = guest.ssh('sudo lanrith-runtime promote '+third_path, success=False, timeout=900)
-        release.require(rejected.returncode != 0 and b'Accept the running boot as default' in rejected.stderr,
-                        'An unaccepted update could overwrite the last accepted fallback.')
+        release.require(rejected.returncode != 0 and b'Current committed boot acceptance is unavailable.' in rejected.stderr,
+                        'The next update was not refused for lack of committed boot acceptance.')
+        root(guest, 'test ! -e /var/lib/lanrith/update-inbox/11')
+        print('Native VM: unaccepted boot refused the next upload before admission.', flush=True)
         guest.close()
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 9,
@@ -1335,16 +1397,15 @@ done''')
                         'The installed updater accepted a tampered manifest.')
         guest.ssh('rm -rf -- '+third_path)
         third_path = upload(guest, third)
-        # The admitted store must survive the earlier power cycles. Keep the
-        # authorized foreground SSH session alive until the actual disk fault.
-        root(guest, 'test -d /var/lib/lanrith/update-inbox/11')
-        fault = interrupt_staging(guest, disk, 11, 10)
+        # The accepted predecessor can now admit a valid upload. Interrupt only
+        # after its authenticated inbox copy exists and inactive-slot writes begin.
+        fault = interrupt_staging(guest, disk, 11, 10, third_path)
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'Accepted update did not persist.')
         check_state(guest, state, 'Interrupted staging changed populated state.')
-        # Resume the authenticated, durable inbox after discarding guest RAM.
-        # The untrusted upload is not required to survive this power cut.
+        # Resume from the authenticated inbox with the original upload removed.
+        guest.ssh('rm -rf -- '+shlex.quote(third_path))
         guest.ssh('sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/11', timeout=900)
         guest.close()
         guest.start()

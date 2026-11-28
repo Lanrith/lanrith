@@ -1,15 +1,41 @@
 """RADIUS is compiled as bounded connectivity, never embedded credentials."""
 
 import copy
+import errno
+import hashlib
 import ipaddress
+import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
-from lanrith import build, config, credential_config, policy_agent, radius
-from lanrith.release import ReleaseError
+from lanrith import build, config, credential_config, policy_agent, radius, radius_runtime
+from lanrith.release import ReleaseError, canonical
 from test_policy_agent import declaration as policy_declaration
+
+
+DIRECTORY_URL = 'ldaps://[fd42:1234:5678:10::30]:636'
+GROUP = 'cn=devices,ou=groups,dc=example,dc=test'
+OTHER_GROUP = 'cn=visitors,ou=groups,dc=example,dc=test'
+MEMBERS = {GROUP: '02ABCDEF0001', OTHER_GROUP: '02ABCDEF0002'}
+
+
+def pinned_provider_policy(export):
+    """Convert a synthetic provider readback into its release input."""
+    return {'provider': export['provider'], 'revision': export['revision'],
+            'binding_sha256': hashlib.sha256(canonical(export)).hexdigest()}
+
+
+def provider_export(group=GROUP, *, directory_url=DIRECTORY_URL, endpoint='192.168.10.30', vlan=22):
+    """Test provider's effective policy, derived independently of router intent."""
+    revision = hashlib.sha256(canonical({'members': MEMBERS, 'selected': group, 'vlan': vlan})).hexdigest()
+    binding = {'schema': 1, 'provider': 'test-admission', 'revision': revision,
+               'endpoint': endpoint, 'directory': 'directory', 'directory_url': directory_url,
+               'directory_base_dn': 'dc=example,dc=test', 'group_dn': group, 'vlan': vlan}
+    return pinned_provider_policy(binding)
 
 
 def declaration():
@@ -25,15 +51,29 @@ def declaration():
             'wireless': {'address': '192.168.10.48/28', 'kind': 'wireless_mac',
                          'credential': 'radius_wireless'},
         },
-        'admission': {'directory': 'directory', 'group_dn': 'cn=devices,dc=example,dc=test',
+        'admission': {'directory': 'directory', 'group_dn': GROUP, 'provider_policy': provider_export(),
                       'network': 'devices'},
         'proxy': {'address': '192.168.10.30', 'credential': 'radius_upstream'},
-        'fallback': {'enabled': True, 'clients': ['wired-switch']},
+        'fallback': {'enabled': True, 'clients': ['wired-switch'],
+                     'provider_response_seconds': 1, 'nas_retry_seconds': 5},
     }
     return value
 
 
 class RadiusContractTests(unittest.TestCase):
+    def test_backend_requires_both_credential_roles_and_skips_disabled_service(self):
+        for field, diagnostic in (('clients', 'at least one configured NAS'), ('proxy', 'requires an upstream proxy')):
+            value = declaration()
+            del value['identity']['radius'][field]
+            with self.subTest(field=field), self.assertRaisesRegex(ReleaseError, diagnostic):
+                config.normalize(value)
+        value = declaration()
+        value['identity']['radius'] = {'enabled': False}
+        files = config.render(config.normalize(value))
+        self.assertNotIn('usr/share/lanrith/radius.json', files)
+        self.assertNotIn('etc/systemd/system/freeradius.service.d/60-lanrith.conf', files)
+        self.assertNotIn('usr/lib/systemd/system/lanrith-radius-runtime.service', files)
+
     def test_host_boundary_admits_only_configured_nas_udp_to_radius(self):
         value = config.normalize(declaration())
         files = config.render(value)
@@ -79,9 +119,12 @@ class RadiusContractTests(unittest.TestCase):
             build.assembly(value, base, root/'image', version='0.1.0', sequence=1)
             tree = root/'image/mkosi.extra'
             self.assertTrue((tree/'etc/systemd/system/freeradius.service.d/60-lanrith.conf').exists())
-            helper = tree/'etc/systemd/system/lanrith-radius-runtime.service'
-            self.assertTrue(helper.is_symlink())
-            self.assertEqual(helper.readlink(), Path('/usr/lib/systemd/system/lanrith-radius-runtime.service'))
+            helper = 'lanrith-radius-runtime.service'
+            self.assertTrue((tree/'usr/lib/systemd/system'/helper).is_file())
+            self.assertFalse((tree/'etc/systemd/system'/helper).is_symlink())
+            unit = (tree/'etc/systemd/system/freeradius.service.d/60-lanrith.conf').read_text()
+            requires = [line.split('=', 1)[1].split() for line in unit.splitlines() if line.startswith('Requires=')]
+            self.assertTrue(any(helper in names for names in requires))
             self.assertFalse((tree/'etc/router-policy-agent').exists())
             self.assertFalse((tree/'usr/lib/lanrith/credentials/core/directory_bind').exists())
             self.assertNotIn('control-socket', json.loads((tree/'etc/kea/kea-dhcp4.conf').read_bytes())['Dhcp4'])
@@ -114,6 +157,44 @@ class RadiusContractTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ReleaseError):
                 config.normalize(value)
 
+    def test_directory_binding_must_match_the_trusted_effective_policy_export(self):
+        for field in ('group_dn', 'endpoint', 'provider', 'revision', 'missing', 'vlan', 'directory'):
+            with self.subTest(field=field):
+                value = declaration()
+                radius = value['identity']['radius']
+                admission = radius['admission']
+                if field == 'group_dn':
+                    admission['group_dn'] = OTHER_GROUP
+                elif field == 'endpoint':
+                    radius['proxy']['address'] = '192.168.10.31'
+                elif field == 'missing':
+                    del admission['provider_policy']
+                elif field == 'vlan':
+                    value['networks']['devices']['vlan'] = 23
+                elif field == 'directory':
+                    value['identity']['directories']['directory']['url'] = 'ldaps://192.168.10.30'
+                else:
+                    admission['provider_policy'][field] = 'a'*64
+                with self.assertRaisesRegex(ReleaseError, 'provider policy'):
+                    config.render(value)
+        value = declaration()
+        value['identity']['radius']['admission'].update(group_dn=OTHER_GROUP,
+                                                       provider_policy=provider_export(OTHER_GROUP))
+        site = 'etc/freeradius/3.0/sites-enabled/default'
+        self.assertNotEqual(config.render(value)[site], config.render(declaration())[site])
+
+    def test_fallback_timing_must_leave_time_for_local_decision(self):
+        for response, retry in ((1, 3), (0, 5), (27, 60), (True, 5), (1, None)):
+            with self.subTest(response=response, retry=retry):
+                value = declaration()
+                value['identity']['radius']['fallback'].update(
+                    provider_response_seconds=response, nas_retry_seconds=retry)
+                with self.assertRaisesRegex(ReleaseError, 'NAS retry interval'):
+                    config.normalize(value)
+        value = declaration()
+        value['identity']['radius'].pop('fallback')
+        self.assertNotIn('response_window', radius.manifest(config.normalize(value))['proxy'])
+
     def test_render_uses_only_compiled_policy_and_systemd_credentials(self):
         value = config.normalize(declaration())
         files = config.render(value)
@@ -136,7 +217,9 @@ class RadiusContractTests(unittest.TestCase):
         self.assertIn('CapabilityBoundingSet=\n', stage)
         self.assertNotIn('BindReadOnlyPaths', stage)
         self.assertIn('NetworkNamespacePath=/run/netns/lanrith-services', unit)
-        self.assertIn('/run/lanrith-radius/clients.conf:/etc/freeradius/3.0/clients.conf', unit)
+        self.assertEqual([line for line in unit.splitlines() if line.startswith('BindReadOnlyPaths=')],
+                         ['BindReadOnlyPaths=/run/lanrith-radius/radius.conf:/etc/freeradius/3.0/proxy.conf'])
+        self.assertIn('RuntimeDirectoryMode=0700', stage)
         self.assertNotIn('shared_secret', ''.join(files.values()))
         self.assertEqual(files['etc/freeradius/3.0/mods-enabled/eap'],
                          '# EAP is intentionally disabled by the Lanrith MAB policy.\n')
@@ -167,7 +250,7 @@ class RadiusContractTests(unittest.TestCase):
         collector = runtime['binding_collector']
         self.assertEqual(collector, {
             'radius_user': 'freerad', 'nas_prefixes': ['192.168.10.40/32', '192.168.10.48/28'],
-            'kea_user': '_kea', 'kea_socket': '/run/kea/kea4-ctrl-socket',
+            'kea_user': '_kea', 'kea_socket': '/run/lanrith-kea-leases/leases.sock',
             'subnet_id': 2, 'ipv4_prefix': '192.168.22.0/24', 'vlan': 22,
             'maximum_devices': 256, 'interface': 'lan.22', 'parent': 'lan',
         })
@@ -206,6 +289,69 @@ class RadiusContractTests(unittest.TestCase):
         for value in cases:
             with self.subTest(value=copy.deepcopy(value)), self.assertRaises(ReleaseError):
                 config.normalize(value)
+
+
+class RadiusStagingTests(unittest.TestCase):
+    def test_process_exit_on_both_sides_of_publication(self):
+        policy = radius.manifest(config.normalize(declaration()))
+        references = ('radius_wired', 'radius_wireless', 'radius_upstream')
+        first = {name: chr(65+i)*32 for i, name in enumerate(references)}
+        second = {name: chr(68+i)*32 for i, name in enumerate(references)}
+        expected = (radius_runtime.clients_configuration(policy, second) +
+                    radius_runtime.proxy_configuration(policy, second)).encode()
+
+        for cold in (False, True):
+            for cut in ('between_sections', 'before_commit', 'after_commit'):
+                with (self.subTest(cold=cold, cut=cut), tempfile.TemporaryDirectory() as tmp,
+                      mock.patch.object(radius_runtime, 'RUNTIME', Path(tmp)),
+                      mock.patch.object(os, 'fchown')):
+                    target = Path(tmp)/'radius.conf'
+                    old = None
+                    if not cold:
+                        radius_runtime.publish(policy, first, os.getgid())
+                        old = target.read_bytes()
+                    child = os.fork()
+                    if child == 0:
+                        replace = os.replace
+
+                        def interrupted(src, dst):
+                            if cut == 'after_commit':
+                                replace(src, dst)
+                            os._exit(71)
+
+                        patch = (mock.patch.object(radius_runtime, 'proxy_configuration',
+                                                   side_effect=lambda *_: os._exit(71))
+                                 if cut == 'between_sections' else mock.patch.object(os, 'replace', interrupted))
+                        try:
+                            with patch:
+                                radius_runtime.publish(policy, second, os.getgid())
+                        finally:
+                            os._exit(1)
+                    self.assertEqual(os.waitstatus_to_exitcode(os.waitpid(child, 0)[1]), 71)
+                    visible = target.read_bytes() if target.exists() else None
+                    self.assertTrue(visible == (expected if cut == 'after_commit' else old))
+
+    def test_first_io_error_recovers_during_the_same_stage(self):
+        with (mock.patch.object(os, 'getuid', return_value=0), mock.patch.object(os, 'geteuid', return_value=0),
+              mock.patch.object(radius_runtime, 'stage_once', side_effect=[OSError(errno.EIO, 'sensitive'), None]) as attempt,
+              mock.patch.object(radius_runtime.time, 'sleep') as sleep, mock.patch('sys.stderr', new_callable=io.StringIO) as log):
+            self.assertEqual(radius_runtime.main(['stage']), 0)
+            self.assertEqual(attempt.call_count, 2)
+            sleep.assert_called_once_with(0.25)
+            self.assertIn('EIO', log.getvalue())
+            self.assertNotIn('sensitive', log.getvalue())
+
+    def test_permanent_errors_do_not_consume_retry_budget(self):
+        for error in (ValueError('malformed'), KeyError('group'), PermissionError(errno.EACCES, ''),
+                      FileNotFoundError(errno.ENOENT, ''), OSError(errno.EROFS, '')):
+            with (self.subTest(error=type(error).__name__), mock.patch.object(os, 'getuid', return_value=0),
+                  mock.patch.object(os, 'geteuid', return_value=0),
+                  mock.patch.object(radius_runtime, 'stage_once', side_effect=error) as attempt,
+                  mock.patch.object(radius_runtime.time, 'sleep') as sleep):
+                with self.assertRaises(type(error)):
+                    radius_runtime.stage()
+                attempt.assert_called_once()
+                sleep.assert_not_called()
 
 
 if __name__ == '__main__':

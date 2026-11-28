@@ -38,6 +38,34 @@ by another UID, undeclared egress and removal of new-connection permission. Thes
 results cover the generic compiler policy. Advanced integrations and physical
 hardware still need their own candidate-specific tests.
 
+For each enabled translator, choose a local replica client covered by its
+compiled access rules and a listening peer on the opposite address family.
+Record both endpoint addresses, the selected route, TUN RX/TX packet deltas
+and receiver-confirmed bytes for uploads and downloads. An unpermitted port
+on that listening peer must remain unreachable. On public WKP configurations,
+`nft list counter inet lanrith nat64_non_global_drops` reports filtered
+destinations. RFC 7050 prefix-discovery answers remain available through DNS.
+
+Before a hardware capacity trial, record the release, CPU, NICs, negotiated
+speeds, MTUs, offloads and effective qdisc in each direction. Choose links
+with enough headroom for the application goodput target after protocol overhead.
+Measure the deployed shaper against its configured limit. A higher capacity
+trial needs a separate profile with enough bandwidth. Keep the intended
+forwarding and identity policies active throughout. Agree the packet sizes,
+flow count, upload/download mix, sustained duration and loss and latency limits
+for each path before measuring. Repeat after warm-up and retain individual
+runs, median goodput, packets per second, per-core utilization, retransmissions,
+TUN and NIC drops, and UDP loss and p95 RTT during load. Identify the
+saturated link, shaper or CPU before changing production settings.
+
+`tests/nat64_capacity_native.py` exercises this measurement path in the
+disconnected systemd fixture with all three translators. It accepts
+`--seconds`, `--rounds`, an optional `--wan-mbit` CAKE rate and a candidate
+`--tayga-deb`. It tests PTB on a 1,492-byte IPv4 bottleneck with a larger
+synthetic IPv6 ingress. The client must receive ICMPv6 type 2, code 0 with MTU
+1,512, then receive a reply to a boundary-sized and a smaller datagram.
+Physical qualification requires a receipt for the intended hardware and traffic mix.
+
 The required native parser check also runs `tests/dhcp_native.py`. In private
 mount/network namespaces it loads an older-schema synthetic Kea lease file with
 an explicit subnet ID, checks native assigned-address counts before renewal,
@@ -46,13 +74,16 @@ its ID, that canonical owner snapshots preserve it and that Kea accepts the
 supported upper bound. Actual owner lease import and populated-image upgrade/
 rollback still require the corresponding owner artifacts and state.
 
-`tests/extensions_native.py --result /output/extension-systemd.json` requires an
-uninitialized, offline container with systemd as PID 1. It verifies the generated
-optional starter, the observer's actual oneshot lifecycle and systemd's unchanged
-global failed-unit check. A synthetic optional service fails after core acceptance;
-a separate core failure still prevents acceptance. The fixture resets only four
-allow-listed container-only kernel mount failures and records any such resets.
-It does not qualify an extension application, full-image startup or physical boot.
+Run `python3 tests/extensions_native.py --result /output/extension-systemd.json`
+in an uninitialized, offline systemd container with a synchronized host clock.
+In the dedicated no-NIC QEMU guest booted with `rdinit=/fixture-init`, add
+`--fixture-clock` to establish the native policy helper's clock prerequisite
+on the disposable kernel. The generated optional launcher waits through a
+pending observation and starts its test service after the protected current-boot
+acceptance is committed. A deliberate failure in that optional service leaves
+core acceptance intact. A separate mandatory failure blocks the native
+boot-complete target. The report records the clock mode and any of the four
+allow-listed container mount failures reset by the fixture.
 
 `tests/storage.py` creates a signed synthetic EROFS image and expands it with
 the matching builder's `systemd-repart`. It verifies that the second slot and
@@ -61,13 +92,69 @@ It uses regular files and a disposable test authority. TPM and encrypted-state
 boot behavior remain separate qualification requirements.
 
 `tests/logs_native.py` qualifies the selected Alloy binary in an offline
-namespace. It imports a synthetic systemd journal, checks redaction and
-self-log exclusion, exceeds the production 64 MiB logical queue, kills and
-restarts the exporter, then verifies delivery to an authenticated HTTPS
-collector with a disposable CA. Overflow rejects records; this test does not
-promise lossless delivery. Physical queue storage has a separate tested bound
-of 160 MiB. The result records the binary and implementation digests and is a
-required, provenance-bound input to base qualification and consumer admission.
+namespace. It imports missing, empty and ordinary journal messages. The first
+two produce the fixed body `journal message absent`. The test checks the
+stopped queue files for unselected fields and reads the redacted bodies, native
+timestamps and service identities at a TLS OTLP receiver. It fills the 64 MiB
+logical queue, observes rejected enqueues, kills Alloy, restarts it and drains
+the recovered queue. It samples allocated filesystem blocks through recovery
+against a 160 MiB test budget. The receiver returns HTTP 401 for a subsequent
+record. The test requires a failed send and fresh synthetic heartbeat receipts
+after the outage and after authentication recovers. Base qualification binds
+these results to the test, implementation and audited binary.
+
+For a dedicated, source-preserving Cilium receiver, compare both rendered
+source filters with the image before rollout. Supply the extracted image root
+and the rendered Service, Deployment and CiliumNetworkPolicy in one or more
+YAML files. The following names are examples.
+
+```sh
+python3 scripts/check-log-receiver.py --image-root ./image \
+  --service monitoring/router-ingest ./rendered-router-ingest.yaml
+```
+
+The check follows the compiled route to the LB-IPAM VIP and resolves the
+Service's HTTPS target port against its selected pods. It requires the
+exporter's host prefix in both `loadBalancerSourceRanges` and the Cilium
+ingress rule for that port. It checks the dedicated namespaced policy render.
+Verify Cilium source-range enforcement, any additional cluster policies and
+the actual peer address at both filters in the deployment. A translated path
+requires its own peer-address contract. At rollout, use the authenticated
+OTLP receiver to confirm a recent heartbeat for the accepted image, deployment
+and boot. A queued heartbeat from an older boot can arrive during drain.
+
+For the receiver alarm, capture `lanrith-status` over the authenticated operator
+channel after promotion. Refresh this observation at every boot and use the
+verified image for that deployment. From the receiver's authorized query
+client, run the following against its Loki read endpoint.
+
+```sh
+host=$(cat ./image/etc/hostname)
+curl --fail --silent --show-error --get "$LOKI_READ_URL/loki/api/v1/query_range" \
+  --data-urlencode "query={host=\"$host\",job=\"router-journal\",unit=\"lanrith-telemetry-heartbeat.service\"}" \
+  --data-urlencode 'since=5m' --data-urlencode 'limit=100' -o ./range.json &&
+python3 scripts/check-heartbeat-receipts.py --image-root ./image \
+  --status ./accepted-status.json ./range.json
+```
+
+Run the query and check on each monitoring interval. Alert on a nonzero exit
+from either command. The check requires two matching schema 1 events with
+increasing `monotonic_ns` in the accepted boot. It checks the journal boot ID
+and stdout transport in the structured metadata returned by Loki. The latest source
+`emitted_unix_ns` and Loki entry timestamp must both fall inside the deadline.
+The journal may record the line up to 20 s after the producer timestamp.
+The preceding sample can be up to twice the age budget. A newer heartbeat from an
+unexpected boot or release raises the alarm. An old record delivered from the
+queue keeps its source time. Legacy events
+without a source time leave freshness unknown. During a prolonged outage the
+first sample can fall outside the query window, so retain the alarm until two
+qualifying samples appear there.
+
+The default 90 s age budget allows 60 s for the period, 10 s for timer delay
+and accuracy, 15 s for transport and 5 s for clock error. The default future
+allowance is 5 s. Measure receiver transit and clock offset before adjusting
+`--max-age-seconds` or `--clock-skew-seconds`. Add the monitoring poll interval
+when calculating how long an operator may wait for a silence alarm.
 
 The generated `alloy.service` uses notify readiness and a watchdog. Its
 supervisor requires every root graph component to be healthy before reporting
@@ -97,6 +184,28 @@ no LDAP Bind request. StartTLS framing follows
 The result binds the test, fixture, compiler and runtime digests, and is required
 by base qualification and consumer admission. Actual directory authentication,
 grants and the owner's complete image remain separate qualification work.
+
+For profiles with directory-authorized access rules, qualify an isolated copy
+of the selected provider artifact and search mode against the deployed schema
+and scoped read ACLs. Seed a synthetic device with independent ownership
+evidence and one grant. Require fresh applied helper receipts after single-page
+and multi-page reads of both original groups and accounts. Interrupt an account
+continuation and verify the previous grant keeps its expiry. Restore the
+provider, remove the direct access membership, then require a fresh applied
+receipt with zero grants and confirm withdrawal in the firewall. Record the
+running provider digest, search mode and reader/helper digests with the results.
+Stock Authentik 2026.8.3 direct search and its LDAP response encoder omit the
+terminal paging control required by the pinned reader. [Provider search](https://github.com/goauthentik/authentik/blob/version/2026.8.3/internal/outpost/ldap/search/direct/direct.go#L235-L236) · [Response encoder](https://github.com/beryju/ldap/blob/v0.2.1/server_search.go#L207-L216)
+
+The development reader adds `-check-provider single-page|multi-page|withdrawn`
+for this rehearsal. In the disposable systemd component fixture,
+`tests/policy_service_graph_native.py --check-provider` exercises all three
+stages against a synthetic StartTLS server with the reviewed candidate
+binaries. Supply the same `--candidate`, `--collector-sha256` and `--result`
+arguments as for the binding-service fixture. The published v0.1.16 reader
+supports the ordinary polling mode. Use its normal page size of 256 with a
+synthetic dataset exceeding 256 visible entries in **each** OU when rehearsing
+that release and verify the cursor exchange at the directory.
 
 `scripts/qualify-credentials.py` runs the generated credential socket and units
 under systemd in an offline disposable container. It resolves the reviewed local
@@ -160,12 +269,14 @@ the filesystem, then requires the matching builder executable to have identical
 bytes. It parses the generated configuration and admitted alert rules, runs the
 generated command from `/` under the dedicated UID with `NoNewPrivileges` and
 only `CAP_NET_RAW` in its effective and bounding capability sets,
-captures synthetic WAN traffic, excludes LAN-only packets and checks forwarding
+checks the selected Debian package and upstream version, replays a benign dual-stack
+PCAP against both SIDs and the global rate limit, captures synthetic WAN
+traffic, excludes LAN-only packets and checks forwarding
 before, during and after detector operation. The explicit log-directory argument
 is exercised by the generated command rather than supplied independently by the
 test.
 
-Base qualification requires `ids-qualification.json` with all five checks,
+Base qualification requires `ids-qualification.json` with all seven checks,
 exact filesystem/executable bindings, current implementation hashes, removed
 fixture state and a native assessment no more than six hours old. Its digest
 enters the authenticated qualification record and consumer selection. Consumer
@@ -177,6 +288,17 @@ This establishes component behavior in the matching builder. It does not qualify
 the complete image, its deployed libraries, actual WAN hardware or the owner's
 topology. A standalone component run without `--base` emits diagnostic output
 only; publishing native evidence requires both `--base` and `--result`.
+
+To qualify maintenance on a disconnected systemd guest with the selected
+packages, run `python3 tests/ids_systemd_native.py --isolated`. The test
+reapplies tmpfiles, rotates EVE through the managed unit, reads capture counters,
+and checks both sides of the rotation against numbered traffic. The OTLP test
+uses `python3 tests/ids_delivery_native.py --alloy /path/to/reviewed/alloy`
+in a separate offline Debian fixture with journal tooling. For a physical
+capacity claim, agree the sustained packet rate, burst length, maximum capture
+loss and forwarding latency before testing. Record the NIC/driver/offloads,
+NIC missed/dropped counters, kernel capture losses, TCP gaps, memory pressure,
+CPU and peak cgroup memory during each run.
 
 The DNS observation gate also runs before base promotion. `scripts/qualify-dns.py`
 starts a fresh offline systemd container, with source and base archive mounted
@@ -259,6 +381,25 @@ changed listeners and enforcement behavior; a plausible heartbeat supplied by
 compromised root is not evidence that live policy remains intact. Qualification
 records queue saturation/eviction behavior, collector outage recovery and
 redaction fixtures without retaining credentials.
+
+For SNMP, run `python3 tests/snmp_pollers_systemd.py --disposable-systemd`
+as root in an uninitialized Debian systemd VM with only loopback. Install the
+appliance's Net-SNMP binaries and libraries, or mount its root read-only at
+`/opt/fixture-platform`. The fixture builds two credential-bearing overlays,
+checks the exact remote CIDRs in the unit and both firewall directions, and
+reads a host IF-MIB counter from the normal and failover addresses. It also
+withdraws a shared prefix while the prior UDP tuple is still established.
+
+For the signed-boot rehearsal, supply each build with the matching synthetic
+`profile(sequence)` from `tests/snmp_slot_probe.py`, encoded by
+`credential_image.snmp_grammar().configuration`. Enable the `fixture-monitor`
+user and boot sequences 9, 10, 9 and 10 against one encrypted state volume.
+Run `python3 snmp_slot_probe.py SEQUENCE INTERFACE` as root inside each boot
+using a temporary copy of the probe. It checks the active generated gate, an
+authenticated interface counter, explicit rejection of the inactive profile,
+and refusal of a runtime credential change. Compare its engine ID and boot
+count between consecutive boots. The monitoring owner completes the
+[deployment poll](operations.md#snmp-polling-and-fallback) separately.
 
 Compromise-recovery qualification starts with populated state and credentials,
 then assumes their bytes were stolen. It injects forged, stale, oversized and
@@ -391,3 +532,35 @@ old native test into a fresh test. The receipt records the actual host kernel
 and userspace versions. Tests using a component-only archive establish that
 component boundary; they do not qualify a complete base, its image kernel,
 translated paths or a signed owner image.
+
+## Client NTP service
+
+Boot the signed candidate on its isolated test network. From a client on each
+NTP-enabled attachment, run the following command with the profile used to
+build that candidate and the attachment's key under `networks`. A client
+network namespace on the qualification station lets the profile stay on that
+station.
+
+```sh
+python3 scripts/qualify-ntp-client.py --profile candidate.yaml --network home
+```
+
+The command uses the kernel's route to each advertised IPv4 or IPv6 listener
+and checks its source address against the profile's admitted prefixes. Chronyd
+`-Q` then has eight seconds per family to obtain an accepted offset measurement.
+It leaves the client clock untouched. The JSON result includes the normalised
+profile digest, attachment, time, source, target and acceptance for each family.
+Archive it with the qualified image digest and deployment sequence. A failed
+family returns a nonzero exit. A profile or attachment without client NTP service
+returns `not-selected` and sends no packets.
+
+In the disposable fixture, interrupt UDP/123 replies on the client path and
+rerun the command. Verify failure for the affected families while the local
+observer still records a successful tracking query. Restore the path and
+verify client acceptance. Separately interrupt only the fixture’s upstream,
+compare the reference timestamp and estimated error to the declared clock
+objective, then restore the reference and wait for a newer reference update.
+`tests/ntp_client_systemd.py` exercises this sequence against a clock-disabled
+appliance daemon with synthetic LAN and upstream namespaces. Its `--timers`
+mode stops the observer and collector timers independently and checks the real
+textfile exporter through expiry and recovery.

@@ -14,9 +14,9 @@ import tempfile
 
 from .release import ReleaseError, file_record, require, unique
 
-MEASURE = '/usr/lib/systemd/systemd-measure'
-MEASURED_SECTIONS = {b'.linux', b'.osrel', b'.cmdline', b'.initrd', b'.ucode', b'.splash',
-                     b'.dtb', b'.uname', b'.sbat', b'.pcrpkey'}
+# systemd's UnifiedSection enum defines PCR 11 ordering, independent of PE table order.
+MEASURED_SECTIONS = (b'.linux', b'.osrel', b'.cmdline', b'.initrd', b'.ucode', b'.splash',
+                     b'.dtb', b'.uname', b'.sbat', b'.pcrpkey')
 OTHER_SECTIONS = {b'.text', b'.rodata', b'.data', b'.reloc', b'.sdmagic', b'.pcrsig'}
 
 
@@ -95,93 +95,91 @@ def inspect_signature(path, policy):
             'early_boot_only': False, 'content_matches': False, 'authorized_to_unlock': False}
 
 
-def initrd_policy_digest(path):
-    """Calculate the SHA-256 PolicyPCR digest for the UKI's initrd phase."""
+def measured_layout(stream):
+    """Return validated content extents in systemd-stub measurement order."""
+    before = os.fstat(stream.fileno())
+    require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 64 <= before.st_size <= 1024**3,
+            'Unsafe measured UKI.')
+    dos = stream.read(64)
+    require(len(dos) == 64 and dos[:2] == b'MZ', 'UKI lacks its PE header.')
+    offset = struct.unpack_from('<I', dos, 60)[0]
+    require(64 <= offset <= min(before.st_size-24, 1024*1024), 'UKI PE header offset is invalid.')
+    stream.seek(offset)
+    header = stream.read(24)
+    require(len(header) == 24 and header[:4] == b'PE\0\0', 'UKI PE header is invalid.')
+    machine, count = struct.unpack_from('<HH', header, 4)
+    optional = struct.unpack_from('<H', header, 20)[0]
+    table_end = offset+24+optional+count*40
+    require(machine == 0x8664 and 1 <= count <= 96 and 112 <= optional <= 4096 and table_end <= before.st_size,
+            'Unsupported UKI PE layout.')
+    stream.seek(offset+24)
+    options = stream.read(optional)
+    require(len(options) == optional and struct.unpack_from('<H', options, 0)[0] == 0x20b,
+            'Unsupported UKI PE format.')
+    alignment = struct.unpack_from('<I', options, 32)[0]
+    image_size = struct.unpack_from('<I', options, 56)[0]
+    require(alignment and not alignment & (alignment-1) and image_size > 0,
+            'Invalid UKI virtual image geometry.')
+    stream.seek(offset+24+optional)
+    table = stream.read(count*40)
+    require(len(table) == count*40, 'UKI section table is truncated.')
+    found, extents, virtual_extents = {}, [], []
+    for index in range(count):
+        entry = table[index*40:(index+1)*40]
+        name = entry[:8].rstrip(b'\0')
+        size, address, raw_size, start = struct.unpack_from('<IIII', entry, 8)
+        require((name in MEASURED_SECTIONS or name in OTHER_SECTIONS) and name not in found,
+                'Unsupported or duplicate UKI section.')
+        require(0 < size <= raw_size and start >= table_end and start+raw_size <= before.st_size and
+                address > 0 and address % alignment == 0 and address+max(size, raw_size) <= image_size,
+                'Invalid UKI section bounds.')
+        found[name] = (start, size)
+        extents.append((start, start+raw_size))
+        virtual_extents.append((address, address+max(size, raw_size)))
+    extents.sort()
+    virtual_extents.sort()
+    require(all(a[1] <= b[0] for a, b in zip(extents, extents[1:])) and
+            all(a[1] <= b[0] for a, b in zip(virtual_extents, virtual_extents[1:])) and
+            {b'.linux', b'.initrd', b'.pcrpkey', b'.pcrsig'} <= set(found),
+            'UKI section layout is incomplete or overlapping.')
+    measured = [(name, *found[name]) for name in MEASURED_SECTIONS if name in found]
+    require(sum(size for _, _, size in measured) <= 512*1024*1024,
+            'UKI measured sections exceed their bound.')
+    return measured
+
+
+def check_measurement_budget(path):
+    """Reject an unsupported predecessor before changing the boot selection."""
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, 'rb') as stream, tempfile.TemporaryDirectory(prefix='lanrith-pcr-content.') as temporary:
+    with os.fdopen(descriptor, 'rb') as stream:
+        measured_layout(stream)
+
+
+def initrd_policy_digest(path):
+    """Stream PE virtual section bytes using systemd-measure's SHA-256 PCR 11 rules."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
         before = os.fstat(stream.fileno())
-        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 64 <= before.st_size <= 1024**3,
-                'Unsafe measured UKI.')
-        dos = stream.read(64)
-        require(dos[:2] == b'MZ', 'UKI lacks its PE header.')
-        offset = struct.unpack_from('<I', dos, 60)[0]
-        require(64 <= offset <= min(before.st_size-24, 1024*1024), 'UKI PE header offset is invalid.')
-        stream.seek(offset)
-        header = stream.read(24)
-        require(len(header) == 24 and header[:4] == b'PE\0\0', 'UKI PE header is invalid.')
-        machine, count = struct.unpack_from('<HH', header, 4)
-        optional = struct.unpack_from('<H', header, 20)[0]
-        table_end = offset+24+optional+count*40
-        require(machine == 0x8664 and 1 <= count <= 96 and 112 <= optional <= 4096 and table_end <= before.st_size,
-                'Unsupported UKI PE layout.')
-        stream.seek(offset+24)
-        options = stream.read(optional)
-        require(len(options) == optional and struct.unpack_from('<H', options, 0)[0] == 0x20b,
-                'Unsupported UKI PE format.')
-        alignment = struct.unpack_from('<I', options, 32)[0]
-        image_size = struct.unpack_from('<I', options, 56)[0]
-        require(alignment and not alignment & (alignment-1) and image_size > 0,
-                'Invalid UKI virtual image geometry.')
-        stream.seek(offset+24+optional)
-        table = stream.read(count*40)
-        found, extents, virtual_extents = {}, [], []
-        for index in range(count):
-            entry = table[index*40:(index+1)*40]
-            name = entry[:8].rstrip(b'\0')
-            size, address, raw_size, start = struct.unpack_from('<IIII', entry, 8)
-            require(name in MEASURED_SECTIONS | OTHER_SECTIONS and name not in found,
-                    'Unsupported or duplicate UKI section.')
-            require(0 < size <= raw_size and start >= table_end and start+raw_size <= before.st_size and
-                    address > 0 and address % alignment == 0 and address+max(size, raw_size) <= image_size,
-                    'Invalid UKI section bounds.')
-            found[name] = (start, size)
-            extents.append((start, start+raw_size))
-            virtual_extents.append((address, address+max(size, raw_size)))
-        extents.sort()
-        virtual_extents.sort()
-        require(all(a[1] <= b[0] for a, b in zip(extents, extents[1:])) and
-                all(a[1] <= b[0] for a, b in zip(virtual_extents, virtual_extents[1:])) and
-                {b'.linux', b'.initrd', b'.pcrpkey', b'.pcrsig'} <= set(found),
-                'UKI section layout is incomplete or overlapping.')
-        args = [MEASURE, 'calculate', '--bank=sha256', '--phase=enter-initrd', '--json=short']
-        total = 0
-        for name in sorted(MEASURED_SECTIONS & found.keys()):
-            start, size = found[name]
-            total += size
-            require(total <= 512*1024*1024, 'UKI measured sections exceed their bound.')
-            target = Path(temporary)/name[1:].decode('ascii')
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        pcr = bytes(32)
+        for name, start, size in measured_layout(stream):
+            pcr = hashlib.sha256(pcr + hashlib.sha256(name + b'\0').digest()).digest()
+            section = hashlib.sha256()
             stream.seek(start)
-            with os.fdopen(fd, 'wb') as output:
-                remaining = size
-                while remaining:
-                    block = stream.read(min(1024*1024, remaining))
-                    require(block, 'UKI measured section is truncated.')
-                    output.write(block)
-                    remaining -= len(block)
-            args.append('--'+name[1:].decode('ascii')+'='+str(target))
+            remaining = size
+            while remaining:
+                block = stream.read(min(1024*1024, remaining))
+                require(block, 'UKI measured section is truncated.')
+                section.update(block)
+                remaining -= len(block)
+            pcr = hashlib.sha256(pcr + section.digest()).digest()
         after = os.fstat(stream.fileno())
         require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
                 (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns),
                 'UKI changed during measured-content inspection.')
-        result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=120,
-                                env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'})
-        require(result.returncode == 0 and 0 < len(result.stdout) <= 16384,
-                'Cannot calculate UKI initrd measurement.')
-        try:
-            value = json.loads(result.stdout, object_pairs_hook=unique)
-        except (UnicodeDecodeError, ValueError):
-            raise ReleaseError('Invalid calculated UKI measurement.') from None
-        require(isinstance(value, dict) and set(value) == {'sha256'} and isinstance(value['sha256'], list) and
-                len(value['sha256']) == 1 and isinstance(value['sha256'][0], dict),
-                'Unexpected calculated UKI measurement.')
-        item = value['sha256'][0]
-        require(set(item) == {'phase', 'pcr', 'hash'} and item['phase'] == 'enter-initrd' and item['pcr'] == 11 and
-                isinstance(item['hash'], str) and re.fullmatch(r'[0-9a-f]{64}', item['hash']),
-                'Unexpected calculated UKI initrd measurement.')
+        pcr = hashlib.sha256(pcr + hashlib.sha256(b'enter-initrd').digest()).digest()
         # TPM2_PolicyPCR with SHA-256, PCR 11, three-byte PCR selection.
         selection = bytes.fromhex('00000001000b03000800')
-        composite = hashlib.sha256(bytes.fromhex(item['hash'])).digest()
+        composite = hashlib.sha256(pcr).digest()
         return hashlib.sha256(bytes(32)+bytes.fromhex('0000017f')+selection+composite).hexdigest()
 
 

@@ -20,6 +20,7 @@ ROLES = {'update': {'uki', 'root', 'verity', 'verity-sig'},
          'factory': {'uki', 'root', 'verity', 'verity-sig', 'disk', 'initrd'},
          'recovery': {'uki', 'root', 'verity', 'verity-sig', 'disk', 'initrd'},
          'base': {'filesystem', 'initrd-filesystem', 'inventory', 'sbom', 'security', 'inputs', 'tools'}}
+CERTIFICATE = re.compile(r'-----BEGIN CERTIFICATE-----\n[A-Za-z0-9+/=\n]+\n-----END CERTIFICATE-----\n')
 HEX = re.compile(r'[0-9a-f]{64}\Z')
 VERSION = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
                      r'(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\Z')
@@ -149,15 +150,12 @@ def public_key(certificate):
     return result.stdout
 
 
-def verify(root, certificate, *, purpose, image_id, minimum_sequence=0,
-           expected_configuration=None, expected_version=None):
-    """Verify with a caller-owned certificate; payload metadata never chooses trust."""
+def authenticated_manifest(data, signature, certificate, *, purpose, image_id, minimum_sequence=0,
+                           expected_configuration=None, expected_version=None):
+    """Authenticate bounded private metadata before using its payload declarations."""
     import tempfile
 
-    require(root.is_dir() and not root.is_symlink() and root.resolve() == root.absolute(),
-            'Release directory must be canonical.')
-    data = read(root / 'release.json', 65536)
-    signature = read(root / 'release.json.sig', 16384)
+    require(0 < len(data) <= 65536 and 0 < len(signature) <= 16384, 'Invalid release metadata size.')
     with tempfile.TemporaryDirectory(prefix='lanrith-release-verify.') as temporary:
         directory = Path(temporary)
         (directory / 'public.pem').write_bytes(public_key(certificate))
@@ -178,9 +176,24 @@ def verify(root, certificate, *, purpose, image_id, minimum_sequence=0,
         require(value['configuration_sha256'] == expected_configuration, 'Configuration digest differs.')
     if expected_version is not None:
         require(value['platform_version'] == expected_version, 'Platform version differs.')
+    return value
+
+
+def verify(root, certificate, *, purpose, image_id, minimum_sequence=0,
+           expected_configuration=None, expected_version=None, before_hashing=None):
+    """Verify with a caller-owned certificate; payload metadata never chooses trust."""
+    require(root.is_dir() and not root.is_symlink() and root.resolve() == root.absolute(),
+            'Release directory must be canonical.')
+    data = read(root / 'release.json', 65536)
+    signature = read(root / 'release.json.sig', 16384)
+    value = authenticated_manifest(data, signature, certificate, purpose=purpose, image_id=image_id,
+                                   minimum_sequence=minimum_sequence, expected_configuration=expected_configuration,
+                                   expected_version=expected_version)
     names = {item['name'] for item in value['artifacts']}
     require({entry.name for entry in root.iterdir()} == names | {'release.json', 'release.json.sig'},
             'Release contains unmanifested files.')
+    if before_hashing is not None:
+        before_hashing(sum(item['size'] for item in value['artifacts']))
     for artifact in value['artifacts']:
         actual = file_record(root / artifact['name'])
         require(all(actual[key] == artifact[key] for key in actual), 'Artifact size or digest differs.')

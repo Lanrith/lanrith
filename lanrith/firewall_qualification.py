@@ -28,11 +28,11 @@ CHECKS = {
     'disabled endpoint removes metadata/activation and preserves default-deny and permitted forwarding'}
 IMPLEMENTATION = {
     'lanrith/firewall_qualification.py', 'lanrith/firewall_observations.py', 'lanrith/firewall_observations_runtime.py',
-    'lanrith/firewall_metadata.py', 'lanrith/observation_spool.py', 'lanrith/observation_accounts.py',
+    'lanrith/firewall_metadata.py', 'lanrith/firewall_activation.py', 'lanrith/observation_spool.py', 'lanrith/observation_accounts.py',
     'lanrith/extensions.py', 'lanrith/extension_observations.py', 'lanrith/extension_network.py',
-    'lanrith/build.py', 'lanrith/config.py', 'lanrith/intent.py', 'lanrith/firewall.py', 'lanrith/access.py',
-    'lanrith/service_plane.py', 'lanrith/nat46.py', 'lanrith/nat64.py', 'lanrith/translation.py', 'lanrith/tun_policy.py',
-    'lanrith/policy_runtime.py', 'lanrith/release.py', 'lanrith/admission.py',
+    'lanrith/build.py', 'lanrith/config.py', 'lanrith/intent.py', 'lanrith/networkd.py', 'lanrith/firewall.py', 'lanrith/access.py',
+    'lanrith/service_plane.py', 'lanrith/nat46.py', 'lanrith/nat64.py', 'lanrith/public_nat64.py', 'lanrith/translation.py', 'lanrith/tun_policy.py',
+    'lanrith/nat64_allocations.py', 'lanrith/policy_runtime.py', 'lanrith/release.py', 'lanrith/admission.py',
     'scripts/qualify-firewall.py', 'scripts/qualify-base.py', 'scripts/build-base.py',
     'tests/firewall_metadata_native.py', 'tests/firewall_userspace.py', 'tests/firewall_service_native.py', 'tests/test_firewall_metadata.py',
     'tests/test_firewall_observations.py', 'tests/test_firewall_qualification.py', 'tests/firewall_fixture.py',
