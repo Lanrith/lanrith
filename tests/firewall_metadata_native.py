@@ -102,6 +102,8 @@ def main():
     value['services'] = {'dns': {'enabled': False}, 'ntp': {'enabled': False}}
     value['networks']['home'].pop('dhcp4')
     value['networks']['home']['ipv6'] = {'subnet_id': 16, 'ra': False, 'gua': False}
+    # This ULA-only LAN reaches the isolated echo server through a private upstream route.
+    value['networks']['home']['ipv6_upstream_routes'] = ['2001:db8:10::1/128']
     value['uplink']['ipv4'] = {'address': '192.0.2.2/24', 'gateway': '192.0.2.1'}
     value['uplink']['ipv6'] = {'address': '2001:db8:10::2/64', 'gateway': '2001:db8:10::1',
                               'downstream_prefix': '2001:db8:10::/48'}
