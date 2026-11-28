@@ -1,8 +1,10 @@
 """Expose host metrics through a bounded proxy on the isolated service link."""
 
 import ipaddress as ip
+import re
 
-from . import integrations, intent, routing
+from . import dhcp4, integrations, intent, routing
+from .metrics_runtime import BACKEND_PORT
 from .release import canonical, require
 
 
@@ -64,20 +66,73 @@ def manifest(value):
             'source': intent.service_addresses(value, 'metrics')[0]}
 
 
-def router_manifest(value):
-    from .runtime_plan import required_units
-    return {'schema': 1, 'units': required_units(value),
+def hook_inventory(*scripts):
+    """Extract the base-chain declarations from our generated nft programs."""
+    hooks = []
+    priorities = {'filter': 0, 'dstnat': -100, 'srcnat': 100}
+    for script in scripts:
+        family = table = None
+        for line in map(str.strip, script.splitlines()):
+            if line.startswith('table '):
+                _, family, table, _ = line.split()
+            if not line.startswith('chain ') or ' hook ' not in line:
+                continue
+            header = re.fullmatch(r'chain (\w+) \{ type (\w+) hook (\w+)(?: device "([^"]+)")? '
+                                  r'priority (-?\d+|[a-z]+); policy (accept|drop);.*', line)
+            require(family is not None and header, 'Cannot inventory generated firewall hook.')
+            name, kind, hook, device, priority, policy = header.groups()
+            hooks.append({'family': family, 'table': table, 'name': name, 'type': kind, 'hook': hook,
+                          'prio': priorities[priority] if priority.isalpha() else int(priority),
+                          'policy': policy, **({'dev': device} if device else {})})
+    return hooks
+
+
+def router_manifest(value, *, rules=None, access_backend='tun'):
+    from . import firewall, service_plane, tun_policy
+    if rules is None:
+        rules = (firewall.render(value, access_backend=access_backend),
+                 service_plane.namespace_firewall(value, service_plane.topology(value)))
+    guards = tun_policy.identity_egress(value) if access_backend == 'tun' else ''
+    dhcp = {str(scope['id']): [pool['pool-id'] for pool in scope['pools']] for scope in dhcp4.scopes(value)}
+    from .runtime_plan import advisory_timers, required_units
+    return {'schema': 1, 'units': sorted(set(required_units(value)) | set(advisory_timers(value))),
             'interfaces': sorted({item['name'] for item in value['hardware']['interfaces'].values()
                                   if item.get('owner') != 'vpp'} |
                                  {item['name'] for item in value['networks'].values() if 'namespace' not in item}),
             'clients': [{'network': name, 'interface': item['name']} for name, item in value['networks'].items()
                         if item.get('forwarding', True) and 'namespace' not in item],
+            'hooks': {'host': hook_inventory(rules[0], guards), 'services': hook_inventory(rules[1])},
+            'dhcp4': dhcp, 'startup_set': bool(guards and 'tp_started' in rules[0]),
             'ntp': value['services']['ntp']['enabled'],
             'logs': value.get('observability', {}).get('logs', {}).get('enabled', False),
             'directory': value.get('identity', {}).get('policy', {}).get('enabled', False)}
 
 
-def render(value):
+def observer_socket(kind, identity, dependency, *, namespace=False):
+    stem = 'lanrith-router-'+kind
+    unit = 'usr/lib/systemd/system/'+stem
+    return {unit+'.socket': (
+                '[Unit]\nDescription=Read aggregate '+kind+' observations\n'
+                '[Socket]\nListenStream=/run/'+stem+'.sock\nSocketMode=0600\nAccept=yes\n'
+                'MaxConnections=2\nBacklog=2\nRemoveOnStop=yes\n'),
+            unit+'@.service': (
+                '[Unit]\nDescription=Measure '+kind+' for router metrics\nRequisite='+dependency+'\nAfter='+dependency+'\n'
+                '[Service]\nUser='+identity+'\nGroup='+identity+'\n'
+                'ExecStart=/usr/lib/lanrith/router-metrics --'+kind+'\n'
+                'StandardInput=null\nStandardOutput=socket\nStandardError=journal\nRuntimeMaxSec=4s\nTimeoutStopSec=1s\n'
+                + ('DynamicUser=yes\nNetworkNamespacePath=/run/netns/lanrith-services\n'
+                   'AmbientCapabilities=CAP_NET_ADMIN\nCapabilityBoundingSet=CAP_NET_ADMIN\n'
+                   'RestrictAddressFamilies=AF_NETLINK\n' if namespace else
+                   'CapabilityBoundingSet=\nRestrictAddressFamilies=AF_UNIX\n') +
+                'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
+                'PrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\n'
+                'ProtectKernelLogs=yes\nProtectControlGroups=yes\nRestrictNamespaces=yes\n'
+                'InaccessiblePaths=-/run/kea -/run/lanrith-kea-leases -/run/router-policy-ipc/requests.sock '
+                '-/run/lanrith-policy -/run/credentials -/var/lib/lanrith\n'
+                'MemoryMax=64M\nTasksMax=12\nLimitNOFILE=32\n')}
+
+
+def render(value, *, rules=None, access_backend='tun'):
     if not active(value):
         return {}
     settings = manifest(value)
@@ -89,15 +144,23 @@ def render(value):
         groups.append('lanrith-directory-health')
     if value['services']['ntp']['enabled']:
         groups.append('_chrony')
+    policy = router_manifest(value, rules=rules, access_backend=access_backend)
+    observers = observer_socket('service-hooks', 'lr-firewall-metrics', 'lanrith-services.service', namespace=True)
+    sockets = 'lanrith-router-service-hooks.socket'
+    if policy['directory']:
+        observers.update(observer_socket('policy-status', 'router-policy-operator', 'lanrith-policy-helper.service'))
+        sockets += ' lanrith-router-policy-status.socket'
     return {
+        **observers,
         **(ntp_observer() if value['services']['ntp']['enabled'] else {}),
         'usr/share/lanrith/metrics.json': canonical(settings).decode(),
-        'usr/share/lanrith/router-metrics.json': canonical(router_manifest(value)).decode(),
+        'usr/share/lanrith/router-metrics.json': canonical(policy).decode(),
         'usr/lib/sysusers.d/80-lanrith-metrics.conf': 'u lanrith-metrics - "Metrics proxy" /\n',
-        'usr/lib/tmpfiles.d/80-lanrith-metrics.conf': 'd /var/lib/node_exporter/textfile_collector 0755 root root -\n',
+        'usr/lib/tmpfiles.d/80-lanrith-metrics.conf': ('d /var/lib/node_exporter/textfile_collector 0755 root root -\n'
+            'r! /var/lib/node_exporter/textfile_collector/lanrith_router.prom - - - -\n'),
         'usr/lib/systemd/system/lanrith-router-metrics.service': (
             '[Unit]\nDescription=Collect bounded router health in the host namespace\n'
-            'Requires=var.mount\nAfter=var.mount nftables.service systemd-networkd.service\n'
+            'Requires=var.mount\nWants='+sockets+'\nAfter='+sockets+' var.mount nftables.service systemd-networkd.service\n'
             '[Service]\nType=oneshot\nUser=root\nGroup=root\nUMask=0022\n'
             + ('SupplementaryGroups='+' '.join(groups)+'\n' if groups else '') +
             'ExecStart=/usr/lib/lanrith/router-metrics\n'
@@ -106,6 +169,8 @@ def render(value):
             'CapabilityBoundingSet=CAP_NET_ADMIN\nNoNewPrivileges=yes\n'
             'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\n'
             'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'
+            'OpenFile=/proc/1/mountinfo:host-mountinfo:read-only,graceful\n'
+            'InaccessiblePaths=-/run/kea -/run/lanrith-kea-leases -/run/router-policy-ipc\n'
             'ReadWritePaths=/var/lib/node_exporter/textfile_collector\n'
             'RestrictAddressFamilies=AF_UNIX AF_NETLINK\nRestrictNamespaces=yes\n'
             'RestrictRealtime=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\n'
@@ -173,9 +238,16 @@ def ntp_observer():
 
 
 def exporter_arguments(value):
-    return ['--web.listen-address='+manifest(value)['backend']+':9101', '--collector.disable-defaults',
+    # Every enabled service link has an IPv4 and an IPv6 host address.
+    # Keep the historical IPv4 expression and anchor each new IPv6 field.
+    fields = ('^((Ip|IpExt|Icmp|Tcp|TcpExt|Udp|UdpLite)_.*|'
+              'Ip6_(InOctets|OutOctets|InHdrErrors|InTooBigErrors|InNoRoutes|InAddrErrors|'
+              'InUnknownProtos|InTruncatedPkts|OutNoRoutes)|'
+              'Icmp6_(InMsgs|OutMsgs|InErrors|OutErrors|InCsumErrors)|'
+              '(Udp6|UdpLite6)_(InDatagrams|OutDatagrams|NoPorts|InErrors|RcvbufErrors|SndbufErrors|InCsumErrors))$')
+    return [f'--web.listen-address={manifest(value)["backend"]}:{BACKEND_PORT}', '--collector.disable-defaults',
             *('--collector.'+name for name in COLLECTORS),
-            '--collector.netstat.fields=^(Ip|IpExt|Icmp|Tcp|TcpExt|Udp|UdpLite)_',
+            '--collector.netstat.fields='+fields,
             '--collector.systemd.unit-include=^.+[.](service|socket)$',
             '--collector.textfile.directory=/var/lib/node_exporter/textfile_collector']
 
@@ -223,4 +295,10 @@ def backend_rule(value, *, namespace=False):
         return []
     settings = manifest(value)
     scope = 'meta skuid "lanrith-metrics"' if namespace else f'iifname "{HOST_LINK}"'
-    return [f'  {scope} ip saddr {settings["source"]} ip daddr {settings["backend"]} tcp dport 9101 accept']
+    return [f'  {scope} ip saddr {settings["source"]} ip daddr {settings["backend"]} tcp dport {BACKEND_PORT} accept']
+
+
+def local_backend_drop(value):
+    if not active(value):
+        return []
+    return [f'  ip daddr {manifest(value)["backend"]} tcp dport {BACKEND_PORT} drop']

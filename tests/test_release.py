@@ -42,8 +42,14 @@ class ReleaseTests(unittest.TestCase):
         return release.verify(self.root, self.certificate, purpose='update', image_id='lanrith', **options)
 
     def test_real_signature_and_expected_identity(self):
+        sizes = []
         self.assertEqual(self.verify(minimum_sequence=16, expected_version='0.1.0',
-                                     expected_configuration='a' * 64), self.value)
+                                     expected_configuration='a' * 64, before_hashing=sizes.append), self.value)
+        self.assertEqual(sizes, [sum(item['size'] for item in self.value['artifacts'])])
+        (self.root / 'release.json.sig').write_bytes(b'unsigned')
+        with self.assertRaises(release.ReleaseError):
+            self.verify(before_hashing=sizes.append)
+        self.assertEqual(len(sizes), 1)
 
     def test_tampering_manifest_artifact_and_signature_is_rejected(self):
         for name in ('release.json', 'synthetic.root', 'release.json.sig'):

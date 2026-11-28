@@ -50,6 +50,26 @@ class PolicyAgentContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, 'dynamic uplink source translation'):
             config.render(value)
 
+    def test_guard_activation_uses_only_declared_links_and_normal_helper_dependencies(self):
+        raw = declaration()
+        raw['hardware']['interfaces']['wan']['name'] = 'test-wan'
+        raw['networks']['home']['vlan'] = 1
+        files = config.render(raw)
+        units = 'usr/lib/systemd/system/'
+        devices = [f'sys-subsystem-net-devices-{name}.device' for name in ('lan.1', 'lan.22', r'test\x2dwan')]
+        bound = files[units+'lanrith-policy-guards.service.d/50-links.conf'].splitlines()
+        for directive in ('BindsTo=', 'After='):
+            self.assertIn(directive+' '.join(devices), bound)
+        sources = {name.removeprefix(units).split('.d/')[0] for name in files
+                   if name.endswith('.device.d/50-lanrith-policy.conf')}
+        self.assertEqual(sources, set(devices))
+        retry = files[units+'lanrith-policy-guard-retry.timer']
+        self.assertIn('Unit=lanrith-policy-guard-retry.target', retry)
+        self.assertIn('OnSuccess=lanrith-policy-helper.service', files[units+'lanrith-policy-guard-retry.target'])
+        self.assertEqual({line.split('/')[-1] for line in retry.splitlines() if line.startswith('ConditionPathExists=')},
+                         {'lan.1', 'lan.22', 'test-wan'})
+        self.assertNotIn(units+'lanrith-policy-guard-retry.timer', config.render(minimal()))
+
     def test_base_firewall_enforces_identity_without_permission_carrier_marks(self):
         from lanrith import firewall
         value = config.normalize(declaration())
@@ -189,12 +209,34 @@ class PolicyAgentContractTests(unittest.TestCase):
         self.assertTrue(all(path['masquerade'] and not path.get('translated_addresses')
                             for path in dynamic if ':' not in path['address']))
 
+    def test_forward_only_dns_uses_exact_pinned_firewall_and_paired_contract(self):
+        raw = declaration()
+        raw['services'] = {'dns': {'enabled': True}, 'dhcp4': {'enabled': False}, 'ntp': {'enabled': False}}
+        peer = '10.250.13.53'
+        for kind in ('dns', 'dns_tls'):
+            with self.subTest(kind=kind):
+                value = config.normalize(raw)
+                if kind == 'dns':
+                    value['services']['dns']['upstreams'] = [peer]
+                else:
+                    value['services']['dns']['tls_forwarding'] = {
+                        'trust': 'system', 'upstreams': [{'address': peer, 'authentication_name': 'dns.example.test'}]}
+                current = policy_agent.baseline(value)['network_model']['core_egress']
+                self.assertFalse(any(p['kind'].startswith('dns') for p in current))
+                if kind == 'dns':
+                    legacy = policy_agent.baseline(value, access_backend='legacy')['network_model']['core_egress']
+                    self.assertEqual([p['destinations'] for p in legacy if p['kind'] == 'dns'], [['0.0.0.0/0']])
+                candidate = policy_agent.bounded_baseline(value, {})['network_model']['core_egress']
+                self.assertEqual([(p['kind'], p['destinations']) for p in candidate if p['kind'].startswith('dns')],
+                                 [(kind, [peer+'/32'])])
+
     def test_ntp_numeric_dns_dependency_is_exact_and_disappears_with_ntp(self):
         raw = declaration()
         # Baseline-only coverage includes dynamic IPv6 geometry; runtime
         # admission separately rejects its unqualified post-NAT source.
         raw['uplink']['ipv6'] = 'ra'
-        raw['services'] = {'dns': {'enabled': False, 'upstreams': ['9.9.9.9', '2620:fe::fe']}}
+        raw['services'] = {'dns': {'enabled': False, 'upstreams': ['9.9.9.9', '2620:fe::fe']},
+                           'ntp': {'enabled': True, 'upstreams': ['named.example.test']}}
         paths = policy_agent.baseline(config.normalize(raw))['network_model']['core_egress']
         self.assertEqual({path['kind'] for path in paths}, {'ntp', 'ntp_dns'})
         resolvers = {destination for path in paths if path['kind'] == 'ntp_dns'

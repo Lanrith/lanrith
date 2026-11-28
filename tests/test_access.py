@@ -114,10 +114,13 @@ class AccessTests(unittest.TestCase):
         value['uplink']['masquerade'] = True
         text = config.render(value)['etc/nftables.conf']
         self.assertIn('ip saddr 192.168.10.0/24 oifname "wan" masquerade', text)
-        self.assertNotIn('iifname "lan.10" oifname "wan"', text)
+        wan_rules = [line.strip() for line in text.splitlines() if 'iifname "lan.10" oifname "wan"' in line]
+        self.assertEqual(wan_rules, ['iifname "lan.10" oifname "wan" meta nfproto ipv6 drop'])
         value['uplink']['masquerade'] = False
-        self.assertNotIn('ip saddr 192.168.10.0/24 oifname "wan" masquerade', config.render(value)['etc/nftables.conf'])
-        self.assertIn('iifname "lr-services"', config.render(value)['etc/nftables.conf'])
+        without_masquerade = config.render(value)['etc/nftables.conf']
+        self.assertNotIn('ip saddr 192.168.10.0/24 oifname "wan" masquerade', without_masquerade)
+        self.assertEqual(text.split(' chain forward {', 1)[1].split('\n }', 1)[0],
+                         without_masquerade.split(' chain forward {', 1)[1].split('\n }', 1)[0])
 
     def test_existing_internet_and_connection_files_still_render(self):
         value = copy.deepcopy(self.value)

@@ -37,9 +37,9 @@ class OperatorTests(unittest.TestCase):
         environment = patch.dict(os.environ, {'INVOCATION_ID': 'd'*32})
         environment.start()
         self.addCleanup(environment.stop)
-        accepted = patch.object(operation, 'save_accepted')
-        accepted.start()
-        self.addCleanup(accepted.stop)
+        intent = patch.object(operation, 'load_promotion', return_value=None)
+        intent.start()
+        self.addCleanup(intent.stop)
         prune = patch.object(operation, 'prune_inbox')
         prune.start()
         self.addCleanup(prune.stop)
@@ -118,22 +118,36 @@ class OperatorTests(unittest.TestCase):
         with patch.object(operation, 'policy', return_value=current), \
                 patch.object(operation, 'load', return_value=record), \
                 patch.object(operation, 'operation_lock'), \
-                patch.object(operation, 'save') as save, patch.object(runtime, 'accept') as accept:
+                patch.object(operation, 'promote_running') as promote:
             operation.complete()
-        accept.assert_called_once_with(11)
-        self.assertEqual(save.call_args.args[1]['phase'], 'accepted')
+        promote.assert_called_once_with(current)
 
     def test_unhealthy_candidate_reboots_without_changing_the_old_default(self):
         value, record = self.fixture()
         current = {**value, **record['candidate']}
         with patch.object(operation, 'policy', return_value=current), \
                 patch.object(operation, 'load', return_value=record), patch.object(operation, 'operation_lock'), \
-                patch.object(operation, 'fallback_boot') as fallback, \
+                patch.object(operation, 'rollback_running') as fallback, \
                 patch.object(operation.time, 'monotonic', side_effect=[0, 181]), \
-                patch.object(runtime, 'accept', side_effect=ReleaseError('not healthy')), \
+                patch.object(operation, 'promote_running', side_effect=ReleaseError('not healthy')), \
                 self.assertRaisesRegex(ReleaseError, 'deadline'):
             operation.complete()
-        fallback.assert_called_once_with(operation.INSTALLED)
+        fallback.assert_called_once_with(current)
+
+    def test_completion_only_logs_distinct_local_requirements(self):
+        from lanrith.boot_health import LocalRequirementFailed
+        value, record = self.fixture()
+        current = {**value, **record['candidate']}
+        missing = LocalRequirementFailed('Required SSH management listeners failed.')
+        errors = [missing, missing, ReleaseError('synthetic confidential command detail')]
+        with patch.object(operation, 'policy', return_value=current), \
+                patch.object(operation, 'load', return_value=record), patch.object(operation, 'operation_lock'), \
+                patch.object(operation, 'rollback_running'), patch.object(operation.time, 'sleep'), \
+                patch.object(operation.time, 'monotonic', side_effect=[0, 1, 2, 181]), \
+                patch.object(operation, 'promote_running', side_effect=errors), patch('builtins.print') as logged, \
+                self.assertRaisesRegex(ReleaseError, 'deadline'):
+            operation.complete()
+        logged.assert_called_once_with(str(missing), file=operation.sys.stderr)
 
     def test_unprovisioned_candidate_exhausts_bounded_setup_then_takes_automatic_fallback(self):
         from lanrith import credential_operation
@@ -142,12 +156,12 @@ class OperatorTests(unittest.TestCase):
         with patch.object(operation, 'policy', return_value=current), \
                 patch.object(operation, 'load', return_value=record), patch.object(operation, 'operation_lock'), \
                 patch.object(credential_operation, 'wait_ready', return_value=False) as wait, \
-                patch.object(operation, 'fallback_boot') as fallback, \
-                patch.object(runtime, 'accept') as accept, self.assertRaisesRegex(ReleaseError, 'deadline'):
+                patch.object(operation, 'rollback_running') as fallback, \
+                patch.object(operation, 'promote_running') as accept, self.assertRaisesRegex(ReleaseError, 'deadline'):
             operation.complete()
         wait.assert_called_once_with(current)
         accept.assert_not_called()
-        fallback.assert_called_once_with(operation.INSTALLED)
+        fallback.assert_called_once_with(current)
 
     def test_expired_initial_provisioning_stays_unaccepted_and_completion_can_be_started_again(self):
         from lanrith import credential_operation
@@ -156,19 +170,19 @@ class OperatorTests(unittest.TestCase):
                 patch.object(operation, 'accepted_identity', return_value=None), \
                 patch.object(operation, 'operation_lock'), \
                 patch.object(credential_operation, 'wait_ready', side_effect=[False, True]), \
-                patch.object(operation, 'fallback_boot') as fallback, patch.object(runtime, 'accept') as accept:
+                patch.object(operation, 'rollback_running') as fallback, patch.object(operation, 'promote_running') as accept:
             with self.assertRaisesRegex(ReleaseError, 'deadline'):
                 operation.complete()
             operation.complete()
         fallback.assert_not_called()
-        accept.assert_called_once_with(value['deployment_sequence'])
+        accept.assert_called_once_with(value)
 
     def test_unqualified_fallback_cannot_change_boot_selectors_or_reboot(self):
         value, record = self.fixture()
         current = {**value, **record['candidate']}
         with patch.object(operation, 'policy', return_value=current), \
-                patch.object(operation, 'load', return_value=record), \
-                patch.object(operation, 'boot_esp', return_value=Path('/efi')), \
+                patch.object(operation, 'load', return_value=record), patch.object(operation, 'operation_lock'), \
+                patch.object(operation.update, 'restore_esp', return_value=Path('/efi')), \
                 patch.object(operation, 'select_boot_once') as once, \
                 patch.object(operation, 'require_default') as default, \
                 patch.object(operation, 'command') as command, patch.object(operation, 'save') as save, \
@@ -183,18 +197,9 @@ class OperatorTests(unittest.TestCase):
         value, record = self.fixture()
         with patch.object(operation, 'policy', return_value={**value, 'configuration_sha256': 'e'*64}), \
                 patch.object(operation, 'load', return_value=record), patch.object(operation, 'operation_lock'), \
-                patch.object(runtime, 'accept') as accept, self.assertRaises(ReleaseError):
+                patch.object(operation, 'promote_running') as accept, self.assertRaises(ReleaseError):
             operation.complete()
         accept.assert_not_called()
-
-    def test_failed_candidate_return_marks_fallback_and_remains_repeatable(self):
-        value, record = self.fixture()
-        with patch.object(operation, 'policy', return_value=value), patch.object(operation, 'operation_lock'), \
-                patch.object(operation, 'load', return_value=record), patch.object(operation, 'save') as save, \
-                patch.object(runtime, 'accept') as accept:
-            operation.complete()
-        accept.assert_called_once_with(10)
-        self.assertEqual(save.call_args.args[1]['phase'], 'fallback')
 
     def test_pending_operation_blocks_a_second_trigger_before_upload_inspection(self):
         value, record = self.fixture()
@@ -216,7 +221,7 @@ class OperatorTests(unittest.TestCase):
             (root/'release.json').write_bytes(release.canonical(manifest))
             events = []
             def promoted(*args, **kwargs):
-                self.assertEqual(kwargs, {'expected_digest': 'c'*64, 'stage_payload': False})
+                self.assertEqual(kwargs, {'expected_digest': 'c'*64})
                 events.append('verified-copy')
                 return root
             def saved(_, record):
@@ -230,9 +235,10 @@ class OperatorTests(unittest.TestCase):
                 events.append('reboot-request')
             with patch.object(operation, 'policy', return_value=value), patch.object(operation, 'operation_lock'), \
                     patch.object(operation, 'load', return_value=None), \
+                    patch.object(runtime, 'require_accepted_boot'), \
                     patch.object(operation, 'uploaded', return_value=(manifest, root)), \
-                    patch.object(operation, 'promote', side_effect=promoted), \
-                    patch.object(operation, 'save', side_effect=saved), patch.object(operation, 'stage', side_effect=stage), \
+                    patch.object(operation, 'promote_locked', side_effect=promoted), \
+                    patch.object(operation, 'save', side_effect=saved), patch.object(operation, 'stage_locked', side_effect=stage), \
                     patch.object(operation, 'command', side_effect=command):
                 self.assertEqual(operation.trigger('c'*64)['phase'], 'rebooting')
             self.assertEqual(events[-1], 'reboot-request')
@@ -243,7 +249,10 @@ class OperatorTests(unittest.TestCase):
             selected = {**record, 'executor_id': executor}
             with patch.object(operation, 'policy', return_value=value), patch.object(operation, 'operation_lock'), \
                     patch.object(operation, 'load', return_value=selected), \
-                    patch.object(operation, 'boot_esp', return_value=Path('/efi')), \
+                    patch.object(runtime, 'require_accepted_boot'), \
+                    patch.object(operation, 'command', return_value='/efi/EFI/Linux/lanrith_10.efi'), \
+                    patch.object(operation.update, 'accepted_boot', return_value=Path('/efi/EFI/Linux/lanrith_10.efi')), \
+                    patch.object(operation.update, 'restore_esp', return_value=Path('/efi')), \
                     patch.object(operation, 'select_boot_once') as once, \
                     patch.object(operation, 'require_default') as default, patch.object(operation, 'save') as save:
                 operation.cancel_request()
@@ -294,6 +303,10 @@ class OperatorTests(unittest.TestCase):
                 self.assertIn('CollectMode=inactive-or-failed',
                     (tree/'usr/lib/systemd/system/lanrith-image-operation@.service').read_text())
                 self.assertIn(' -I\n', (tree/'usr/bin/lanrith-image').read_text())
+                self.assertIn('d /run/lanrith-image-locks 0700 root root -',
+                    (tree/'usr/lib/tmpfiles.d/80-lanrith-update.conf').read_text().splitlines())
+                self.assertIn('After=local-fs.target systemd-tmpfiles-setup.service',
+                    (tree/'usr/lib/systemd/system/lanrith-image-completion.service').read_text().splitlines())
                 self.assertTrue((tree/'usr/lib/systemd/system/multi-user.target.wants/lanrith-image-completion.service').is_symlink())
                 self.assertFalse(any(p.suffix in ('.yml', '.yaml') for p in tree.rglob('*')))
                 if mode == 'disabled':

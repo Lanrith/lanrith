@@ -1,6 +1,5 @@
 """Exercise hardware guards against synthetic sysfs; never touch host devices."""
 
-import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -9,6 +8,24 @@ from unittest.mock import Mock, patch
 
 from lanrith import config, hardware, hardware_config
 from lanrith.release import ReleaseError
+
+
+def emulate_drivers(device):
+    write = Path.write_text
+
+    def effect(path, data, *args, **kwargs):
+        result = write(path, data, *args, **kwargs)
+        if path.name == 'unbind':
+            (device/'driver').unlink()
+            shutil.rmtree(device/'net')
+        elif path.name == 'bind':
+            (device/'driver').symlink_to(path.parent)
+            if path.parent.name != 'vfio-pci':
+                (device/'net/port0').mkdir(parents=True)
+                (device/'net/port0/address').write_text('02:00:00:00:05:01\n')
+        return result
+
+    return effect
 
 
 class HardwareTests(unittest.TestCase):
@@ -25,8 +42,12 @@ class HardwareTests(unittest.TestCase):
             path.mkdir(parents=True)
             (path/'unbind').touch()
         (device/'driver').symlink_to(root/'bus/pci/drivers'/driver)
+        for key in ('vendor', 'device', 'subsystem_vendor', 'subsystem_device', 'revision', 'class'):
+            (device/key).write_text('0x1234\n')
+        (device/'driver_override').write_text('(null)\n')
+        (root/'class/net').mkdir(parents=True)
         interface = root/'class/net/port0'
-        interface.mkdir(parents=True)
+        interface.symlink_to(device/'net/port0')
         (interface/'address').write_text('02:00:00:00:05:01\n')
         return device
 
@@ -35,24 +56,12 @@ class HardwareTests(unittest.TestCase):
             with self.subTest(driver=driver), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 device = self.fixture(root, driver)
-                original = Path.write_text
-                writes = []
-
-                def write(path, data, *args, **kwargs):
-                    writes.append(path)
-                    result = original(path, data, *args, **kwargs)
-                    if path.name == 'drivers_probe':
-                        (device/'driver').unlink()
-                        (device/'driver').symlink_to(root/'bus/pci/drivers/vfio-pci')
-                        shutil.rmtree(device/'net')
-                    return result
-
                 run = Mock()
-                with patch.object(Path, 'write_text', write):
-                    hardware.bind_device(device.name, '7', 'port0', '02:00:00:00:05:01',
-                                         driver, sysfs=root, run=run)
+                with patch.object(Path, 'write_text', emulate_drivers(device)):
+                    for group in (7, '7'):
+                        hardware.bind_device(device.name, group, 'port0', '02:00:00:00:05:01',
+                                             driver, sysfs=root, state=root/'state', run=run)
                 self.assertEqual(run.call_count, 2)
-                self.assertEqual(len(writes), 3)
                 hardware.vfio_device(device.name, '7', sysfs=root)
 
     def test_shared_group_wrong_identity_and_driver_fail_before_any_mutation(self):
@@ -67,7 +76,7 @@ class HardwareTests(unittest.TestCase):
                     hardware.bind_device('../bad' if change == 'path' else device.name,
                         '8' if change == 'group' else '7', 'port0',
                         '02:00:00:00:05:02' if change == 'mac' else '02:00:00:00:05:01',
-                        'igb' if change == 'driver' else 'virtio-pci', sysfs=root, run=run)
+                        'igb' if change == 'driver' else 'virtio-pci', sysfs=root, state=root/'state', run=run)
                 run.assert_not_called()
                 write.assert_not_called()
 

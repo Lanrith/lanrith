@@ -13,7 +13,7 @@ from test_intent import minimal
 
 def fixture():
     value = minimal()
-    value['services'] = {'dns': {'enabled': False}, 'ntp': {'enabled': False}}
+    value['services'] = {'dns': {'enabled': False}, 'ntp': {'enabled': False, 'upstreams': ['192.0.2.123']}}
     value['observability'] = {'metrics': {'enabled': True, 'clients': [{'network': 'home'}]}}
     return value
 
@@ -70,10 +70,12 @@ class MetricsTests(unittest.TestCase):
             health = (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text()
             for name in ('lanrith-metrics.service', 'prometheus-node-exporter.service', 'lanrith-services.service'):
                 self.assertIn(name, health)
-                self.assertTrue((overlay/'etc/systemd/system'/name).is_symlink())
+                self.assertEqual((overlay/'usr/lib/systemd/system/multi-user.target.wants'/name).readlink(),
+                                 Path('/usr/lib/systemd/system')/name)
             self.assertTrue((overlay/'usr/lib/lanrith/lanrith/metrics_runtime.py').is_file())
             self.assertEqual(json.loads((overlay/'usr/share/lanrith/router-metrics.json').read_bytes())['units'],
-                             json.loads((overlay/'usr/share/lanrith/health.json').read_bytes())['units'])
+                             sorted(json.loads((overlay/'usr/share/lanrith/health.json').read_bytes())['units'] +
+                                    ['lanrith-router-metrics.timer']))
             self.assertTrue((overlay/'usr/lib/lanrith/router-metrics').is_file())
             self.assertTrue((overlay/'usr/lib/lanrith/lanrith/router_metrics_runtime.py').is_file())
 
@@ -87,12 +89,23 @@ class MetricsTests(unittest.TestCase):
                       'tcp dport 9101 accept', files['etc/lanrith/services.nft'])
         self.assertNotIn('tcp dport 9101 accept', '\n'.join(metrics.client_rules(config.normalize(fixture()))))
 
+    def test_exact_host_backend_drop_precedes_loopback_in_both_firewall_programs(self):
+        value = fixture()
+        value['addressing']['services'] = {'ipv4': '172.30.40.0/24', 'ipv6': 'fd42:1234:5678:700::/64'}
+        files = config.render(value)
+        for name in ('etc/nftables.conf', 'etc/lanrith/firewall-recovery.nft'):
+            output = files[name].split('chain output { type filter hook output', 1)[1]
+            drop = 'ip daddr 172.30.40.1 tcp dport 9101 drop'
+            self.assertLess(output.index(drop), output.index('oifname "lo" accept'))
+
     def test_disabling_metrics_removes_its_addresses_rules_and_units(self):
         value = fixture()
         value['observability']['metrics']['enabled'] = False
         files = config.render(value)
         self.assertFalse(any('metrics' in path or 'node-exporter' in path for path in files))
         self.assertNotIn('10.255.254.50', files['etc/nftables.conf'])
+        for name in ('etc/nftables.conf', 'etc/lanrith/firewall-recovery.nft'):
+            self.assertNotIn('tcp dport 9101', files[name])
         self.assertNotIn('usr/share/lanrith/service-plane.json', files)
 
     def test_custom_ranges_and_gua_keep_stable_component_addresses(self):

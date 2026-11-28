@@ -21,10 +21,12 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT/'tests')]
-from lanrith import policy_runtime
+from lanrith import policy_runtime, router_metrics_runtime
 from lanrith.release import canonical, require
 import policy_bindings_component_native as bindings_test
 import policy_observer_component_native as base
+from policy_enrollment_native import interrupt_after
+from test_radius import provider_export
 
 PEER = 'fd42:1234:5678:10::30'
 DIRECTORY = Path('/run/synthetic-directory')
@@ -73,10 +75,10 @@ def receive(stream):
     return fields(exact(stream, size))
 
 
-def result(message_id, tag, *, paging=False):
-    body = tlv(2, message_id)+tlv(tag, tlv(10, b'\0')+tlv(4, b'')+tlv(4, b''))
-    if paging:
-        page = tlv(0x30, tlv(2, b'\0')+tlv(4, b''))
+def result(message_id, tag, *, cookie=None, code=0):
+    body = tlv(2, message_id)+tlv(tag, tlv(10, bytes([code]))+tlv(4, b'')+tlv(4, b''))
+    if cookie is not None:
+        page = tlv(0x30, tlv(2, b'\0')+tlv(4, cookie))
         body += tlv(0xa0, tlv(0x30, tlv(4, '1.2.840.113556.1.4.319')+tlv(4, page)))
     return tlv(0x30, body)
 
@@ -88,13 +90,68 @@ def entry(message_id, dn, attributes):
     return tlv(0x30, tlv(2, message_id)+tlv(0x64, tlv(4, dn)+tlv(0x30, encoded)))
 
 
+def search_page(connection, unit, expected_cookie):
+    message_id, search, controls = receive(connection)
+    require(search[0] == 0x63 and fields(search[1])[:3] == [
+        (4, ('ou='+unit+',dc=example,dc=test').encode()), (10, b'\1'), (10, b'\0')],
+        'Unexpected search namespace or scope.')
+    control, = fields(controls[1])
+    oid, critical, value = fields(control[1])
+    require(controls[0] == 0xa0 and control[0] == 0x30 and oid == (4, b'1.2.840.113556.1.4.319')
+            and critical[0] == 1 and critical[1] in (b'\xff', b'\1') and value[0] == 4,
+            'Reader omitted critical paging.')
+    page, = fields(value[1])
+    size, cookie = fields(page[1])
+    require(page[0] == 0x30 and size[0] == 2 and cookie == (4, expected_cookie),
+            'Reader did not return the issued paging cookie.')
+    return message_id[1], int.from_bytes(size[1], 'big')
+
+
+def directory_rows(mode):
+    names = ('vlan-placement', 'trusted-access')
+    groups = ['cn='+name+',ou=groups,dc=example,dc=test' for name in names]
+    user = 'cn='+bindings_test.MAC+',ou=users,dc=example,dc=test'
+    member_groups = groups[:1] if mode == 'withdrawn' else groups
+    entries = {'groups': [], 'users': []}
+    for index, group in enumerate(bindings_test.snapshot()['directory']['groups']):
+        attrs = {'uid': [group['id']], 'cn': [names[index]], 'objectClass': ['goauthentik.io/ldap/group'],
+                 'network_policy_v1': [group['policy']]}
+        if groups[index] in member_groups:
+            attrs['member'] = [user]
+        entries['groups'].append((groups[index], attrs))
+    entries['users'].append((user, {'uid': ['synthetic-device'], 'cn': [bindings_test.MAC],
+        'objectClass': ['goauthentik.io/ldap/user'], 'memberOf': member_groups,
+        'ak-active': ['false' if mode == 'inactive' else 'true']}))
+    entries['users'].append(('cn=router,ou=users,dc=example,dc=test', {
+        'uid': ['synthetic-lookup'], 'cn': ['router'], 'objectClass': ['goauthentik.io/ldap/user']}))
+    return entries
+
+
+def serve_searches(connection, mode, event):
+    for unit, rows in directory_rows(mode).items():
+        cookie = b''
+        offset = 0
+        while offset < len(rows):
+            message_id, size = search_page(connection, unit, cookie)
+            require(size in (1, 256), 'Unexpected page size.')
+            if cookie and mode == 'interrupted' and unit == 'users':
+                event('withheld-users-continuation')
+                return
+            page = rows[offset:offset+size]
+            for dn, attributes in page:
+                connection.sendall(entry(message_id, dn, attributes))
+            offset += len(page)
+            cookie = unit.encode() if offset < len(rows) else b''
+            connection.sendall(result(message_id, 0x65, cookie=None if mode == 'missing-control' else cookie))
+            if mode == 'missing-control':
+                event('omitted-control')
+                return
+        event('searched-'+unit)
+
+
 def serve():
     def event(stage):
         with (DIRECTORY/'events').open('a') as stream: stream.write(stage+'\n')
-    user = 'cn='+bindings_test.MAC+',ou=users,dc=example,dc=test'
-    groups = ['cn=vlan-placement,ou=groups,dc=example,dc=test',
-              'cn=trusted-access,ou=groups,dc=example,dc=test']
-    snapshot = bindings_test.snapshot()['directory']
     with socket.socket(socket.AF_INET6) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((PEER, 389)); listener.listen(4)
@@ -120,25 +177,12 @@ def serve():
                 require(request[1][0] == 0x60 and fields(request[1][1]) == [
                     (2, b'\3'), (4, b'cn=router,ou=users,dc=example,dc=test'), (0x80, b'synthetic-wire-only')],
                     'Reader bind differs from the synthetic credential.')
+                if mode == 'bind-rejected':
+                    connection.sendall(result(request[0][1], 0x61, code=49))
+                    continue
                 connection.sendall(result(request[0][1], 0x61))
                 event('bound')
-                for unit in ('groups', 'users'):
-                    request = receive(connection); message_id = request[0][1]
-                    require(request[1][0] == 0x63 and fields(request[1][1])[0] ==
-                            (4, ('ou='+unit+',dc=example,dc=test').encode()), 'Unexpected search namespace.')
-                    if unit == 'groups':
-                        for index, group in enumerate(snapshot['groups']):
-                            name = ('vlan-placement', 'trusted-access')[index]
-                            attrs = {'uid': [group['id']], 'cn': [name], 'objectClass': ['goauthentik.io/ldap/group'],
-                                     'member': [user], 'network_policy_v1': [group['policy']]}
-                            connection.sendall(entry(message_id, groups[index], attrs))
-                    else:
-                        attrs = {'uid': ['synthetic-device'], 'cn': [bindings_test.MAC],
-                                 'objectClass': ['goauthentik.io/ldap/user'], 'memberOf': groups,
-                                 'ak-active': ['false' if mode == 'inactive' else 'true']}
-                        connection.sendall(entry(message_id, user, attrs))
-                    connection.sendall(result(message_id, 0x65, paging=True))
-                    event('searched-'+unit)
+                serve_searches(connection, mode, event)
             except (ssl.SSLError, EOFError, OSError) as error:
                 event(type(error).__name__)  # No request or credential content.
             finally:
@@ -146,7 +190,9 @@ def serve():
 
 
 class ServiceGraph:
-    def __init__(self):
+    def __init__(self, check_provider=False):
+        self.check_provider = check_provider
+        self.provider_results = []
         self.server = None
         self.samples = 0
         self.paused = None
@@ -154,6 +200,8 @@ class ServiceGraph:
 
     def configure(self, value):
         value['identity']['directories']['directory']['url'] = 'ldap+starttls://['+PEER+']:389'
+        value['identity']['radius']['admission']['provider_policy'] = provider_export(
+            directory_url=value['identity']['directories']['directory']['url'])
         value['identity']['directories']['directory']['bind_dn'] = 'cn=router,ou=users,dc=example,dc=test'
         value['groups'] = {}
         value['access']['rules'] = [{'action': 'allow', 'from': 'devices', 'to': 'uplink'}]
@@ -189,10 +237,12 @@ class ServiceGraph:
         profile = Path(contract['profile_metadata']); profile.parent.mkdir(parents=True, exist_ok=True)
         profile.write_bytes(canonical(metadata)); profile.chmod(0o644)
         credentials = Path('/var/lib/lanrith/credentials'); credentials.mkdir(mode=0o700, parents=True)
-        credential = credentials/contract['directory']['credential_name']
+        self.credential_gate = files[
+            'etc/systemd/system/lanrith-policy-reader-setup.service.d/50-lanrith-credentials.conf']
+        credential = self.credential = credentials/contract['directory']['credential_name']
         credential.write_text('synthetic-wire-only\n'); credential.chmod(0o600)
         policy_runtime.ENROLLMENT.parent.mkdir(mode=0o700, parents=True)
-        for name in (BOOTSTRAP, READER, 'lanrith-policy-guards.service'):
+        for name in (BOOTSTRAP, READER, 'lanrith-policy-reader-setup.service', 'lanrith-policy-guards.service'):
             (units/name).write_text(files['usr/lib/systemd/system/'+name])
         # Finalization inspected the physical guard table. Real boot starts
         # from nftables.conf, then the guard unit installs that table once.
@@ -204,6 +254,13 @@ class ServiceGraph:
         # These stubs stand in only for the image boot/mount substrate.
         for name in ('nftables.service', 'systemd-networkd.service', 'systemd-sysctl.service'):
             (units/name).write_text('[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/true\n')
+        # Crash after the installed helper's empty history has reached /var.
+        # The generated unit must resume this exact state when systemd starts.
+        interrupt_after(contract, policy_runtime, 'install_record',
+                        lambda directory, name, value: name == 'state.json')
+        state = Path(contract['state_directory'])
+        require((state/'state.json').exists() and not (state/'ownership-epoch.json').exists(),
+                'Unexpected first-install interruption point.')
         self.server = subprocess.Popen(['nsenter', '--net=/run/netns/directory', '--', sys.executable,
                                        str(Path(__file__).resolve()), '--serve'], stdin=subprocess.DEVNULL)
         bindings_test.wait(lambda: (DIRECTORY/'ready').exists())
@@ -231,10 +288,45 @@ class ServiceGraph:
         self.paused = int(base.run('systemctl', 'show', '--property=MainPID', '--value', READER).stdout)
         os.kill(self.paused, signal.SIGSTOP)
         value = outcomes[-1]
+        outcome, timestamp = router_metrics_runtime.reader_attempt(time.monotonic()+2)
+        require(outcome == value['outcome'] and 0 <= time.time()-timestamp <= 90,
+                'Router metrics failed to observe the authenticated current-boot reader attempt.')
         return {'status': value['outcome'], 'grant_count': value['grant_count']}
 
+    def provider_check(self, stage, expected, *, passes):
+        result = base.run('setpriv', '--reuid=1701', '--regid=1701', '--clear-groups', '--',
+                          '/usr/bin/router-policy-reader', '-config-directory', str(policy_runtime.READER),
+                          '-check-provider', stage, check=False)
+        require((result.returncode == 0) == passes, 'Unexpected provider check exit for '+stage)
+        receipt = json.loads(result.stdout)
+        require(set(receipt) == {'schema_version', 'outcome', 'grant_count', 'denial_count'}
+                and receipt['schema_version'] == 1 and receipt['outcome'] == expected,
+                'Unexpected provider check outcome for '+stage)
+        self.provider_results.append({'stage': stage, 'exit_code': result.returncode, **receipt})
+        return receipt
+
+    def qualify_provider(self, checks, observe, kernel_grants):
+        for stage in ('single-page', 'multi-page'):
+            require(self.provider_check(stage, 'applied', passes=True)['grant_count'] > 0 and kernel_grants(),
+                    'Complete synthetic directory did not install the expected grant.')
+        before = observe()['snapshot']
+        for mode in ('missing-control', 'interrupted'):
+            (DIRECTORY/'mode').write_text(mode)
+            self.provider_check('multi-page', 'collection_failed', passes=False)
+            after = observe()['snapshot']
+            require(before['generation'] == after['generation'] and before['grants'] == after['grants'],
+                    'Incomplete collection changed the applied grant or its expiry.')
+        (DIRECTORY/'mode').write_text('withdrawn')
+        require(self.provider_check('withdrawn', 'applied', passes=True)['grant_count'] == 0 and not kernel_grants(),
+                'Removing the direct access membership did not withdraw the grant.')
+        self.provider_check('multi-page', 'applied', passes=False)
+        (DIRECTORY/'mode').write_text('valid')
+        require(self.provider_check('multi-page', 'applied', passes=True)['grant_count'] > 0 and kernel_grants(),
+                'Membership restoration failed to issue a fresh grant.')
+        checks.append('provider-single-and-multi-page-receipts-withdrawal-and-interrupted-continuation-expiry')
+
     def qualify(self, checks, observed, observe, bindings):
-        checks.append('generated-bootstrap-loads-systemd-credential-and-real-starttls-reader-without-controller-rules')
+        checks.append('generated-reader-setup-loads-systemd-credential-and-real-starttls-reader-without-controller-rules')
         require(policy_runtime.ENROLLMENT.is_file(), 'Generated bootstrap did not enroll persistent state.')
         info = Path('/proc')/str(self.paused)/'status'
         status = info.read_text()
@@ -250,6 +342,26 @@ class ServiceGraph:
                                 for element in row.get('set', {}).get('elem', []))
             return elements
         require(kernel_grants(), 'Fresh directory grant was not installed in the kernel.')
+        if self.check_provider:
+            self.qualify_provider(checks, observe, kernel_grants)
+        def application_ages():
+            status = base.run('setpriv', '--reuid=1702', '--regid=1702', '--clear-groups', '--',
+                              '/usr/bin/router-policy-status', '-socket', str(base.STATUS), '-server-uid', '0',
+                              '-timeout', '1500ms').stdout
+            summary = router_metrics_runtime.policy_summary(status)
+            require(summary['ready'] and summary['applied'], 'Confirmed helper application is missing.')
+            return summary['directory_age_ms'], summary['apply_age_ms']
+        confirmed = observe()['snapshot']
+        prior_ages = application_ages()
+        for mode in ('bind-rejected', 'missing-control'):
+            (DIRECTORY/'mode').write_text(mode)
+            require(self.submit()['status'] == 'collection_failed', 'Failed directory poll looked complete.')
+            after = observe()['snapshot']
+            require(after['generation'] == confirmed['generation'] and after['grants'] == confirmed['grants'],
+                    'A failed poll or metrics read changed the last confirmed application.')
+            ages = application_ages()
+            require(all(new > old for new, old in zip(ages, prior_ages)), 'A failed poll reset an application age.')
+            prior_ages = ages
         (DIRECTORY/'mode').write_text('untrusted')
         require(self.submit()['status'] == 'collection_failed', 'Untrusted TLS reached policy submission.')
         # Do not shorten or renew the production 90-second grant lifetime.
@@ -260,10 +372,14 @@ class ServiceGraph:
         observed['directory_outage_expiry_seconds'] = time.monotonic()-started
         checks.append('untrusted-directory-cannot-refresh-original-grant-lifetime')
         (DIRECTORY/'mode').write_text('valid')
+        # The collector can withdraw a window that spans an accounting update.
+        # Require both fresh sources when the directory comes back.
+        bindings_test.wait(lambda: bindings()['complete'] and bindings()['records'])
         require(self.submit()['grant_count'] > 0, 'Recovered TLS collection did not restore a fresh grant.')
         (DIRECTORY/'mode').write_text('inactive')
-        require(self.submit()['grant_count'] == 0 and not kernel_grants(),
-                'Inactive directory identity retained permission.')
+        withdrawn = self.submit()
+        require(withdrawn == {'status': 'applied', 'grant_count': 0} and not kernel_grants()
+                and max(application_ages()) < 30000, 'Fresh zero-grant withdrawal was not confirmed.')
         checks.append('fresh-inactive-directory-entry-withdraws-permission')
         (DIRECTORY/'mode').write_text('valid')
         require(self.submit()['grant_count'] > 0, 'Reactivated identity did not get a fresh grant.')
@@ -274,12 +390,46 @@ class ServiceGraph:
                 'Shutdown discarded classified history.')
         # Simulate volatile /run loss while retaining the same /var state.
         for path in (policy_runtime.ROOT, policy_runtime.READER): shutil.rmtree(path)
+        # The preceding clean shutdown already restored denies. Clear the
+        # historical sets so this start has to reconstruct them from /var.
+        for name in ('tp_history_mac', 'tp_history4'):
+            base.run('nft', 'flush', 'set', 'inet', 'lanrith', name)
+        self.credential.unlink()
+        setup = 'lanrith-policy-reader-setup.service'
+        units = Path('/run/systemd/system')
+        gate = 'lanrith-credential-ready.service'
+        dropin = units/(setup+'.d')/'50-lanrith-credentials.conf'
+        dropin.parent.mkdir(exist_ok=True)
+        dropin.write_text(self.credential_gate)
+        (units/gate).write_text('[Service]\nType=oneshot\nExecStart=/usr/bin/false\n')
+        base.run('systemctl', 'daemon-reload')
+        require(base.run('systemctl','start',gate,check=False).returncode != 0, 'Fixture gate unexpectedly passed.')
+        base.run('systemctl', 'start', BOOTSTRAP)
+        for name, value in (('tp_history_mac', bindings_test.MAC), ('tp_history4', bindings_test.IP)):
+            result = base.run('nft', '-j', '-n', 'list', 'set', 'inet', 'lanrith', name)
+            require(value.encode() in result.stdout, 'Recovery did not restore '+name)
+        require(not kernel_grants(), 'Recovery installed a historical grant.')
+        (units/gate).write_text('[Service]\nType=oneshot\nExecStart=/usr/bin/true\n')
+        base.run('systemctl', 'daemon-reload')
+        base.run('systemctl', 'reset-failed', gate)
+        require(base.run('systemctl', 'start', setup, check=False).returncode != 0,
+                'Reader setup accepted a missing credential.')
+        self.credential.write_text('synthetic-wire-only\n')
+        self.credential.chmod(0o600)
+        base.run('systemctl', 'reset-failed', setup)
+        base.run('systemctl', 'start', setup)
+        require(not kernel_grants(), 'Credential repair alone renewed an old grant.')
+        checks.append('missing-reader-secret-allows-local-history-restoration-and-repair-alone-issues-no-grant')
         base.run('systemctl', 'start', base.HELPER, timeout=110)
         first = self.submit()
         require(first['status'] in ('applied', 'rejected'), 'Reader did not resume after persistent recovery.')
         bindings_test.wait(lambda: bindings()['complete'] and bindings()['records'])
         require(self.submit()['grant_count'] > 0, 'Reboot-shaped runtime recovery did not admit fresh evidence.')
         checks.append('volatile-runtime-loss-restores-durable-history-and-needs-fresh-directory-and-bindings')
+        if self.check_provider:
+            observed.pop('binding')
+            observed.pop('grant_snapshot')
+            observed['provider_checks'] = self.provider_results
         observed['reader_outcomes'] = self.outcomes()
         require(bindings_test.sha(Path('/usr/bin/router-policy-reader')) == self.reader_hash,
                 'Reader changed during qualification.')
@@ -298,6 +448,7 @@ class ServiceGraph:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check-provider', action='store_true', help='exercise a reader candidate with provider qualification support')
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--candidate', type=Path)
     parser.add_argument('--collector-sha256')
@@ -306,7 +457,7 @@ if __name__ == '__main__':
     if args.serve:
         serve()
     else:
-        graph = ServiceGraph()
+        graph = ServiceGraph(check_provider=args.check_provider)
         try:
             bindings_test.qualify(args.candidate, args.collector_sha256, args.result,
                 access_backend='tun', configure=graph.configure, prepare_interfaces=graph.interfaces, service_graph=graph)

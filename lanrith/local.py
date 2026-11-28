@@ -144,6 +144,20 @@ def private_copy(source, destination, maximum):
         output.write(data)
 
 
+def restrict_release(directory):
+    """Keep private media private when individual verified artifacts are moved."""
+    directory.chmod(0o700)
+    for path in directory.iterdir():
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            release.require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1,
+                            'Verified release contains an unexpected file.')
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+
+
 def assemble(owner, platform, request, work, output, *, key, certificate, serial_hash=None, engine='podman', boot_options=None):
     expected = json.loads(release.read(request, 1024*1024), object_pairs_hook=release.unique)
     release.require(not work.exists() and not work.is_symlink() and not output.exists() and not output.is_symlink(),
@@ -234,6 +248,8 @@ def assemble(owner, platform, request, work, output, *, key, certificate, serial
         image_id = config.load(snapshot/'config.yaml').get('release', {}).get('image_id', 'lanrith')
         for purpose in ('update', 'factory'):
             release.verify(work/purpose, private/'boot.crt', purpose=purpose, image_id=image_id)
+            if actual['credential_digest'] is not None:
+                restrict_release(work/purpose)
     output.mkdir(mode=0o700, parents=True)
     for purpose in ('update', 'factory'):
         shutil.move(work/purpose, output/purpose)

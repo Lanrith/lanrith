@@ -17,7 +17,7 @@ import gzip
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lanrith.release import canonical, file_record, require, unsigned_manifest
-from lanrith import apt_security, build_cache, build_resources, frozen_apt, package_stage, components as component_contract
+from lanrith import apt_security, build_cache, build_resources, frozen_apt, ids_package, package_stage, components as component_contract
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +41,8 @@ def locks(path):
 def image(component, work, inputs):
     context = work / ('context-' + component)
     shutil.copytree(PROJECT / 'builders' / component, context)
+    if component == 'mkosi':
+        ids_package.stage(PROJECT, context)
     if component == 'vpp':
         shutil.copytree(PROJECT / 'builders/patches', context / 'patches')
     apt_security.stage(PROJECT, context, 'trixie')
@@ -125,6 +127,7 @@ def compile_packages(args, selection, inputs):
     (packages/'security-diagnostics').mkdir(exist_ok=True)
     (packages/'security-diagnostics/snapshot-metadata.json').write_bytes(canonical(metadata_transports))
     builder = image('mkosi', args.work, inputs)
+    extract_packages(builder, packages)
     # Exercise the pinned updater interface before the expensive source builds.
     run('docker', 'run', '--rm', '--network', 'none', '-v', str(PROJECT)+':/source:ro',
         '-w', '/source', builder, 'python3', '-m', 'unittest', 'discover',
@@ -132,6 +135,18 @@ def compile_packages(args, selection, inputs):
     # Non-Debian packages and native PAM are produced and scanned by the same run.
     run(sys.executable, str(PROJECT / 'scripts/custom-packages.py'), '--output', str(packages),
         '--evidence', str(args.work / 'custom-security.json'))
+    exporter_pin = PROJECT/'builders/node-exporter/source.json'
+    version = json.loads(exporter_pin.read_text())['package_version']
+    exporter_deb = packages/('prometheus-node-exporter_'+version+'_amd64.deb')
+    assessment = json.loads((args.work/'custom-security.json').read_text())['components']['node-exporter']
+    run('docker', 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+        '--security-opt', 'no-new-privileges', '--user', str(os.getuid())+':'+str(os.getgid()),
+        '--tmpfs', '/tmp:rw,exec,nosuid,nodev,size=128m,mode=1777', '-w', '/qualification',
+        '-v', str(PROJECT/'lanrith')+':/qualification/lanrith:ro',
+        '-v', str(exporter_pin)+':/qualification/pin.json:ro',
+        '-v', str(exporter_deb)+':/qualification/exporter.deb:ro', builder,
+        'python3', '-m', 'lanrith.exporter_qualification', 'exporter.deb', 'pin.json',
+        assessment['binary_sha256']['prometheus-node-exporter'])
     for component in ('vpp', 'unbound', 'tayga'):
         extract_packages(image(component, args.work, inputs), packages)
     # Retain public package outputs and the exact tools before filesystem

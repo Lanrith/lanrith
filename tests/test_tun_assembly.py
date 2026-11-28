@@ -123,13 +123,10 @@ class TunAssemblyTests(unittest.TestCase):
         value['translation'] = {'nat64': {'enabled': True}}
         files = config.render(config.normalize(value), access_backend='tun')
         plan = json.loads(files['usr/share/lanrith/health.json'])
-        def command(arguments):
-            if arguments[:2] == ['systemctl', 'is-active']: return 'active'
-            addresses = next(item['addresses'] for item in plan['interfaces'] if item['name'] == arguments[-1])
-            return json.dumps([{'addr_info': [{'local': address} for address in addresses]}])
         def read(path, maximum):
             return files[str(path).lstrip('/')].encode()
-        with patch.object(boot_health, 'read', side_effect=read), patch.object(boot_health, 'command', side_effect=command), \
+        with patch.object(boot_health, 'read', side_effect=read), patch.object(boot_health, 'command', return_value='active'), \
+                patch.object(boot_health, 'check_interface'), patch.object(boot_health, 'check_dns'), \
                 patch.object(translation_runtime, 'status') as native, patch.object(nat64_runtime, 'status') as legacy:
             boot_health.check(plan)
             self.assertEqual([call.args[0]['interface'] for call in native.call_args_list], ['nat64', 'nat64-internal'])

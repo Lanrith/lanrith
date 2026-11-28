@@ -132,7 +132,7 @@ outside the guest.
 Enabling log delivery starts a confined, non-root one-minute heartbeat. Each
 event identifies the accepted boot, signed release sequence and effective
 configuration digest, then follows the same authenticated remote queue as the
-redacted journal. The heartbeat timer is a boot-health requirement. Alert
+redacted journal. The heartbeat timer runs independently of boot acceptance. Alert
 deadlines, stale-event rejection and retention are collector responsibilities;
 they are tested from outside the router rather than inferred from local status.
 

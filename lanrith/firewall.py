@@ -2,7 +2,8 @@
 
 import ipaddress
 
-from . import access, intent, service_plane, routing, nat46, nat64, metrics, snmp, discovery, extension_network, tun_policy
+from . import access, intent, networkd, service_plane, routing, nat46, nat64, metrics, snmp, discovery, extension_network, tun_policy
+from . import public_nat64
 from .release import require
 
 
@@ -17,7 +18,7 @@ NAT64_TARGET_MARKS = ('0xd7000000', '0xd8000000', '0xd9000000', '0xda000000')
 
 
 def sysctls():
-    lines = ['net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1']
+    lines = []
     for family in ('ipv4', 'ipv6'):
         # Defaults protect later links; globs also fix already-present links,
         # including names with dots. IPv6 zero still permits type-2 headers.
@@ -48,6 +49,61 @@ def values(items):
     return '{ '+', '.join(dict.fromkeys(str(item) for item in items))+' }'
 
 
+def activation(value):
+    from .firewall_activation import FLOOR, FORWARDING, HARDENING
+    rescue = [value['networks'][key] for key in value['administration']['networks']
+              if value['networks'][key].get('role') == 'management' and 'namespace' not in value['networks'][key]]
+    port = value['administration'].get('ssh_port', 22)
+    incoming = ['iifname "lo" accept']
+    outgoing = [*metrics.local_backend_drop(value), 'oifname "lo" accept']
+    for network in rescue:
+        name = network['name']
+        for gateway in map(ipaddress.ip_interface, network['addresses']):
+            family = 'ip' if gateway.version == 4 else 'ip6'
+            incoming.append(f'iifname "{name}" {family} saddr {gateway.network} {family} daddr {gateway.ip} '
+                            f'tcp dport {port} ct state {{ new, established }} accept')
+            outgoing.append(f'oifname "{name}" {family} saddr {gateway.ip} {family} daddr {gateway.network} '
+                            f'tcp sport {port} ct direction reply ct state established accept')
+        if addresses(network, 6):
+            for rules, direction in ((incoming, 'iifname'), (outgoing, 'oifname')):
+                rules.append(f'{direction} "{name}" ip6 hoplimit 255 icmpv6 type {{ {NEIGHBOURS} }} '
+                             'icmpv6 code 0 accept')
+    floor = ['destroy table inet lanrith_recovery', 'table inet lanrith_recovery {',
+             'chain input { type filter hook input priority filter - 1; policy drop;', *incoming, '}',
+             'chain forward { type filter hook forward priority filter - 1; policy drop; }',
+             'chain output { type filter hook output priority filter - 1; policy drop;', *outgoing, '}', '}']
+    forwarding = []
+    for family, key in ((4, 'net.ipv4.ip_forward'), (6, 'net.ipv6.conf.all.forwarding')):
+        # A disabled WAN family can still route between internal attachments.
+        enabled = (value['uplink'].get(f'ipv{family}') != 'disabled' or bool(intent.translations(value)) or
+                   any(network.get('forwarding', True) and prefixes(network, family, value)
+                       for network in value['networks'].values()))
+        forwarding.append(f'{key}={int(enabled)}')
+    prerequisite = ('[Unit]\nRequires=lanrith-firewall-floor.service\n'
+                    'After=lanrith-firewall-floor.service\n')
+    files = {
+        FLOOR.lstrip('/'): '\n'.join(floor)+'\n',
+        HARDENING.lstrip('/'): sysctls(),
+        FORWARDING.lstrip('/'): '\n'.join(forwarding)+'\n',
+        'usr/lib/systemd/system/lanrith-firewall-floor.service': (
+            '[Unit]\nDescription=Install the host recovery firewall before networking\n'
+            'DefaultDependencies=no\nRefuseManualStop=yes\nBefore=network-pre.target shutdown.target\n'
+            'Conflicts=shutdown.target\n[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+            f'ExecStart=/usr/sbin/nft -f {FLOOR}\n'),
+        'etc/systemd/system/systemd-networkd.service.d/60-lanrith-firewall-floor.conf': prerequisite,
+        'etc/systemd/system/nftables.service.d/60-lanrith-activation.conf': (
+            prerequisite+'Requires=systemd-sysctl.service\nAfter=systemd-sysctl.service\n'
+            '[Service]\nRuntimeDirectory=lanrith-firewall\nRuntimeDirectoryMode=0700\nRuntimeDirectoryPreserve=yes\n'
+            f'ExecStartPre=/usr/sbin/nft -f {FLOOR}\nExecStart=\n'
+            'ExecStart=/usr/bin/python3 /usr/lib/lanrith/lanrith/firewall_activation.py\n'
+            f'ExecReload=\nExecStop=\nExecStopPost=/usr/sbin/nft -f {FLOOR}\n')}
+    if rescue:
+        # With a dedicated rescue attachment SSH can start under the floor
+        # even when the general host policy cannot load.
+        files['etc/systemd/system/ssh.service.d/10-lanrith-firewall.conf'] = prerequisite
+    return files
+
+
 def render(value, *, extension_rules=None, access_backend='tun', retained_allocations=None):
     # The default and all deployed builds use client-facing TUN enforcement.
     # Explicit legacy rendering remains available for migration comparisons.
@@ -67,6 +123,17 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
     ipv6_set = values('"'+name+'"' for name in ipv6_names)
     translator_chains = (tun_policy.definitions(value, retained_allocations) if tun else
                          [] if policy_managed else nat46.chains(value) + nat64.chains(value))
+    public = intent.translations(value).get('nat64')
+    public_guard = []
+    if public and public['prefix'] == str(public_nat64.WELL_KNOWN_PREFIX):
+        blocked = values(public_nat64.embedded(network, public_nat64.WELL_KNOWN_PREFIX)
+                         for network in public_nat64.BLOCKED)
+        translator_chains += [
+            f' set nat64_non_global {{ type ipv6_addr; flags interval; elements = {blocked}; }}',
+            ' counter nat64_non_global_drops {}',
+        ]
+        public_guard = [f'  oifname "{public["interface"]}" ip6 daddr @nat64_non_global '
+                        'counter name nat64_non_global_drops drop']
     # The policy agent's NAT64 zone hook is fixed at -300. The immutable source
     # boundary must run first, with an unambiguous priority, in managed mode.
     source_priority = -310 if policy_managed and not tun else -300
@@ -173,7 +240,7 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
         if network.get('ra'):
             lines.append(f'  iifname "{name}" ip6 saddr {{ ::/128, fe80::/10 }} ip6 hoplimit 255 '
                          'icmpv6 type nd-router-solicit icmpv6 code 0 accept')
-    lines += [' }', ' chain forward { type filter hook forward priority filter; policy drop;',
+    lines += [' }', ' chain forward { type filter hook forward priority filter; policy drop;', *public_guard,
               '  ip saddr { 0.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 224.0.0.0/3 } drop',
               '  ip daddr { 0.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 224.0.0.0/24, 255.255.255.255 } drop',
               '  ip6 saddr { ::/128, ::1/128, fe80::/10 } drop',
@@ -181,6 +248,18 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
     for network in networks.values():
         if not network.get('forwarding', True):
             lines += [f'  iifname "{network["name"]}" drop', f'  oifname "{network["name"]}" drop']
+    # Topology limits native IPv6 transit even when an access rule covers both families.
+    for network in networks.values():
+        sources = prefixes(network, 6, value)
+        if not sources or not network.get('forwarding', True):
+            continue
+        guard = f'  iifname "{network["name"]}" oifname "{wan}" meta nfproto ipv6'
+        if networkd.routed(value, network):
+            guard += ' ip6 saddr != ' + values(networkd.provider_sources(value, network, sources))
+        destinations = networkd.upstream_routes(value, network)
+        if destinations:
+            guard += ' ip6 daddr != ' + values(destinations)
+        lines.append(guard + ' drop')
     if tun and value.get('routing', {}).get('asymmetric_replies'):
         lines.append('  jump tp_asymmetric')
     lines.append('  ct state invalid,untracked drop')
@@ -212,11 +291,12 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
             lines.append(f'  iifname "{networks[rule["from"]]["name"]}" oifname "{networks[rule["to"]]["name"]}" '
                          f'{rule["protocol"]} dport {ports} accept')
     translation_errors = [] if tun or policy_managed else nat46.local_errors(value) + nat64.local_errors(value)
-    lines += [' }', ' chain output { type filter hook output priority filter; policy drop;',
-              '  oifname "lo" accept',
+    lines += [' }', ' chain output { type filter hook output priority filter; policy drop;', *public_guard,
+              *metrics.local_backend_drop(value), '  oifname "lo" accept',
               *(['  jump extension_output'] if extension_rules and any(extension_rules.values()) else []),
               *translation_errors, '  ct state invalid drop',
               *snmp.output_rules(value), '  ct state established,related accept']
+    lines += ['  '+rule for rule in service_plane.host_dns_rules(plane, namespace=False)]
     declared = values('"'+name+'"' for name in [network['name'] for network in networks.values()]+[wan])
     lines.append(f'  oifname {declared} icmp type {{ destination-unreachable, time-exceeded, parameter-problem }} accept')
     if dhcp:
@@ -261,15 +341,15 @@ def render(value, *, extension_rules=None, access_backend='tun', retained_alloca
         result += 'table ip6 lanrith_service_nat {\n chain postrouting { type nat hook postrouting priority srcnat; policy accept;\n'
         result += f'  iifname "{plane["host_link"]}" ip6 saddr {values(sources)} oifname "{wan}" masquerade\n'
         result += ' }\n}\n'
-    if 'ntp' in plane['endpoints']:
+    intercepted = [network for network in networks.values() if network.get('ntp_intercept')]
+    if intercepted:
         result += 'table inet lanrith_time {\n chain time_redirect { type nat hook prerouting priority dstnat; policy accept;\n'
-        for network in networks.values():
-            if network.get('ntp'):
-                for family, spelling in ((4, 'ip'), (6, 'ip6')):
-                    allowed = prefixes(network, family)
-                    if allowed:
-                        target = plane['endpoints']['ntp'][0 if family == 4 else 1]
-                        result += f'  iifname "{network["name"]}" {spelling} saddr {values(allowed)} udp dport 123 dnat {spelling} to {target}\n'
+        for network in intercepted:
+            for family, spelling in ((4, 'ip'), (6, 'ip6')):
+                allowed = prefixes(network, family)
+                if allowed:
+                    target = plane['endpoints']['ntp'][0 if family == 4 else 1]
+                    result += f'  iifname "{network["name"]}" {spelling} saddr {values(allowed)} udp dport 123 dnat {spelling} to {target}\n'
         result += ' }\n}\n'
     return result
 
@@ -280,7 +360,7 @@ def core_forward(value, plane):
     host = plane['host_link']
     lines = [f'  iifname "{host}" ct state established,related ct direction reply accept',
              f'  oifname "{host}" ct state established,related ct direction reply accept']
-    for feature, port in (('dns', 53), ('ntp', 123), ('authoritative', 53), ('radius', 1812)):
+    for feature, port in (('dns', 53), ('ntp', 123), ('authoritative', 53), ('discovery', 53), ('radius', 1812)):
         if feature not in plane['endpoints']:
             continue
         for family, spelling in ((4, 'ip'), (6, 'ip6')):
@@ -295,9 +375,7 @@ def core_forward(value, plane):
                                      f'{spelling} daddr {values(targets)} {protocol} dport {ports} accept')
     for path in service_plane.egress(value):
         spelling = 'ip6' if ':' in path['address'] else 'ip'
-        protocols, port = ((('udp',), 123) if path['kind'] == 'ntp' else
-                           (('udp',), 1812) if path['kind'] == 'radius_proxy' else
-                           (('tcp',), 443) if path['kind'] == 'logs' else (('tcp', 'udp'), 53))
+        protocols, port = service_plane.EGRESS_TRANSPORT[path['kind']]
         outgoing = path.get('destination_interface', plane['wan'])
         for destination in path['destinations']:
             target = '' if ipaddress.ip_network(destination).prefixlen == 0 else f'{spelling} daddr {ipaddress.ip_network(destination).network_address} '

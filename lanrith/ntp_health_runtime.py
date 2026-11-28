@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 import pwd
 import stat
+import sys
 import time
 
 from .policy_runtime import decode, exact, read
-from .router_metrics_runtime import command, tracking
+from .router_metrics_runtime import command, tracking_measurements
 
 
 OUTPUT = Path('/run/lanrith-ntp-health/health.json')
@@ -41,24 +42,25 @@ def probe():
     account = pwd.getpwnam('_chrony')
     boot, namespace = boot_id(), os.stat('/proc/self/ns/net').st_ino
     require(namespace == NAMESPACE.stat().st_ino)
-    succeeded, synchronised = False, False
+    succeeded = False
     try:
         private_directory(CONTROL.parent, account.pw_uid, account.pw_gid, 0o700)
         before = CONTROL.lstat()
         require(stat.S_ISSOCK(before.st_mode) and before.st_uid == account.pw_uid and
                 before.st_gid == account.pw_gid and not before.st_mode & 0o022)
-        synchronised = bool(tracking(command(['/usr/bin/chronyc', '-h', str(CONTROL), '-n', '-c', 'tracking'],
-                                             time.monotonic()+2, limit=4096)))
+        row = command(['/usr/bin/chronyc', '-h', str(CONTROL), '-n', '-c', 'tracking'],
+                      time.monotonic()+2, limit=4096)
+        measurements = tracking_measurements(row)
         after = CONTROL.lstat()
         require((before.st_dev, before.st_ino, before.st_ctime_ns) ==
                 (after.st_dev, after.st_ino, after.st_ctime_ns))
         succeeded = True
     except (OSError, ValueError, KeyError, TypeError):
-        synchronised = False
+        measurements = {'synchronised': False, 'reference_timestamp_seconds': None, 'clock_error_bound_seconds': None}
     require(boot == boot_id() and namespace == NAMESPACE.stat().st_ino)
-    return {'schema': 1, 'boot_id': boot, 'network_namespace_inode': namespace,
+    return {'schema': 2, 'boot_id': boot, 'network_namespace_inode': namespace,
             'observed_monotonic_ns': time.monotonic_ns(), 'observed_timestamp_seconds': int(time.time()),
-            'query_success': succeeded, 'synchronised': synchronised}
+            'query_success': succeeded, **measurements}
 
 
 def publish(value, path=OUTPUT):
@@ -94,11 +96,20 @@ def read_observation(path=OUTPUT, *, now=None, boot=None, namespace=None):
     private_directory(path.parent, account.pw_uid, account.pw_gid, 0o750)
     info = path.lstat()
     require(info.st_gid == account.pw_gid and stat.S_IMODE(info.st_mode) == 0o640)
-    value = exact(decode(read(path, 4096, owner=account.pw_uid), 4096), FIELDS, 'NTP observation')
+    value = decode(read(path, 4096, owner=account.pw_uid), 4096)
+    require(isinstance(value, dict) and type(value.get('schema')) is int and value['schema'] in (1, 2))
+    fields = FIELDS if value['schema'] == 1 else FIELDS | {'reference_timestamp_seconds', 'clock_error_bound_seconds'}
+    exact(value, fields, 'NTP observation')
+    if value['schema'] == 2:
+        reference, error = value['reference_timestamp_seconds'], value['clock_error_bound_seconds']
+        if reference is not None or error is not None:
+            require(value['synchronised'] is True and
+                    type(reference) in (int, float) and 0 < reference <= sys.float_info.max and
+                    type(error) in (int, float) and 0 <= error <= sys.float_info.max)
     boot = boot_id() if boot is None else boot
     namespace = NAMESPACE.stat().st_ino if namespace is None else namespace
     now = time.monotonic_ns() if now is None else now
-    require(type(value['schema']) is int and value['schema'] == 1 and value['boot_id'] == boot and
+    require(value['boot_id'] == boot and
             type(value['query_success']) is bool and type(value['synchronised']) is bool and
             (value['query_success'] or not value['synchronised']) and
             all(type(value[key]) is int and 0 < value[key] < 2**63 for key in
@@ -113,10 +124,10 @@ def main():
     try:
         account = pwd.getpwnam('_chrony')
         require(os.getuid() == os.geteuid() == account.pw_uid != 0 and
-                os.getgid() == os.getegid() == account.pw_gid and len(os.sys.argv) == 1)
+                os.getgid() == os.getegid() == account.pw_gid and len(sys.argv) == 1)
         publish(probe())
     except (OSError, ValueError, KeyError, TypeError) as error:
-        print('ntp-health: '+type(error).__name__+'; observation unavailable', file=os.sys.stderr)
+        print('ntp-health: '+type(error).__name__+'; observation unavailable', file=sys.stderr)
         return 1
     return 0
 

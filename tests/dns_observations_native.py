@@ -152,7 +152,7 @@ def qualify(result, base):
             '  local-zone: "fixture.test." static\n'
             '  local-data: "answer.fixture.test. 120 IN A 203.0.113.7"\n'
             '  local-data: "answer.fixture.test. 120 IN AAAA 2001:db8::7"\n')
-        Path('/etc/unbound/unbound.conf').write_text('include: "/etc/unbound/unbound.conf.d/*.conf"\n')
+        Path('/etc/unbound/unbound.conf').write_text(generated['etc/unbound/unbound.conf'])
         anchor = Path('/var/lib/unbound/root.key')
         anchor.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile('/usr/share/dns/root.key', anchor)

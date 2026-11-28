@@ -16,7 +16,7 @@ from lanrith.update import GUIDS
 def target_fixture(answers=None):
     identity = '/dev/disk/by-id/virtio-synthetic-disk'
     disk = {'name': '/dev/synthetic-disk', 'type': 'disk', 'ro': False,
-            'log-sec': 512, 'size': 128*1024**3, 'mountpoints': [None]}
+            'log-sec': 512, 'size': 128*1024**3, 'mountpoints': [None], 'tran': None}
     link = MagicMock(spec=Path)
     link.__str__.return_value = identity
     link.name = 'virtio-synthetic-disk'
@@ -72,6 +72,30 @@ class FactorySelectionTests(unittest.TestCase):
                     factory.target(installed, '/dev/boot-disk', console)
                 self.assertEqual(console.input.call_count, 3)
                 self.assertTrue(all(call.args[0][0] == 'lsblk' for call in command.call_args_list))
+
+    def test_candidates_and_recheck_obey_installed_pin_and_transport(self):
+        for transport, pin, changed, admitted in (
+                ('sata', None, None, True), ('usb', None, None, False),
+                ('usb', 'match', None, True), ('sata', 'wrong', None, False),
+                ('sata', None, 'usb', False)):
+            with self.subTest(transport=transport, pin=pin, changed=changed), target_fixture() as fixture:
+                installed, identity, console, command, _, disk = fixture
+                if pin:
+                    installed['storage']['target'] = identity if pin == 'match' else '/dev/disk/by-id/other'
+                initial = {**disk, 'tran': transport}
+                recheck = {**initial, 'tran': changed or transport}
+                command.side_effect = [json.dumps({'blockdevices': [row]}) for row in (initial, recheck)]
+                console.input.side_effect = ([] if pin else [identity]) + ['ERASE-AND-INSTALL '+identity]
+                if admitted:
+                    self.assertEqual(factory.target(installed, '/dev/boot', console), disk['name'])
+                    self.assertTrue(factory.profile_allows(installed, recheck))
+                else:
+                    with self.assertRaises(ReleaseError):
+                        factory.target(installed, '/dev/boot', console)
+                    if not changed:
+                        console.input.assert_not_called()
+                self.assertTrue(all('TRAN' in call.args[0][call.args[0].index('--output') + 1]
+                                    for call in command.call_args_list))
 
     def test_unbound_or_different_tpm_policy_is_rejected_even_with_a_valid_token(self):
         valid = {'type': 'systemd-tpm2', 'tpm2-pcrs': [7]}

@@ -35,15 +35,17 @@ def manifest(value):
         'admission_vlan': value['networks'][radius['admission']['network']]['vlan'],
         'clients': clients,
         'proxy': {'address': str(proxy), 'port': 1812, 'source': source,
-                  'credential_name': radius['proxy']['credential']},
+                  'credential_name': radius['proxy']['credential'],
+                  **({'response_window': fallback['provider_response_seconds'] + 1}
+                     if fallback.get('enabled', False) else {})},
         'fallback_clients': sorted(fallback.get('clients', [])) if fallback.get('enabled', False) else [],
     }
 
 
-def _static_proxy(has_fallback):
+def _static_proxy():
     # The image-only configuration has no client or upstream secret. Keeping a
     # rejecting local server makes the distribution parser testable before the
-    # credential-mounted runtime proxy replaces this file.
+    # combined client and proxy generation replaces this file.
     pool = '    home_server = lanrith_fallback\n'
     return (
         'proxy server {\n    default_fallback = no\n}\n'
@@ -104,9 +106,10 @@ def _mab_validation(indent='        '):
         +indent+'    reject\n'+indent+'}\n')
 
 
-def _site(policy):
+def _site(policy, binding):
     vlan = policy['admission_vlan']
-    text = ['server default {']
+    text = [f'# Verified provider admission binding SHA-256 {binding}'] if binding else []
+    text.append('server default {')
     for address in policy['listeners']:
         field = 'ipv6addr' if ':' in address else 'ipaddr'
         for kind, port in (('auth', 1812), ('acct', 1813)):
@@ -135,28 +138,65 @@ def _site(policy):
         branch = 'if' if index == 0 else 'elsif'
         text.append('        '+branch+' ("%{client:shortname}" == "'+client['name']+'") {')
         text.extend(_mab_validation('            ').rstrip().splitlines())
+        # Carry the validated wired NAS/port selection to the reply and timeout handlers.
+        if client['name'] in policy['fallback_clients']:
+            text += [f'            if (&request:NAS-Port == {client["port"]} && !&request:NAS-Port[1] && '
+                     '(!&request:NAS-Port-Type || &request:NAS-Port-Type == Ethernet)) {',
+                     '                update control {', '                    Tmp-Integer-0 := 1',
+                     '                }', '            }']
         text += ['            update control {', '                Proxy-To-Realm := "lanrith"',
                  '            }', '        }']
-    text += ['        else {', '            reject', '        }', '    }', '    post-proxy {']
-    for name in policy['fallback_clients']:
-        client = next(item for item in policy['clients'] if item['name'] == name)
+    text += ['        else {', '            reject', '        }', '    }']
+    # In 3.2.7 zero TTL deletes a hit but creates on a miss unless read-only.
+    forget = [
+        '            if (&control:Tmp-Integer-0) {',
+        '                update control {',
+        '                    Cache-Read-Only := yes',
+        '                    Cache-TTL := 0',
+        '                }',
+        '                lanrith_mab_cache',
+        '            }',
+    ]
+    if policy['fallback_clients']:
         text += [
-            '        if ("%{client:shortname}" == "'+name+'" && &request:NAS-Port == '+str(client['port'])+') {',
-            '            if ("%{proxy-reply:Packet-Type}" == "Access-Accept" && &proxy-reply:Tunnel-Type == VLAN && &proxy-reply:Tunnel-Medium-Type == IEEE-802 && &proxy-reply:Tunnel-Private-Group-ID == "'+str(vlan)+'") {',
-            '                update control {', '                    &Cache-TTL := -300', '                }',
-            '                lanrith_mab_cache', '            }',
-            '            else {', '                update control {', '                    &Cache-TTL := 0',
-            '                }', '                lanrith_mab_cache', '            }', '        }']
+            '    post-proxy {',
+            '        Post-Proxy-Type Reject {',
+            *forget, '        }',
+            '        Post-Proxy-Type Fail-Authentication {',
+            '            if (&control:Tmp-Integer-0) {',
+            '                update control {', '                    Cache-Read-Only := yes', '                }',
+            '                lanrith_mab_cache',
+            '                if (ok && &control:Tunnel-Type == VLAN && &control:Tunnel-Medium-Type == IEEE-802 && '
+            f'&control:Tunnel-Private-Group-Id == "{vlan}") {{',
+            '                    update control {', '                        Response-Packet-Type := Access-Accept',
+            '                    }', '                    update reply {',
+            '                        Tunnel-Type := VLAN', '                        Tunnel-Medium-Type := IEEE-802',
+            f'                        Tunnel-Private-Group-Id := "{vlan}"', '                    }',
+            '                }', '            }', '        }', '    }']
+    text += ['    post-auth {', '        Post-Auth-Type Challenge {']
+    if policy['fallback_clients']:
+        text.extend(forget)
     text += [
-        '        if ("%{proxy-reply:Packet-Type}" != "Access-Accept" || &proxy-reply:Tunnel-Type != VLAN || &proxy-reply:Tunnel-Medium-Type != IEEE-802 || &proxy-reply:Tunnel-Private-Group-ID != "'+str(vlan)+'") {',
-        '            reject', '        }', '    }', '}']
+        '            reject', '        }',
+        '        if (!&reply:Tunnel-Type || &reply:Tunnel-Type != VLAN || &reply:Tunnel-Type[1] || '
+        '!&reply:Tunnel-Medium-Type || &reply:Tunnel-Medium-Type != IEEE-802 || &reply:Tunnel-Medium-Type[1] || '
+        f'!&reply:Tunnel-Private-Group-Id || &reply:Tunnel-Private-Group-Id != "{vlan}" || '
+        '&reply:Tunnel-Private-Group-Id[1]) {']
+    if policy['fallback_clients']:
+        text.extend(forget)
+    text += ['            reject', '        }']
+    if policy['fallback_clients']:
+        text += ['        if (&control:Tmp-Integer-0 && !&control:Post-Proxy-Type && '
+                 '"%{proxy-reply:Packet-Type}" == "Access-Accept") {', '            update control {',
+                 '                Cache-TTL := -300', '            }', '            lanrith_mab_cache', '        }']
+    text += ['    }', '}']
     return '\n'.join(text)+'\n'
 
 
 def _cache(vlan):
     return (
         'cache lanrith_mab_cache {\n    driver = "rlm_cache_rbtree"\n'
-        '    key = "%{client:shortname}:%{NAS-Port}:%{User-Name}"\n'
+        '    key = "%{client:shortname}:%{request:NAS-Port}:%{control:Tmp-String-0}"\n'
         '    ttl = 300\n    max_entries = 256\n    add_stats = no\n    update {\n'
         '        &control:Tunnel-Type := VLAN\n'
         '        &control:Tunnel-Medium-Type := IEEE-802\n'
@@ -164,29 +204,12 @@ def _cache(vlan):
         '    }\n}\n')
 
 
-def _fallback(policy):
-    lines = ['server lanrith_mab_fallback {', '    authorize {']
-    if not policy['fallback_clients']:
-        lines.append('        reject')
-    for name in policy['fallback_clients']:
-        client = next(item for item in policy['clients'] if item['name'] == name)
-        lines += ['        if ("%{client:shortname}" == "'+name+'" && &request:NAS-Port == '+str(client['port'])+') {']
-        lines.extend(_mab_validation('            ').rstrip().splitlines())
-        lines += ['            update control {', '                &Cache-Read-Only := yes', '            }',
-                  '            lanrith_mab_cache',
-                  '            if (&control:Tunnel-Type == VLAN && &control:Tunnel-Medium-Type == IEEE-802 && &control:Tunnel-Private-Group-ID == "'+str(policy['admission_vlan'])+'") {',
-                  '                update reply {', '                    &Tunnel-Type := VLAN',
-                  '                    &Tunnel-Medium-Type := IEEE-802',
-                  '                    &Tunnel-Private-Group-ID := "'+str(policy['admission_vlan'])+'"',
-                  '                }', '                accept', '            }', '        }']
-    lines += ['        reject', '    }', '}']
-    return '\n'.join(lines)+'\n'
-
-
 def render(value):
     if not active(value):
         return {}
     policy = manifest(value)
+    admission = value['identity']['radius']['admission']
+    binding = admission.get('provider_policy', {}).get('binding_sha256')
     references = sorted({policy['proxy']['credential_name'],
                          *(client['credential_name'] for client in policy['clients'])})
     credentials = ''.join('LoadCredential='+name+':'+bindings.credential_path(value, name)+'\n'
@@ -202,8 +225,7 @@ def render(value):
         'NetworkNamespacePath=/run/netns/'+service_plane.NAMESPACE+'\n'
         'ExecStartPre=\n'
         'ExecStartPre=/usr/sbin/freeradius -Cx -lstdout\n'
-        'BindReadOnlyPaths=/run/lanrith-radius/clients.conf:/etc/freeradius/3.0/clients.conf\n'
-        'BindReadOnlyPaths=/run/lanrith-radius/proxy.conf:/etc/freeradius/3.0/proxy.conf\n'
+        'BindReadOnlyPaths=/run/lanrith-radius/radius.conf:/etc/freeradius/3.0/proxy.conf\n'
         'ReadWritePaths=/run/freeradius\nLogsDirectory=freeradius\nLogsDirectoryMode=0750\n'
         'IPAddressDeny=any\nIPAddressAllow=localhost\n'+
         ''.join('IPAddressAllow='+prefix+'\n' for prefix in allows)+
@@ -217,7 +239,7 @@ def render(value):
         '[Unit]\nDescription=Prepare protected RADIUS configuration fragments\n'
         'Before=freeradius.service\n\n[Service]\nType=oneshot\nUser=root\nGroup=freerad\n'
         'ExecStart=/usr/lib/lanrith/radius-runtime stage\n'+credentials+
-        'RuntimeDirectory=lanrith-radius\nRuntimeDirectoryMode=0750\nRuntimeDirectoryPreserve=yes\n'
+        'RuntimeDirectory=lanrith-radius\nRuntimeDirectoryMode=0700\nRuntimeDirectoryPreserve=yes\n'
         'UMask=0077\nTimeoutStartSec=30s\nNoNewPrivileges=yes\nCapabilityBoundingSet=\n'
         'ProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nPrivateNetwork=yes\n'
         'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\n'
@@ -227,7 +249,7 @@ def render(value):
     return {
         'usr/share/lanrith/radius.json': canonical(policy).decode(),
         'etc/freeradius/3.0/clients.conf': '# Runtime credentials are staged through systemd credentials.\n',
-        'etc/freeradius/3.0/proxy.conf': _static_proxy(bool(policy['fallback_clients'])),
+        'etc/freeradius/3.0/proxy.conf': _static_proxy(),
         # The generated service is MAC admission only and rejects EAP input.
         # Replace Debian's enabled EAP module so an unrelated bootstrap TLS
         # key is neither generated nor required in the deployed image.
@@ -236,8 +258,9 @@ def render(value):
         'etc/freeradius/3.0/mods-enabled/lanrith_mab_cache': _cache(policy['admission_vlan']),
         'etc/freeradius/3.0/sites-enabled/inner-tunnel':
             '# The EAP inner tunnel is intentionally disabled by the Lanrith MAB policy.\n',
-        'etc/freeradius/3.0/sites-enabled/default': _site(policy),
-        'etc/freeradius/3.0/sites-enabled/lanrith_mab_fallback': _fallback(policy),
+        'etc/freeradius/3.0/sites-enabled/default': _site(policy, binding),
+        'etc/freeradius/3.0/sites-enabled/lanrith_mab_fallback':
+            'server lanrith_mab_fallback {\n    authorize {\n        reject\n    }\n}\n',
         'etc/systemd/system/freeradius.service.d/60-lanrith.conf': unit,
         'usr/lib/systemd/system/lanrith-radius-runtime.service': stage,
     }

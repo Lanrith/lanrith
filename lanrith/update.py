@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
+import hashlib
 from contextlib import contextmanager
 import json
 import os
@@ -14,9 +16,11 @@ import stat
 import tempfile
 import time
 
-from .release import canonical, require, read, verify
+from .release import ReleaseError, authenticated_manifest, document, require, read, verify
 
 
+IMAGE_LOCK_DIR = Path('/run/lanrith-image-locks')
+OPERATION_LOCK_NAME = 'lanrith-image-operation.lock'
 PARTITION_ROLES = ('verity-sig', 'verity', 'root')
 GUIDS = {'root': '4f68bce3-e8cd-4db1-96e7-fbcaf984b709',
          'verity': '2c7357ed-ebd2-46d9-aec1-23d437ec2bf5',
@@ -38,6 +42,11 @@ def command(arguments, timeout=30):
     return result.stdout
 
 
+def layout_limits(storage):
+    return {'root': storage['root_mib'] * 1024**2, 'verity': max(64, storage['root_mib']//16) * 1024**2,
+            'verity-sig': 16384, 'uki': (storage['esp_mib']-32) * 1024**2}
+
+
 def plan(manifest, installed, partitions, *, disk, active_partitions, esp_available):
     """Select only inactive partitions; never infer a storage device from its name."""
     require(manifest['purpose'] == 'update' and manifest['architecture'] == 'x86-64',
@@ -57,6 +66,9 @@ def plan(manifest, installed, partitions, *, disk, active_partitions, esp_availa
     require(uki['name'] == f'{image}_{sequence}.efi', 'UKI filename differs from the signed deployment identity.')
     require(type(esp_available) is int and esp_available >= uki['size'] + 32 * 1024 * 1024,
             'EFI filesystem lacks candidate and recovery reserves.')
+    policy = installed.get('payload_limits')
+    if policy is None and 'storage' in installed:
+        policy = layout_limits(installed['storage'])
     selected = {}
     used_numbers = set()
     used_uuids = set()
@@ -84,6 +96,10 @@ def plan(manifest, installed, partitions, *, disk, active_partitions, esp_availa
                 'Slots do not belong to the observed root disk.')
         require(type(target.get('size')) is int and target['size'] >= artifacts[role]['size'],
                 'Update exceeds an inactive partition capacity.')
+        if policy is not None:
+            require(isinstance(policy, dict) and type(policy.get(role)) is int and policy[role] > 0 and
+                    artifacts[role]['size'] <= policy[role] <= target['size'],
+                    'Inactive partition or payload differs from the signed capacity budget.')
         match = re.fullmatch(rf'{re.escape(image)}_{sequence}_({UUID})\.{re.escape(role)}\.raw',
                              artifacts[role]['name'])
         require(match is not None, 'Partition artifact filename differs from the signed deployment identity.')
@@ -121,11 +137,22 @@ def transfers(value, root, esp):
     return result
 
 
-def root_disk(mountpoint='/'):
+def mounted_root_device(mountpoint):
     require(mountpoint in ('/', '/sysroot'), 'Unsupported verified-root mountpoint.')
     source = command(['findmnt', '--noheadings', '--output', 'SOURCE', mountpoint]).strip()
     require(source.startswith('/dev/'), 'Root is not backed by a known block device.')
-    pending, seen, disks, numbers = [Path(source).resolve().name], set(), set(), set()
+    info = os.stat(source)
+    require(stat.S_ISBLK(info.st_mode) and info.st_rdev == os.stat(mountpoint).st_dev,
+            'Block source differs from the mounted root filesystem.')
+    # A /dev/mapper alias can itself be a block node when udev is unavailable.
+    # Bind its device number to sysfs rather than interpreting the alias basename.
+    sysdev = Path('/sys/dev/block')/f'{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}'
+    return source, sysdev.resolve(strict=True).name
+
+
+def root_disk(mountpoint='/'):
+    _, name = mounted_root_device(mountpoint)
+    pending, seen, disks, numbers = [name], set(), set(), set()
     while pending:
         name = pending.pop()
         require(re.fullmatch(r'[A-Za-z0-9_.-]+', name) and len(seen) <= 128,
@@ -146,12 +173,40 @@ def root_disk(mountpoint='/'):
     return disks.pop(), numbers
 
 
+def claimed(device):
+    # A filesystem mounted in another mount namespace can be absent from lsblk.
+    # Linux rejects an exclusive read-only open while the block device is claimed.
+    try:
+        descriptor = os.open(device, os.O_RDONLY | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == errno.EBUSY:
+            return True
+        raise
+    os.close(descriptor)
+    return False
+
+
+class StaleExtent(ReleaseError):
+    pass
+
+
 def geometry(disk, *, sysfs=Path('/sys/class/block')):
+    for attempt in range(3):
+        try:
+            return _geometry(disk, sysfs=sysfs)
+        except StaleExtent:
+            if attempt == 2:
+                raise
+            time.sleep(0.25)
+
+
+def _geometry(disk, *, sysfs=Path('/sys/class/block')):
     # Partition GUIDs and labels in udev can still describe the pre-repartition
     # disk after its kernel devices are ready. Read identity from the GPT itself;
     # use the kernel view for device numbers, capacity and in-use detection.
     table = json.loads(command(['sfdisk', '--json', disk]))['partitiontable']
     require(table.get('label') == 'gpt' and table.get('device') == disk and
+            isinstance(table.get('id'), str) and re.fullmatch(UUID, table['id'].lower()) and
             table.get('unit') == 'sectors' and table.get('sectorsize') in (512, 4096),
             'Cannot bind GPT geometry to the observed disk.')
     entries = table.get('partitions', [])
@@ -181,9 +236,14 @@ def geometry(disk, *, sysfs=Path('/sys/class/block')):
                 'Kernel partition numbers are invalid or duplicated.')
         number = int(number)
         numbers.add(number)
-        require(type(part.get('size')) is int and part['size'] > 0 and
-                type(device.get('size')) is int and device['size'] == part['size']*table['sectorsize'],
-                'Kernel partition capacity differs from the selected GPT.')
+        start = (kernel_device/'start').read_text().strip()
+        require(type(part.get('start')) is int and part['start'] > 0 and start.isdecimal() and
+                type(part.get('size')) is int and part['size'] > 0 and type(device.get('size')) is int,
+                'Partition extent is malformed.')
+        offset = part['start'] * table['sectorsize']
+        if (name != disk + ('p' if disk[-1].isdigit() else '') + str(number) or
+                int(start)*512 != offset or device['size'] != part['size']*table['sectorsize']):
+            raise StaleExtent('Kernel partition extent differs from the selected GPT.')
         require(all(isinstance(part.get(key), str) and re.fullmatch(UUID, part[key].lower())
                     for key in ('type', 'uuid')), 'GPT partition identities are malformed.')
         descendants, busy = [device], False
@@ -192,12 +252,15 @@ def geometry(disk, *, sysfs=Path('/sys/class/block')):
             busy = busy or any(child.get('mountpoints') or [])
             descendants.extend(child.get('children', []))
         holders = kernel_device/'holders'
-        busy = busy or holders.is_dir() and any(holders.iterdir())
+        busy = busy or any(holders.iterdir()) or claimed(name)
         result.append({'disk': device.get('pkname'), 'device': name, 'number': number,
                        'type': part['type'].lower(), 'label': part.get('name'),
-                       'uuid': part['uuid'].lower(),
+                       'uuid': part['uuid'].lower(), 'disk_uuid': table['id'].lower(), 'start_bytes': offset,
                        'size': device.get('size'), 'mounted': bool(busy)})
     require(seen == set(partitions), 'A GPT partition has no matching kernel device.')
+    extents = sorted((row['start_bytes'], row['start_bytes'] + row['size']) for row in result)
+    require(all(end <= following for (_, end), (following, _) in zip(extents, extents[1:])),
+            'GPT partition extents overlap.')
     return result
 
 
@@ -213,7 +276,7 @@ def accepted_boot(current, expected, esp):
     return stable
 
 
-def boot_esp(installed, *, disk=None):
+def _mounted_esp(installed, *, disk, allow_writable):
     """Resolve the mounted ESP and bind it to the observed verified-root disk."""
     selected = installed.get('esp', 'auto')
     esp = Path(command(['bootctl', '--print-esp-path']).strip() if selected == 'auto' else selected)
@@ -231,7 +294,9 @@ def boot_esp(installed, *, disk=None):
             isinstance(rows[0].get('source'), str) and rows[0]['source'].startswith('/dev/'),
             'EFI filesystem is not a mounted FAT block partition.')
     options = set((rows[0].get('options') or '').split(','))
-    require({'ro', 'nodev', 'nosuid', 'noexec'} <= options,
+    mode = options & {'ro', 'rw'}
+    require({'nodev', 'nosuid', 'noexec'} <= options and
+            (mode == {'ro'} or allow_writable and mode == {'rw'}),
             'EFI filesystem is not protected read-only at rest.')
     device = str(Path(rows[0]['source']).resolve())
     if disk is None:
@@ -239,10 +304,29 @@ def boot_esp(installed, *, disk=None):
     # The initrd failure path may run after udev's database is cleaned up.
     # Bind the mounted device to the disk's GPT and kernel geometry directly;
     # lsblk PARTTYPE is udev metadata and may be absent at that point.
-    partitions = [row for row in geometry(disk) if row.get('device') == device]
-    require(len(partitions) == 1 and partitions[0].get('disk') == disk and
-            partitions[0].get('type') == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b',
+    esp_type = 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b'
+    devices = geometry(disk)
+    if allow_writable:
+        require(sum(row['type'] == esp_type for row in devices) == 1, 'Interrupted EFI partition is ambiguous.')
+    partitions = [row for row in devices if row.get('device') == device]
+    require(len(partitions) == 1 and partitions[0].get('disk') == disk and partitions[0].get('type') == esp_type,
             'EFI partition differs from the verified root disk.')
+    return esp, partitions[0], mode == {'rw'}
+
+
+def boot_esp(installed, *, disk=None):
+    esp, _, _ = _mounted_esp(installed, disk=disk, allow_writable=False)
+    return esp
+
+
+def restore_esp(installed):
+    """Close a stopped worker's verified write window and read back the mount."""
+    disk, _ = root_disk()
+    esp, partition, writable = _mounted_esp(installed, disk=disk, allow_writable=True)
+    if writable:
+        command(['mount', '--options', 'remount,ro,nodev,nosuid,noexec', '--', str(esp)])
+        observed, current, _ = _mounted_esp(installed, disk=disk, allow_writable=False)
+        require(observed == esp and current == partition, 'EFI partition changed during restoration.')
     return esp
 
 
@@ -265,8 +349,11 @@ def writable_esp(installed, *, esp=None):
         command(['mount', '--options', 'remount,ro,nodev,nosuid,noexec', '--', str(esp)])
 
 
-def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
-    """Do not overwrite the last accepted fallback from an unaccepted running slot."""
+DEFAULT_VARIABLE = Path('/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')
+
+
+def default_entry(variable=DEFAULT_VARIABLE):
+    """Read the persistent EFI selection. Only a missing variable means unset."""
     data = read(variable, 4096)
     require(len(data) >= 6 and (len(data)-4) % 2 == 0, 'Boot-default EFI variable is malformed.')
     try:
@@ -274,7 +361,14 @@ def require_default(accepted, variable=Path('/sys/firmware/efi/efivars/LoaderEnt
     except UnicodeError as error:
         from .release import ReleaseError
         raise ReleaseError('Boot-default EFI variable is malformed.') from error
-    require(entry == accepted.name, 'Accept the running boot as default before staging another update.')
+    require(entry and '\x00' not in entry, 'Boot-default EFI variable is malformed.')
+    return entry
+
+
+def require_default(accepted, variable=DEFAULT_VARIABLE):
+    """Do not overwrite the last accepted fallback from an unaccepted running slot."""
+    require(default_entry(variable) == accepted.name,
+            'Accept the running boot as default before staging another update.')
 
 
 def select_boot_once(entry, *, variable=Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')):
@@ -336,6 +430,9 @@ def recovery_admission(installed, manifest, *, disk, active, esp, accepted):
     require(bound['sequence'] == installed['deployment_sequence'] and bound['uki_name'] == installed['uki_name'] and
             release.file_record(accepted)['sha256'] == bound['uki_sha256'],
             'Update recovery image is not the accepted running image.')
+    if installed.get('tpm_policy'):
+        from .measured_boot import check_measurement_budget
+        check_measurement_budget(accepted)
     before = geometry(disk)
     esps = [row for row in before if row.get('uuid') == binding['esp_uuid'] and row.get('disk') == disk and
             row.get('type') == 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b']
@@ -352,7 +449,39 @@ def recovery_admission(installed, manifest, *, disk, active, esp, accepted):
             'Update recovery target changed during admission.')
 
 
+@contextmanager
+def image_lock(name, *, wait=False):
+    """Keep all admission and transfer locks in a boot-lifetime, root-only directory."""
+    directory = os.open(IMAGE_LOCK_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(directory)
+        require(info.st_uid == info.st_gid == 0 and stat.S_IMODE(info.st_mode) == 0o700,
+                'Image lock directory is unsafe.')
+        descriptor = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             0o600, dir_fd=directory)
+        try:
+            info = os.fstat(descriptor)
+            require(stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0 and info.st_nlink == 1
+                    and stat.S_IMODE(info.st_mode) == 0o600, 'Image lock file is unsafe.')
+            try:
+                flags = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+                fcntl.flock(descriptor, flags)
+            except BlockingIOError as error:
+                raise ReleaseError('An image operation is already running.') from error
+            yield
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(directory)
+
+
 def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
+    from .image_operation import admission_lock
+    with admission_lock(installed_path):
+        return stage_locked(directory, installed_path)
+
+
+def stage_locked(directory, installed_path):
     """Stage an admitted root-owned inbox through the ordinary A/B mechanism."""
     require(os.geteuid() == 0, 'Update staging requires the root-owned admission helper.')
     installed = json.loads(read(installed_path, 65536))
@@ -362,20 +491,20 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
     require(directory.resolve() == directory.absolute() and directory.parent == inbox and
             directory.stat().st_uid == 0 and not directory.stat().st_mode & 0o077,
             'Update must be an exclusive root-owned inbox directory.')
-    require(command(['systemctl', 'is-active', 'boot-complete.target']).strip() == 'active',
-            'Running boot has not completed acceptance.')
     esp = boot_esp(installed)
     current = Path(command(['bootctl', '--print-stub-path']).strip())
     accepted = accepted_boot(current, installed['uki_name'], esp)
-    lock_path = Path(installed.get('lock_path', '/run/lock/lanrith-update.lock'))
-    require(lock_path.parent == Path('/run/lock') and re.fullmatch(r'[A-Za-z0-9_-]+\.lock', lock_path.name),
+    lock_path = Path(installed.get('lock_path', IMAGE_LOCK_DIR/'lanrith-update.lock'))
+    # Older installed policies could name a lock under /run/lock. Preserve the
+    # name inside the protected directory shared by all entry points.
+    require(lock_path.parent in (IMAGE_LOCK_DIR, Path('/run/lock')) and
+            re.fullmatch(r'[A-Za-z0-9_-]+\.lock', lock_path.name) and lock_path.name != OPERATION_LOCK_NAME,
             'Unsafe update lock path.')
-    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    try:
-        info = os.fstat(descriptor)
-        require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1 and
-                stat.S_IMODE(info.st_mode) == 0o600, 'Unsafe update lock file.')
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with image_lock(lock_path.name):
+        # A completed target can outlive a required listener or route. This oneshot
+        # has no RemainAfterExit, so PID 1 runs fresh probes outside the socket
+        # executor's network sandbox and returns the result of this boot's job.
+        command(['systemctl', 'start', 'lanrith-health.service'], timeout=70)
         require_default(accepted)
         manifest = verify(directory, Path(installed['certificate']), purpose='update',
                           image_id=installed['update_image_id'],
@@ -384,9 +513,16 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         require(esp.is_mount(), 'EFI filesystem must be mounted.')
         disk, active_partitions = root_disk()
         recovery_admission(installed, manifest, disk=disk, active=active_partitions, esp=esp, accepted=accepted)
-        value = plan(manifest, installed, geometry(disk), disk=disk,
+        admitted_rows = geometry(disk)
+        value = plan(manifest, installed, admitted_rows, disk=disk,
                      active_partitions=active_partitions,
                      esp_available=shutil.disk_usage(esp).free)
+        if 'tpm_policy' in installed:
+            from .measured_boot import verify as verify_measurement
+            candidate = next(item for item in manifest['artifacts'] if item['role'] == 'uki')
+            verify_measurement(directory/candidate['name'], installed['tpm_policy'])
+        require(root_disk() == (disk, active_partitions) and boot_esp(installed, disk=disk) == esp and
+                geometry(disk) == admitted_rows, 'Slot geometry or use changed before staging.')
         with writable_esp(installed, esp=esp):
             with tempfile.TemporaryDirectory(prefix='lanrith-update.', dir='/run') as temporary:
                 definitions = Path(temporary)
@@ -421,12 +557,17 @@ def stage(directory, installed_path=Path('/usr/share/lanrith/installed.json')):
         # already returned to read-only before its bytes are authenticated.
         select_boot_once(candidates[0])
         return value
-    finally:
-        os.close(descriptor)
 
 
 def promote(source, installed_path=Path('/usr/share/lanrith/installed.json'), *, expected_digest=None,
             stage_payload=True):
+    from .image_operation import admission_lock
+    with admission_lock(installed_path):
+        destination = promote_locked(source, installed_path, expected_digest=expected_digest)
+        return stage_locked(destination, installed_path) if stage_payload else destination
+
+
+def promote_locked(source, installed_path, *, expected_digest=None):
     """Pin the untrusted directory before inspecting or copying any of its members."""
     installed = json.loads(read(installed_path, 65536))
     upload = Path(installed.get('upload_directory', '/var/tmp/lanrith-update'))
@@ -436,16 +577,42 @@ def promote(source, installed_path=Path('/usr/share/lanrith/installed.json'), *,
     try:
         descriptor = os.open(source.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
         try:
-            return _promote(source, descriptor, installed_path, expected_digest=expected_digest,
-                            stage_payload=stage_payload)
+            return _promote(source, descriptor, installed_path, expected_digest=expected_digest)
         finally:
             os.close(descriptor)
     finally:
         os.close(parent)
 
 
-def _promote(source, source_fd, installed_path, *, expected_digest, stage_payload):
-    """Copy an upload into exclusively root-owned files before authentication and staging."""
+def copy_member(source_fd, root, name, limit):
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=source_fd)
+    with os.fdopen(descriptor, 'rb') as input_stream, (root/name).open('xb') as output:
+        before = os.fstat(input_stream.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                0 < before.st_size <= limit, 'Unsafe upload file.')
+        size = 0
+        while block := input_stream.read(1024*1024):
+            size += len(block)
+            require(size <= limit, 'Upload grew while being copied.')
+            output.write(block)
+        after = os.fstat(input_stream.fileno())
+        require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
+                (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) and
+                size == before.st_size, 'Upload changed during promotion.')
+        output.flush()
+        os.fchmod(output.fileno(), 0o600)
+        os.fsync(output.fileno())
+
+
+def sync_directory(directory):
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _promote(source, source_fd, installed_path, *, expected_digest):
     require(os.geteuid() == 0, 'Update promotion requires root.')
     installed = json.loads(read(installed_path, 65536))
     require(installed_path.stat().st_uid == 0 and not installed_path.stat().st_mode & 0o022,
@@ -453,70 +620,51 @@ def _promote(source, source_fd, installed_path, *, expected_digest, stage_payloa
     upload = Path(installed.get('upload_directory', '/var/tmp/lanrith-update'))
     require(source.is_absolute() and source.resolve() == source and source.parent == upload and
             source.is_dir() and not source.is_symlink(), 'Upload is outside the declared staging directory.')
-    data = read('release.json', 65536, dir_fd=source_fd)
-    if expected_digest is not None:
-        import hashlib
-        require(re.fullmatch(r'[0-9a-f]{64}', expected_digest) and
-                hashlib.sha256(data).hexdigest() == expected_digest, 'Uploaded manifest identity differs.')
-    from .release import document
-    manifest = document(data)
-    require(manifest['purpose'] == 'update', 'Only update payloads can be promoted.')
-    esp = boot_esp(installed)
-    require(esp.is_mount(), 'EFI filesystem must be mounted before upload admission.')
-    disk, active = root_disk()
-    limits = upload_limits(manifest, installed, geometry(disk), disk=disk,
-                           active_partitions=active, esp_available=shutil.disk_usage(esp).free)
-    members = {'release.json': 65536, 'release.json.sig': 16384}
-    for artifact in manifest['artifacts']:
-        require(artifact['size'] <= limits[artifact['role']], 'Upload exceeds installed payload capacity.')
-        members[artifact['name']] = artifact['size']
-    require(set(os.listdir(source_fd)) == set(members), 'Upload has unexpected members.')
     inbox = Path(installed['state_directory'])/'update-inbox'
     inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
     require(inbox.resolve() == inbox and inbox.stat().st_uid == 0 and
             stat.S_IMODE(inbox.stat().st_mode) == 0o700, 'Unsafe root update inbox.')
-    require(shutil.disk_usage(inbox).free >= sum(members.values())+64*1024*1024,
-            'Persistent state lacks space for authenticated promotion and reserves.')
-    destination = inbox/str(manifest['deployment_sequence'])
+    certificate = Path(installed['certificate'])
+    policy = {'purpose': 'update', 'image_id': installed['update_image_id'],
+              'minimum_sequence': installed['deployment_sequence']}
     with tempfile.TemporaryDirectory(prefix='.upload-', dir=inbox) as temporary:
         root = Path(temporary)
+        metadata = {'release.json': 65536, 'release.json.sig': 16384}
+        for name, limit in metadata.items():
+            copy_member(source_fd, root, name, limit)
+        data = read(root/'release.json', 65536)
+        signature = read(root/'release.json.sig', 16384)
+        if expected_digest is not None:
+            require(isinstance(expected_digest, str) and hashlib.sha256(data).hexdigest() == expected_digest,
+                    'Uploaded manifest identity differs.')
+        manifest = authenticated_manifest(data, signature, certificate, **policy)
+        contract_admission(installed, manifest)
+        members = {artifact['name']: artifact['size'] for artifact in manifest['artifacts']}
+        names = set(metadata) | set(members)
+        require(set(os.listdir(source_fd)) == names, 'Upload has unexpected members.')
+        esp = boot_esp(installed)
+        require(esp.is_mount(), 'EFI filesystem must be mounted before upload admission.')
+        disk, active = root_disk()
+        upload_limits(manifest, installed, geometry(disk), disk=disk, active_partitions=active,
+                      esp_available=shutil.disk_usage(esp).free)
+        require(shutil.disk_usage(inbox).free >= sum(members.values()) + 64*1024*1024,
+                'Persistent state lacks space for authenticated promotion and reserves.')
         for name, limit in members.items():
-            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=source_fd)
-            with os.fdopen(descriptor, 'rb') as input_stream, (root/name).open('xb') as output:
-                before = os.fstat(input_stream.fileno())
-                require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
-                        0 < before.st_size <= limit, 'Unsafe upload file.')
-                size = 0
-                while block := input_stream.read(1024*1024):
-                    size += len(block)
-                    require(size <= limit, 'Upload grew while being copied.')
-                    output.write(block)
-                after = os.fstat(input_stream.fileno())
-                require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
-                        (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) and
-                        size == before.st_size, 'Upload changed during promotion.')
-                output.flush()
-                os.fchmod(output.fileno(), 0o600)
-                os.fsync(output.fileno())
-        verified = verify(root, Path(installed['certificate']), purpose='update',
-                          image_id=installed['update_image_id'], minimum_sequence=installed['deployment_sequence'])
-        require(verified == manifest, 'Manifest changed during promotion.')
-        require(read(root/'release.json', 65536) == data and set(os.listdir(source_fd)) == set(members),
-                'Upload changed during promotion.')
+            copy_member(source_fd, root, name, limit)
+        require(verify(root, certificate, **policy) == manifest and set(os.listdir(source_fd)) == names and
+                read('release.json', 65536, dir_fd=source_fd) == data and
+                read('release.json.sig', 16384, dir_fd=source_fd) == signature, 'Upload changed during promotion.')
+        destination = inbox/str(manifest['deployment_sequence'])
         if destination.exists():
-            require(not destination.is_symlink() and read(destination/'release.json', 65536) ==
-                    read(root/'release.json', 65536), 'Inbox already contains a different deployment.')
+            require(not destination.is_symlink() and read(destination/'release.json', 65536) == data,
+                    'Inbox already contains a different deployment.')
+            require(verify(destination, certificate, **policy) == manifest, 'Existing inbox release differs.')
         else:
+            sync_directory(root)
             os.rename(root, destination)
             root.mkdir(mode=0o700)  # Preserve TemporaryDirectory's cleanup ownership.
-    # Commit the file names and the publication rename before disk staging.
-    for directory in (destination, inbox):
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    return stage(destination, installed_path) if stage_payload else destination
+    sync_directory(inbox)
+    return destination
 
 
 def upload_limits(manifest, installed, partitions, *, disk, active_partitions, esp_available):
@@ -545,34 +693,52 @@ def prune_inbox(installed):
         return
     require(inbox.resolve() == inbox and inbox.stat().st_uid == 0 and
             stat.S_IMODE(inbox.stat().st_mode) == 0o700, 'Update inbox is unsafe.')
-    require(shutil.rmtree.avoids_symlink_attacks, 'Safe inbox retention is unavailable.')
     entries = list(inbox.iterdir())
     require(len(entries) <= 128, 'Update inbox requires recovery inspection.')
-    # Validate the entire set first. An unexpected object is never a cleanup
-    # target, and cannot cause a partial walk into unrelated state.
+    names = {path.name for path in entries}
+    cleanup = []
     for path in entries:
-        unpublished = re.fullmatch(r'\.upload-[a-z0-9_]{8}', path.name) is not None
-        require((unpublished or re.fullmatch(r'[1-9][0-9]{0,8}', path.name)) and
-                not path.is_symlink() and path.is_dir() and
-                path.stat().st_uid == 0 and stat.S_IMODE(path.stat().st_mode) == 0o700,
+        unpublished = re.fullmatch(r'\.upload-[a-z0-9_]{8}', path.name)
+        numbered = re.fullmatch(r'[1-9][0-9]{0,8}', path.name)
+        retired = re.fullmatch(r'\.retiring-([1-9][0-9]{0,8})', path.name)
+        info = path.lstat()
+        require((unpublished or numbered or retired) and stat.S_ISDIR(info.st_mode) and
+                info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o700,
                 'Unexpected update inbox directory.')
-        members = list(path.iterdir())
+        members = {member.name for member in path.iterdir()}
         require(len(members) <= 6, 'Unexpected update inbox contents.')
-        if not unpublished:
-            from .release import document
-            manifest = document(read(path/'release.json', 65536))
-            require(manifest['purpose'] == 'update' and manifest['image_id'] == installed['update_image_id'] and
-                    manifest['deployment_sequence'] == int(path.name) and
-                    {p.name for p in members} == {'release.json', 'release.json.sig'} |
-                    {a['name'] for a in manifest['artifacts']}, 'Unexpected update inbox contents.')
-        for member in members:
-            info = member.lstat()
+        for name in members:
+            info = (path/name).lstat()
             require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1,
                     'Unsafe update inbox member.')
-    for path in entries:
-        shutil.rmtree(path)
-    descriptor = os.open(inbox, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        if unpublished:
+            cleanup.append((path, None, members))
+            continue
+        sequence = path.name if numbered else retired[1]
+        target = inbox/('.retiring-' + sequence)
+        require(not numbered or target.name not in names, 'Ambiguous update retirement.')
+        if numbered or members:
+            require('release.json' in members, 'Missing update retirement manifest.')
+            manifest = document(read(path/'release.json', 65536))
+            expected = {'release.json', 'release.json.sig'} | {a['name'] for a in manifest['artifacts']}
+            require(manifest['purpose'] == 'update' and manifest['image_id'] == installed['update_image_id'] and
+                    manifest['deployment_sequence'] == int(sequence) and
+                    (members == expected if numbered else members <= expected), 'Unexpected update inbox contents.')
+        cleanup.append((path, target, members))
+
+    for path, target, members in cleanup:
+        if target is not None:
+            if path != target:
+                path.rename(target)
+                path = target
+            # A prior invocation can stop immediately after rename.
+            sync_directory(inbox)
+        for name in sorted(members - {'release.json'}):
+            (path/name).unlink()
+        if 'release.json' in members:
+            # The protected manifest identifies every resumable deletion. Once
+            # it is gone the only admissible retirement state is an empty directory.
+            sync_directory(path)
+            (path/'release.json').unlink()
+        path.rmdir()
+    sync_directory(inbox)

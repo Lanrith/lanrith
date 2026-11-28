@@ -40,6 +40,7 @@ class RoutingTests(unittest.TestCase):
         text = files['etc/frr/frr.conf']
         self.assertIn('fd42:1234:5678:400::/56 ge 64 le 64', text)
         self.assertIn('permit fd42:9876:5432::/48\n', text)
+        self.assertLess(text.index(' no bgp graceful-restart notification\n'), text.index(' neighbor LR0 peer-group'))
         self.assertIn('neighbor LR1 timers 3 9', text)
         self.assertIn('neighbor LR0 maximum-prefix 17', text)
         self.assertIn('route-map LR0-OUT deny 10', text)
@@ -66,6 +67,46 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn('allow fd42:9876:5432::/48', files['etc/chrony/chrony.conf'])
         self.assertEqual(value, config.normalize(value))
 
+    def test_conflicting_fallback_and_direct_delivery_are_rejected(self):
+        value = declaration()
+        clause = value['routing']['bgp']['peer_groups']['nodes']['import'][0]
+        clause['fallback'] = 'bgp_only'
+        value['groups']['work'] += ['198.51.100.0/24']
+        del clause['prefix_length']
+        clause['exact'] = True
+        network = config.render(value)['etc/systemd/network/10-bgp-fallback.network']
+        self.assertIn('Destination=198.51.100.0/24\nType=unreachable\nMetric=4278190080', network)
+        self.assertIn('Destination=fd42:1234:5678:400::/56\nType=unreachable', network)
+        group = value['routing']['bgp']['peer_groups']['vpn']
+        group['import'].append(dict(clause, fallback='routing_table'))
+        with self.assertRaisesRegex(ReleaseError, 'agree on their fallback'):
+            config.normalize(value)
+        group['import'].pop()
+        value['routing']['static_routes'][0]['to'] = '198.51.100.128/25'
+        with self.assertRaisesRegex(ReleaseError, 'explicitly on-link'):
+            config.normalize(value)
+
+    def test_import_ownership_checks_every_declared_origin_and_prefix_length(self):
+        value = declaration()
+        bgp = value['routing']['bgp']
+        nodes = bgp['peer_groups']['nodes']
+        a, b = 'fd42:1234:5678:10::20', 'fd42:1234:5678:10::21'
+        nodes['peers']['node-b'] = b
+        rows = bgp['import_ownership'] = [
+            {'prefix': 'fd42:1234:5678:401::/64', 'origins': [a, b]},
+            {'prefix': 'fd42:1234:5678:401::/65', 'origins': []},
+            {'prefix': 'fd42:1234:5678:700::/64', 'origins': []},
+            {'prefix': 'fd42:9876:5432::/48', 'origins': ['fd42:1234:5678:10::e100/120']}]
+        self.assertEqual(config.normalize(value), config.normalize(config.normalize(value)))
+        rows[0]['origins'] = [a]
+        with self.assertRaisesRegex(ReleaseError, 'origins differ.*401::/64'):
+            config.normalize(value)
+        del nodes['peers']['node-b']
+        config.normalize(value)
+        rows[-1]['origins'] = ['fd42:1234:5678:10::e101']
+        with self.assertRaisesRegex(ReleaseError, 'origins differ.*5432::/48'):
+            config.normalize(value)
+
     def test_disabled_bgp_removes_peer_services_credentials_and_prefixes(self):
         value = declaration()
         value['routing']['bgp']['enabled'] = False
@@ -74,6 +115,19 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn('fd42:9876:5432::/48', files['etc/nftables.conf'])
         self.assertNotIn('fd42:9876:5432::/48', files['etc/unbound/unbound.conf.d/lanrith.conf'])
         self.assertIn('[Route]', files['etc/systemd/network/40-home.network'])
+
+    def test_frr_clears_the_package_reload_for_all_enabled_peer_configs(self):
+        value = declaration()
+        dropin = 'etc/systemd/system/frr.service.d/60-lanrith-routing.conf'
+        for credentialed in (True, False):
+            if not credentialed:
+                del value['routing']['bgp']['peer_groups']['vpn']
+            files = config.render(value)
+            service = files[dropin].split('[Service]\n')[1]
+            self.assertEqual([line for line in service.splitlines() if line.startswith('ExecReload=')],
+                             ['ExecReload='])
+            self.assertEqual('BindReadOnlyPaths=' in service, credentialed)
+            self.assertEqual('usr/lib/systemd/system/lanrith-routing-credentials.service' in files, credentialed)
 
     def test_ipv4_direct_routes_keep_link_scope(self):
         value = declaration()

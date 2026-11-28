@@ -9,7 +9,7 @@ import shutil
 import stat
 import tarfile
 
-from . import release
+from . import recovery_console, release
 
 
 FAILURE_CONSOLE_BUILD_QUALIFIED = False
@@ -67,11 +67,11 @@ def prepare(workspace, *, credential, tty, base, initrd_base, emergency_dropin='
     """Install the serial menu only in an already assembled, private workspace."""
     release.require(FAILURE_CONSOLE_BUILD_QUALIFIED or steady is True,
                     'Failure console image integration is not qualified.')
+    recovery_console.require_build_terminal(tty)
     release.require(isinstance(workspace, Path) and workspace.is_absolute() and workspace.is_dir() and
                     not workspace.is_symlink() and workspace.resolve() == workspace and
                     isinstance(credential, Path) and credential.is_absolute() and
                     credential.resolve() == credential and credential.is_file() and not credential.is_symlink() and
-                    isinstance(tty, str) and re.fullmatch(r'(?:tty(?:S|AMA|USB|ACM)|hvc)[0-9]{1,3}', tty) and
                     isinstance(emergency_dropin, str) and
                     re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.conf', emergency_dropin) and
                     isinstance(library_prefix, str) and
@@ -127,6 +127,6 @@ def prepare(workspace, *, credential, tty, base, initrd_base, emergency_dropin='
     entry.write_text('#!/usr/bin/python3 -I\nimport sys\nsys.path.insert(0,'+repr('/'+library_prefix)+')\n'
                      'from lanrith.recovery_failure_console import main\nsys.exit(main())\n')
     entry.chmod(0o755)
-    emergency.write_text('[Service]\nType=exec\nExecStart=\nExecStart=/usr/bin/lanrith-failure-console\n'
+    emergency.write_text('[Unit]\nDescription=Authenticated initrd recovery console\n[Service]\nType=exec\nExecStart=\nExecStart=/usr/bin/lanrith-failure-console\n'
                          'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\n'
                          f'TTYPath=/dev/{tty}\nTTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\n')

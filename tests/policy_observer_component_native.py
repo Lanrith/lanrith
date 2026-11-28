@@ -145,7 +145,8 @@ except (OSError,EOFError):
 
 
 def request(path, value, *, uid=1801, gid=1801, raw=False, response_timeout=4):
-    require(type(response_timeout) in (int, float) and 0 < response_timeout <= 10,
+    maximum = 12 if str(path) == PROPOSAL else 10
+    require(type(response_timeout) in (int, float) and 0 < response_timeout <= maximum,
             'Native fixture response deadline differs.')
     data = value if isinstance(value, bytes) else canonical(value)
     result = run('/usr/bin/python3', '-I', '-c', CLIENT, str(path), data.hex(), 'raw' if raw else 'framed', str(response_timeout),

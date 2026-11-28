@@ -32,7 +32,8 @@ CHECKS = {
         'elevation-tools-absent', 'privileged-file-paths-absent', 'source-configuration-absent',
         'unprivileged-upload-staging'},
 }
-LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
+LOG_CHECKS = {'field-only-queue-and-receiver', 'permanent-auth-rejection-and-recovery', 'receiver-observed-exporter-source',
+    'generated-graph-readiness', 'exited-exporter-not-ready', 'real-journal-ingestion',
     'own-journal-exclusion', 'redaction-before-queue', 'authenticated-verified-https',
     'unauthenticated-verified-https', 'collector-outage', 'bounded-nonblocking-overflow', 'persistent-queue-crash-restart',
     'collector-return-delivery', 'private-state-directory-boundary', 'exporter-loss-observations',
@@ -41,8 +42,8 @@ LOG_CHECKS = {'generated-graph-readiness', 'exited-exporter-not-ready', 'real-jo
 DIRECTORY_CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-validation',
     'expired-certificate-rejection', 'no-plaintext-fallback-or-bind', 'bounded-slow-peer',
     'reader-and-observer-exact-egress', 'managed-source-return', 'other-identities-destination-port-source-interface-denied',
-    'independent-observer-identity', 'private-fresh-observation', 'disabled-components-remove-paths'}
-DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py',
+    'independent-observer-identity', 'private-fresh-observation', 'installed-trust-overlap-and-rotation', 'disabled-components-remove-paths'}
+DIRECTORY_IMPLEMENTATION = {'lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py', 'lanrith/release.py',
     'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
     'lanrith/config.py',
     'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
@@ -52,11 +53,13 @@ CREDENTIAL_CHECKS = {
     'dns-authority-without-writer-credentials',
     'radius-proxy-without-directory-credentials',
     'radius-native-cold-start-restart-and-readonly-fragments', 'all-radius-nas-clients-reach-authenticated-proxy',
+    'radius-bounded-storage-recovery', 'radius-atomic-rotation-and-nested-credentials',
     'dns64-native-sandbox-cold-start-restart',
     'enabled-log-without-authentication',
     'generated-log-credential-staging',
-    'image-set-rotation-and-fallback-selection',
+    'image-set-rotation-and-fallback-selection', 'fresh-log-peer-authentication-through-retirement',
     'missing-and-malformed-input-fast-failure',
+    'independent-service-credential-startup', 'optional-credential-current-boot-commit',
     'native-loadcredential-unprivileged-reader',
     'nine-native-credentials-at-first-start',
     'no-secret-in-journal',
@@ -178,7 +181,8 @@ def qualify(directory, project, environment, *, now=None):
             logs.get('alloy_sha256') == custom.get('components', {}).get('alloy', {}).get('binary_sha256') and
             logs.get('queue_capacity_bytes') == 67108864 and 0 < logs.get('overflow_records', 0) and
             0 < logs.get('queue_physical_bytes', 0) <= 160*1024*1024 and
-            logs.get('delivered_batches', 0) > 0 and
+            logs.get('delivered_batches', 0) > 0 and logs.get('fresh_heartbeat_receipts') == 2 and
+            type(logs.get('auth_rejection_failed_records')) is int and logs['auth_rejection_failed_records'] > 0 and
             all(type(logs.get(field)) is int for field in ('local_output_bytes', 'local_output_files', 'local_failed_records')) and
             0 < logs.get('local_output_bytes', 0) <= 3*1024*1024 and
             2 <= logs.get('local_output_files', 0) <= 3 and logs.get('local_failed_records', 0) > 0,
@@ -187,7 +191,7 @@ def qualify(directory, project, environment, *, now=None):
     require(stamp.tzinfo is not None and datetime.timedelta(0) <= now-stamp <= datetime.timedelta(hours=6),
             'Native journal delivery qualification is stale or future-dated.')
     implementation = logs.get('implementation_sha256', {})
-    require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py'} and
+    require(set(implementation) == {'lanrith/logs.py', 'lanrith/logs_runtime.py', 'lanrith/service_plane.py', 'lanrith/extension_observations.py', 'lanrith/dns_metadata.py'} and
             all(file_record(project/name)['sha256'] == expected for name, expected in implementation.items()),
             'Log delivery implementation changed after native qualification.')
     directory_tls = value(directory/'directory-qualification.json')

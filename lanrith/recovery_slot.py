@@ -152,6 +152,7 @@ def repair_slot(value, secret, *, confirm):
         with recovery_state.open_readonly(disk, value['state_uuid'], secret) as state_mount:
             retained = recovery_state.retained_contract(state_mount)
             release.require(retained['machine_id'] == manifest['image_contract']['machine_id'], 'Repair state belongs to another machine.')
+            image_contract.check_ssh_reader(retained, manifest['image_contract'])
             for name in retained['state'].keys() & manifest['image_contract']['state'].keys():
                 release.require(retained['state'][name]['writes'] in manifest['image_contract']['state'][name]['reads'],
                                 'Repair image cannot read retained state.')

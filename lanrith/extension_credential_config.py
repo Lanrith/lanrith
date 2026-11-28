@@ -19,7 +19,7 @@ def render(extension, selected, operator, *, core_required, image=False):
         from .credential_config import image_gate
         result = {'usr/share/lanrith/extension-credentials/'+extension+'.json': canonical(selected).decode(),
             'usr/lib/systemd/system/'+stem+'-ready.service': image_gate(
-                '/usr/bin/lanrith-extension-credentials '+extension+' gate')}
+                '/usr/bin/lanrith-extension-credentials '+extension+' gate', remain=core_required)}
         for unit in selected['units']:
             result['etc/systemd/system/'+unit+'.d/50-lanrith-extension-credentials.conf'] = (
                 '[Unit]\nRequires='+stem+'-ready.service\nAfter='+stem+'-ready.service\n\n[Service]\n'+
@@ -56,7 +56,7 @@ def render(extension, selected, operator, *, core_required, image=False):
             '[Unit]\nDescription=Wait for admitted extension credentials\nDefaultDependencies=no\n'
             'Requires='+stem+'-setup.service\nAfter='+stem+'-setup.service\n'
             'Before=shutdown.target\nConflicts=shutdown.target\n'
-            '\n[Service]\nType=oneshot\nRemainAfterExit=yes\n'
+            '\n[Service]\nType=oneshot\n'+('RemainAfterExit=yes\n' if core_required else '')+
             'ExecStart='+command+'gate\nTimeoutStartSec=610s\n'+writable+hardening),
         'usr/lib/systemd/system/'+stem+'.socket': (
             '[Unit]\nDescription=Operator extension credential provisioning socket\n'

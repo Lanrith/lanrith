@@ -7,15 +7,17 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import config
+from lanrith import config, kea_observer
 from vm import lease_snapshot
 
 
@@ -108,6 +110,7 @@ def qualify(result):
             # an ACK alone could also come from creating a replacement lease.
             native['Dhcp4']['control-socket'] = {
                 'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
+            native['Dhcp4']['hooks-libraries'] = [{'library': '/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so'}]
             # The packaged AppArmor profile permits this production basename's
             # PID file and the declared logger lock directory.
             config_path = work/'kea-dhcp4.conf'
@@ -141,8 +144,7 @@ def qualify(result):
                             control.settimeout(2)
                             control.connect('/run/kea/kea4-ctrl-socket')
                             name = 'subnet[79].assigned-addresses'
-                            control.sendall(json.dumps({'command': 'statistic-get',
-                                'arguments': {'name': name}}).encode())
+                            control.sendall(json.dumps({'command': 'statistic-get-all'}).encode())
                             control.shutdown(socket.SHUT_WR)
                             data = b''
                             while True:
@@ -153,6 +155,12 @@ def qualify(result):
                                 assert len(data) <= 65536
                             stats = json.loads(data)
                             assert stats['result'] == 0 and stats['arguments'][name][0][0] == 1
+                            assert stats['arguments']['subnet[79].pool[0].assigned-addresses'][0][0] == 1
+                            # The legacy fixture daemon runs as namespace root.
+                            # Keep the production collector's authenticated peer check.
+                            with patch.object(kea_observer.pwd, 'getpwnam', return_value=pwd.getpwuid(0)):
+                                capacity = kea_observer.capacity(native['Dhcp4']['subnet4'], stats, time.monotonic()+2)
+                            assert capacity['pools'] == [{'subnet_id': 79, 'pool': 100, 'assigned': 1, 'total': 101}]
                         replies.append(json.loads(client(sys.executable, '-c', CLIENT,
                             lease['address'], '192.168.10.1', mac).stdout))
                     finally:

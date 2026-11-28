@@ -61,7 +61,7 @@ class IDSQualificationTests(unittest.TestCase):
     def test_missing_coverage_subject_mismatch_and_invalid_metadata_are_rejected(self):
         good = report('a'*64, NOW)
         qualification.validate(good, 'a'*64, now=NOW)
-        changes = [{'schema': True}, {'checks': []}, {'checks': good['checks']+[good['checks'][0]]},
+        changes = [{'engine_version': '7.0.10'}, {'package_version': '1:7.0.10-1'}, {'schema': True}, {'checks': []}, {'checks': good['checks']+[good['checks'][0]]},
                    {'filesystem_sha256': 'd'*64}, {'binary_sha256': 'd'*64}, {'base_binary_match': 1},
                    {'container_cleanup': 'unverified'}, {'container_runtime': 'unknown'},
                    {'builder_image_sha256': ''}, {'external_network': True}, {'image_boot_qualified': True},

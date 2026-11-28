@@ -58,6 +58,24 @@ another admission review, which finishes the waiting check. A failed,
 cancelled, skipped or stale validation still fails admission. Pending validation
 cannot grant an automated approval or permit a merge.
 
+## WAN sensor package
+
+The Lanrith release maintainer tracks OISF patch releases and Debian backports
+for Suricata. The reviewed AMD64 package is `1:8.0.8-1~bpo13+2`. Its
+Debian-signed backports metadata, package index and package hash bind the
+builder and base to the same input. All dependency selection uses the existing
+frozen stable and security suites. For an update, refresh the backports
+InRelease and index record, package hash and locator, exact image/security pins,
+and the native executable digest. Regenerate the builder recipe hashes and run
+the base and IDS qualification gates. Review outstanding advisories against
+the precise backported source. Debian's ordinary trixie tracker entry currently
+describes 7.0.10. The scanner also checks every available Debian unstable source
+advisory against the full backport version, including its packaging suffix.
+Backports security updates are best-effort.
+[OISF lifecycle](https://suricata.io/our-story/eol-policy/),
+[Debian source status](https://security-tracker.debian.org/tracker/source-package/suricata),
+[Debian Backports FAQ](https://backports.debian.org/FAQ/).
+
 ## Owner setup
 
 Create a private App at
@@ -330,3 +348,17 @@ latest release cannot retire itself. Incomplete scanner coverage remains blockin
 Qualification artifacts contain the flat public JSON and text reports in the output
 directory. Workflow checks enforce that boundary, keeping collection independent
 of the private VM and storage work directories and their access permissions.
+
+## Networkd IPC on Debian 13
+
+On 27 November 2026, Debian listed systemd `257.13-1~deb13u1` for trixie.
+Its source retains the older sd-bus string-list reader used by networkd. The
+broker policy limits runtime NTP-server and DNSSEC negative-trust-anchor
+setters to root on both the manager and link interfaces. The compiled router
+profile supplies those settings. Local accounts can still query link status.
+[Debian systemd tracker](https://security-tracker.debian.org/tracker/source-package/systemd) · [Upstream advisory](https://github.com/systemd/systemd/security/advisories/GHSA-3jgj-3phh-hx5j) · [Shared library fix](https://github.com/systemd/systemd/commit/0d71d58da084a5548bcb762aa4b0fad9dc49fac9)
+
+When Debian ships a trixie fix, qualify it with ordinary link status queries,
+a networkd restart, and the unprivileged configuration checks in
+`tests/networkd_native.py`. Other systemd components in the advisory require
+their own package review.

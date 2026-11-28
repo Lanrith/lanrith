@@ -7,27 +7,26 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lanrith import recovery_failure_console as console, release
+from lanrith import early_failure, recovery_failure_console as console, release
 
 
 class FailureConsoleTests(unittest.TestCase):
     def test_automatic_fallback_requires_both_gates(self):
         for authentication, compatibility in ((False, False), (False, True), (True, False)):
             with self.subTest(authentication=authentication, compatibility=compatibility), \
-                    patch.object(console.early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', authentication), \
-                    patch.object(console.early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', compatibility), \
-                    patch.object(console.release, 'read', return_value=b'{}') as read, \
-                    patch.object(console.factory, 'bounded_fallback') as fallback:
+                    patch.object(early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', authentication), \
+                    patch.object(early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', compatibility), \
+                    patch.object(console.factory, 'read_failure_identity', return_value={'fallback_binding': {}}), \
+                    patch.object(early_failure, 'failed_boot') as fallback:
                 self.assertFalse(console.automatic_fallback())
-                read.assert_called_once()
                 fallback.assert_not_called()
 
     def test_automatic_fallback_uses_bounded_verified_identity_and_fails_to_menu(self):
         identity = {'synthetic': 'identity'}
-        with patch.object(console.early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
-                patch.object(console.early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
-                patch.object(console.release, 'read', return_value=json.dumps(identity).encode()), \
-                patch.object(console.early_failure, 'failure_identity', return_value=identity), \
+        with patch.object(early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
+                patch.object(early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
+                patch.object(console.factory, 'read', return_value=json.dumps(identity).encode()), \
+                patch.object(early_failure, 'failure_identity', return_value=identity), \
                 patch.object(console.factory, 'bounded_fallback') as fallback:
             self.assertTrue(console.automatic_fallback())
             fallback.assert_called_once_with(identity)
@@ -49,10 +48,10 @@ class FailureConsoleTests(unittest.TestCase):
         identity = {'synthetic': 'identity'}
         for output_failure in (False, True):
             with self.subTest(output_failure=output_failure), \
-                    patch.object(console.early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
-                    patch.object(console.early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
-                    patch.object(console.release, 'read', return_value=json.dumps(identity).encode()), \
-                    patch.object(console.early_failure, 'failure_identity', return_value=identity), \
+                    patch.object(early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
+                    patch.object(early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
+                    patch.object(console.factory, 'read', return_value=json.dumps(identity).encode()), \
+                    patch.object(early_failure, 'failure_identity', return_value=identity), \
                     patch.object(console.factory, 'bounded_fallback', side_effect=TimeoutError('secret fixture')), \
                     patch('builtins.print', side_effect=OSError('closed') if output_failure else None) as printed:
                 self.assertFalse(console.automatic_fallback())
@@ -75,10 +74,10 @@ class FailureConsoleTests(unittest.TestCase):
                 patch.object(Path, 'stat', return_value=SimpleNamespace(st_mode=0o020000, st_rdev=5)), \
                 patch.object(console.os, 'fstat', return_value=SimpleNamespace(st_rdev=5)), \
                 patch.object(console.factory, 'secure_boot'), \
-                patch.object(console.early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
-                patch.object(console.early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
-                patch.object(console.release, 'read', return_value=json.dumps(identity).encode()), \
-                patch.object(console.early_failure, 'failure_identity', return_value=identity), \
+                patch.object(early_failure, 'FALLBACK_AUTHENTICATION_QUALIFIED', True), \
+                patch.object(early_failure, 'ROLLBACK_COMPATIBILITY_QUALIFIED', True), \
+                patch.object(console.factory, 'read', return_value=json.dumps(identity).encode()), \
+                patch.object(early_failure, 'failure_identity', return_value=identity), \
                 patch.object(console.factory, 'bounded_fallback', side_effect=TimeoutError('private fixture')) as fallback, \
                 patch.object(console.recovery_console, 'protected_file', side_effect=protected), \
                 patch.object(console.recovery_console, 'secret_from_tty', return_value=secret), \
@@ -113,6 +112,7 @@ class FailureConsoleTests(unittest.TestCase):
                 patch.object(Path, 'stat', return_value=SimpleNamespace(st_mode=0o020000, st_rdev=5)), \
                 patch.object(console.os, 'fstat', return_value=SimpleNamespace(st_rdev=5)), \
                 patch.object(console.factory, 'secure_boot'), \
+                patch.object(console, 'automatic_fallback', return_value=False), \
                 patch.object(console.recovery_console, 'protected_file', side_effect=protected), \
                 patch.object(console.recovery_console, 'secret_from_tty', side_effect=secrets), \
                 patch.object(console.recovery_console, 'verify_secret', return_value=False), \
@@ -126,8 +126,8 @@ class FailureConsoleTests(unittest.TestCase):
     def test_reboot_requires_successful_selection_in_this_session(self):
         commands = iter(['reboot', 'exit'])
         outputs, reboots = [], []
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append,
-                           select=lambda _: None, reboot=lambda: reboots.append(True))
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append,
+                           select=lambda _: None, reboot=lambda _: reboots.append(True))
         self.assertEqual(reboots, [])
         self.assertTrue(any('Select a fallback' in line for line in outputs))
 
@@ -137,8 +137,8 @@ class FailureConsoleTests(unittest.TestCase):
         def select(confirm):
             self.assertEqual(confirm(9, 'ab'*32), '9')
             return {'sequence': 9, 'default_changed': False, 'automatic_reboot': False}
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append,
-                           select=select, reboot=lambda: reboots.append(True))
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append,
+                           select=select, reboot=lambda _: reboots.append(True))
         self.assertEqual(reboots, [True])
         self.assertTrue(any('ab'*32 in line and 'deployment 9' in line for line in outputs))
 
@@ -148,11 +148,11 @@ class FailureConsoleTests(unittest.TestCase):
         def select(confirm):
             self.assertEqual(confirm(9, 'ab'*32), '9')
             return {'sequence': 9, 'default_changed': False, 'automatic_reboot': False}
-        def reboot():
+        def reboot(_):
             attempts.append(True)
             if len(attempts) == 1:
                 raise subprocess.TimeoutExpired('synthetic', 1)
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append, select=select, reboot=reboot)
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append, select=select, reboot=reboot)
         self.assertEqual(len(attempts), 2)
         self.assertTrue(any('one-shot selection may still be pending' in line for line in outputs))
         self.assertTrue(any('One-shot fallback selected' in line for line in outputs))
@@ -163,18 +163,29 @@ class FailureConsoleTests(unittest.TestCase):
         def select(confirm):
             calls.append(confirm(9, 'ab'*32))
             return {'sequence': 9, 'default_changed': False, 'automatic_reboot': False}
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append,
-                           select=select, reboot=lambda: self.fail('unexpected reboot'))
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append,
+                           select=select, reboot=lambda _: self.fail('unexpected reboot'))
         self.assertEqual(calls, ['9'])
         self.assertTrue(any('already selected' in line for line in outputs))
+
+    def test_ineligible_menu_withholds_fallback_and_gives_firmware_and_media_routes(self):
+        commands = iter(['status', 'fallback', 'reboot', 'exit'])
+        output = []
+        console.fixed_menu(eligibility=lambda: 'The current image is already the persistent default.',
+                           read_command=lambda: next(commands), write=output.append,
+                           select=lambda _: self.fail('Unexpected selection'), reboot=lambda _: self.fail('Reboot'))
+        self.assertIn('Failure recovery: status, exit.', output[0])
+        self.assertNotIn('status, fallback', ''.join(output))
+        self.assertIn('bootloader menu', output[0])
+        self.assertIn('independently signed recovery media', output[0])
 
     def test_failed_selection_does_not_allow_reboot_or_echo_exception(self):
         commands = iter(['fallback', 'reboot', 'exit'])
         outputs, reboots = [], []
         def fail(_):
             raise release.ReleaseError('sensitive fixture')
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append,
-                           select=fail, reboot=lambda: reboots.append(True))
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append,
+                           select=fail, reboot=lambda _: reboots.append(True))
         self.assertEqual(reboots, [])
         self.assertTrue(any('selection failed' in line for line in outputs))
         self.assertFalse(any('sensitive fixture' in line for line in outputs))
@@ -184,17 +195,17 @@ class FailureConsoleTests(unittest.TestCase):
         outputs, reboots = [], []
         def fail(_):
             raise subprocess.TimeoutExpired('synthetic', 1)
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append,
-                           select=fail, reboot=lambda: reboots.append(True))
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append,
+                           select=fail, reboot=lambda _: reboots.append(True))
         self.assertEqual(reboots, [])
         self.assertTrue(any('selection failed' in line for line in outputs))
 
     def test_unknown_command_is_not_executed(self):
         commands = iter(['rm -rf /', 'exit'])
         outputs = []
-        console.fixed_menu(read_command=lambda: next(commands), write=outputs.append,
+        console.fixed_menu(eligibility=lambda: None, read_command=lambda: next(commands), write=outputs.append,
                            select=lambda _: self.fail('selection called'),
-                           reboot=lambda: self.fail('reboot called'))
+                           reboot=lambda _: self.fail('reboot called'))
         self.assertTrue(any('Unknown command' in line for line in outputs))
 
 

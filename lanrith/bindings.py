@@ -5,12 +5,11 @@ import re
 import ssl
 
 from . import intent
-from .release import ReleaseError, require
+from .release import CERTIFICATE, ReleaseError, require
 
 
 ACCOUNT = re.compile(r'[A-Za-z_][A-Za-z0-9_-]{0,31}\Z')
 PATH = re.compile(r'/[A-Za-z0-9_./-]+\Z')
-CERTIFICATE = re.compile(r'-----BEGIN CERTIFICATE-----\n[A-Za-z0-9+/=\n]+\n-----END CERTIFICATE-----\n')
 
 
 def credential_references(value):

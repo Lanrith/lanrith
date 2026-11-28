@@ -15,10 +15,11 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lanrith import config, firewall, ids, ids_qualification
+from lanrith import config, firewall, ids, ids_observer, ids_qualification
 from lanrith.release import canonical, file_record, require
 from packets import SERVER, ns, probe, run
 from test_intent import minimal
+from ids_rule_fixture import replay
 
 
 SYN = '''
@@ -49,6 +50,11 @@ def main():
     sources = ids_qualification.implementation(project)
     subject = file_record(args.base) if args.base else None
     binary = file_record(Path('/usr/bin/suricata'))['sha256']
+    engine = run('suricata', '-V').stdout.strip()
+    package = run('dpkg-query', '-W', '-f=${Version}', 'suricata').stdout
+    require(engine == 'This is Suricata version '+ids_qualification.ENGINE+' RELEASE' and
+            package == ids_qualification.PACKAGE and binary == ids_qualification.EXECUTABLE,
+            'Native Suricata does not match the supported Debian sensor package.')
     base_binary = ids_qualification.base_binary(args.base) if args.base else None
     require(not subject or base_binary == binary, 'Native detector differs from the exact base executable.')
     require(not args.result or args.result.is_absolute() and args.result.parent.resolve() == args.result.parent and
@@ -85,6 +91,7 @@ def main():
     processes = []
     with tempfile.TemporaryDirectory(prefix='lanrith-ids.') as temporary:
         work = Path(temporary)
+        packet_count = replay(work)
         run('suricata', '-T', '-c', '/etc/suricata/lanrith.yaml', '-l', str(work), '--init-errors-fatal')
         for name, router, client in (('wan', '192.0.2.1/24', '192.0.2.2/24'),
                                      ('lan', '192.168.10.1/24', '192.168.10.2/24')):
@@ -149,8 +156,26 @@ def main():
                 assert not any(row.get('src_port') == 40002 for row in alerts())
                 assert before == run('nft', '-j', 'list', 'ruleset').stdout
                 probe('lan-test', '192.0.2.2', 8888, True)
+                # A finite UDP stream exercises AF_PACKET accounting on a synthetic veth.
+                ns('wan-test', 'python3', '-c', """
+import socket,time
+with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as stream:
+    for number in range(512):
+        stream.sendto(b'capture fixture', ('192.0.2.1', 9000))
+        if number % 16 == 0:
+            time.sleep(.01)
+""")
+                time.sleep(.5)
+                proc = Path('/proc', str(daemon.pid))
+                process_stats = (proc/'stat').read_text().rsplit(')', 1)[1].split()
+                cpu_seconds = (int(process_stats[11])+int(process_stats[12]))/os.sysconf('SC_CLK_TCK')
+                final_status = dict(line.split(':', 1) for line in (proc/'status').read_text().splitlines())
                 daemon.terminate()
                 daemon.wait(timeout=10)
+                totals = [row['stats'] for row in map(json.loads, Path('/var/log/suricata/eve.json').read_text().splitlines())
+                          if row.get('event_type') == 'stats'][-1]
+                capture = {name: totals[group][key] for name, (group, key) in ids_observer.FIELDS.items()}
+                assert ids_observer.counters(capture) and capture['capture_packets'] >= 512
                 probe('lan-test', '192.0.2.2', 8888, True)
         finally:
             for process in processes:
@@ -165,7 +190,10 @@ def main():
     report = {'schema': 1, 'test': 'offline-wan-ids', 'result': 'pass',
         'assessed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         'checks': sorted(ids_qualification.CHECKS),
-        'daemon_working_directory': '/',
+        'daemon_working_directory': '/', 'engine_version': ids_qualification.ENGINE, 'package_version': package,
+        'rule_fixture_packets': packet_count, 'startup_rss_kib': int(status['VmRSS'].split()[0]),
+        'virtual_udp_datagrams': 512, 'virtual_capture': capture, 'daemon_cpu_seconds': cpu_seconds,
+        'daemon_peak_rss_kib': int(final_status['VmHWM'].split()[0]),
         'daemon_command': daemon_command,
         'detector_uid': 61010, 'no_new_privileges': True,
         'effective_capabilities': 1 << 13, 'bounding_capabilities': 1 << 13,

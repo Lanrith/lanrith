@@ -17,6 +17,7 @@ def minimal():
     value = config.load(ROOT/'examples/minimal.yaml')
     for key in ('addressing', 'services'):
         value.pop(key, None)
+    value['services'] = {'ntp': {'enabled': True, 'upstreams': ['192.0.2.123']}}
     value['networks'] = {'home': {'interface': 'lan', 'ipv4': '192.168.10.0/24',
                                 'dhcp4': {'pools': ['192.168.10.100-192.168.10.150']}}}
     value['addressing'] = {'ula_prefix': 'fd42:1234:5678::/48'}
@@ -78,11 +79,16 @@ class IntentTests(unittest.TestCase):
                     'address': '2001:db8:10::2/48' if delivery == 'on_link' else '2001:db8:20::2/64',
                     'gateway': '2001:db8:10::1' if delivery == 'on_link' else '2001:db8:20::1',
                     'downstream_prefix': '2001:db8:10::/48', 'delivery': delivery}
-                value['services'] = {'dns': {'enabled': enabled}, 'ntp': {'enabled': enabled}}
+                value['services'] = {'dns': {'enabled': enabled}, 'ntp': {'enabled': enabled, 'upstreams': ['192.0.2.123']}}
                 files = config.render(value)
                 with self.subTest(delivery=delivery, enabled=enabled):
-                    self.assertIn('IPv6ProxyNDP='+('yes' if enabled and delivery == 'on_link' else 'no')+'\n',
-                                  files['etc/systemd/network/20-uplink.network'])
+                    wan = files['etc/systemd/network/20-uplink.network']
+                    selected = enabled and delivery == 'on_link'
+                    self.assertIn('IPv6ProxyNDP='+('yes' if selected else 'no')+'\n', wan)
+                    self.assertEqual([line for line in wan.splitlines() if line.startswith('IPv6ProxyNDPAddress=')],
+                                     ['IPv6ProxyNDPAddress=2001:db8:10:fe02::'+suffix
+                                      for suffix in ('10', '40')] if selected else [])
+                    self.assertNotIn('IPv6ProxyNDPAddress=', files['etc/systemd/network/40-home.network'])
         value = minimal()
         value['uplink']['ipv6'] = 'disabled'
         self.assertIn('IPv6ProxyNDP=no\n', config.render(value)['etc/systemd/network/20-uplink.network'])

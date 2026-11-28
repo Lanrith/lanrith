@@ -2,12 +2,20 @@
 
 import ipaddress
 
-from . import authoritative, fancontrol_config, hardware_config, intent
+from . import authoritative, authoritative_migration, dns64, fancontrol_config, hardware_config, intent, journal, networkd
+from . import integrations as references
 from .release import canonical, require
 
 
 def required_units(value, *, target_facts=None, integrations=()):
-    units = ['nftables.service', 'ssh.service', 'systemd-networkd.service', *integrations]
+    units = ['nftables.service', 'ssh.service', 'systemd-networkd.service', journal.FLUSH, *integrations]
+    receiver = journal.settings(value).get('syslog_receiver_unit')
+    if receiver:
+        units.append(receiver)
+    if value['uplink'].get('required_for_online'):
+        units.append('systemd-networkd-wait-online.service')
+    units += [f'lanrith-pref64-{name}.service'
+              for name in {n['pref64'] for n in value['networks'].values() if 'pref64' in n}]
     if fancontrol_config.active(value):
         units.append('lanrith-fancontrol.service')
     for feature, unit in (('dns', 'unbound.service'), ('dhcp4', 'kea-dhcp4-server.service'), ('ntp', 'chrony.service')):
@@ -32,26 +40,109 @@ def required_units(value, *, target_facts=None, integrations=()):
         units.append('lanrith-nat46.service')
     if value.get('translation', {}).get('nat64', {}).get('enabled'):
         units += ['lanrith-nat64.service', 'lanrith-nat64-internal.service']
-        if authoritative.active(value):
+        if dns64.private_active(value):
             units.append('lanrith-dns64-private.service')
+            if dns64.reverse_stubs(value):
+                units.append('lanrith-dns64-reverse.service')
     if target_facts is not None:
         units.append('lanrith-hardware-ownership.service')
     if value.get('observability', {}).get('ids', {}).get('enabled'):
         units.append('lanrith-ids.service')
     if value.get('observability', {}).get('metrics', {}).get('enabled'):
-        units += ['lanrith-metrics.service', 'prometheus-node-exporter.service', 'lanrith-router-metrics.timer']
-        if value['services']['ntp']['enabled']:
-            units.append('lanrith-ntp-health.timer')
-        if value.get('identity', {}).get('policy', {}).get('enabled'):
-            units.append('lanrith-directory-health.timer')
+        units += ['lanrith-metrics.service', 'prometheus-node-exporter.service']
     if value.get('observability', {}).get('snmp', {}).get('enabled'):
         units.append('snmpd.service')
     if value.get('observability', {}).get('logs', {}).get('enabled'):
-        units += ['alloy.service', 'lanrith-telemetry-heartbeat.timer']
+        units.append('alloy.service')
     if value['services'].get('discovery', {}).get('enabled'):
         units += ['avahi-daemon.service', 'discovery-bridge-publisher.service',
                   'discovery-bridge-collector.service', 'discovery-bridge-dns.service']
     return sorted(set(units))
+
+
+def advisory_timers(value):
+    timers = []
+    observability = value.get('observability', {})
+    if observability.get('ids', {}).get('enabled'):
+        timers.append('lanrith-ids-rotate.timer')
+    if observability.get('metrics', {}).get('enabled'):
+        timers.append('lanrith-router-metrics.timer')
+        if value['services']['ntp']['enabled']:
+            timers.append('lanrith-ntp-health.timer')
+        if value.get('identity', {}).get('policy', {}).get('enabled'):
+            timers.append('lanrith-directory-health.timer')
+    if observability.get('logs', {}).get('enabled'):
+        timers.append('lanrith-telemetry-heartbeat.timer')
+    return sorted(timers)
+
+
+def network_requirements(value):
+    interfaces = []
+    for key, lan in value['networks'].items():
+        addresses = intent.gateway_addresses(lan)
+        item = {'name': lan['name'], 'addresses': addresses}
+        if not networkd.requires_carrier(lan):
+            item['carrier_optional'] = True
+        if 'namespace' in lan:
+            item['namespace'] = lan['namespace']
+        routes = [str(p) for route in value.get('routing', {}).get('static_routes', [])
+                  if route['network'] == key for p in references.prefixes(value, route['to'])]
+        if routes:
+            item['routes'] = [{'to': prefix} for prefix in routes]
+        interfaces.append(item)
+    wan = value['uplink']
+    required = wan.get('required_for_online', False)
+    if required or wan.get('addresses'):
+        item = {'name': value['hardware']['interfaces'][wan['interface']]['name'],
+                'addresses': wan.get('addresses', [])}
+        if required:
+            item['routable_families'] = [int(family[-1]) for family in networkd.required_uplink_families(wan)]
+        else:
+            item['optional'] = True
+        routes = []
+        for family in (4, 6):
+            destination = '0.0.0.0/0' if family == 4 else '::/0'
+            gateway = next((g for g in wan.get('gateways', []) if ipaddress.ip_address(g).version == family), None)
+            if gateway:
+                routes.append({'to': destination, 'via': gateway})
+            elif required and wan.get('ipv'+str(family), 'dhcp' if family == 4 else 'ra') in ('dhcp', 'ra'):
+                routes.append({'to': destination})
+        item['routes'] = routes
+        interfaces.append(item)
+    return interfaces
+
+
+def dns_requirements(value):
+    resolver = intent.service_addresses(value, 'dns')
+    needs_ntp_dns = False
+    if value['services']['ntp']['enabled']:
+        for server in intent.ntp_upstreams(value):
+            try:
+                ipaddress.ip_address(server['address'])
+            except ValueError:
+                needs_ntp_dns = True
+                break
+    dns = {'listeners': resolver, 'ntp_client': needs_ntp_dns}
+    if not authoritative.active(value):
+        blocked = {name.lower().rstrip('.') for name in value['services']['dns'].get('blocked_domains', [])}
+        dns['queries'] = [['localhost.', 'A', 'NXDOMAIN' if 'localhost' in blocked else ['127.0.0.1']]]
+        return dns
+    settings = authoritative.settings(value)
+    records = authoritative.zone_records(value)
+    # Ordinary seed records in a persistent zone belong to its operator. Limit
+    # boot work to zone loading, declared service endpoints and signed transitions.
+    expected = {(zone+'.', 'SOA'): 'present' for zone in settings['zones']}
+    for name, rrsets in authoritative.service_records(value).items():
+        for kind, answer in rrsets.items():
+            expected[(name+'.'+settings['primary_zone']+'.', kind)] = [answer]
+    changes = authoritative_migration.managed_rrsets(settings['zones'], records)
+    for transitions in changes.values():
+        for record in transitions:
+            expected[(record['name'], record['type'])] = record['desired']
+    queries = [[name, kind, data] for (name, kind), data in sorted(expected.items())]
+    source, target = authoritative.resolver_path(value)
+    dns.update(authority=target, source=source, queries=queries)
+    return dns
 
 
 def health(value, *, target_facts=None, integrations=(), access_backend='tun'):
@@ -63,12 +154,13 @@ def health(value, *, target_facts=None, integrations=(), access_backend='tun'):
         probes += ['nat64', 'nat64-internal']
     if target_facts is not None:
         probes.append('ownership')
-    return {'schema': 1, 'units': required_units(value, target_facts=target_facts, integrations=integrations),
-            'interfaces': [{'name': item['name'],
-                            'addresses': [str(ipaddress.ip_interface(a).ip) for a in intent.gateway_addresses(item)],
-                            **({'namespace': item['namespace']} if 'namespace' in item else {})}
-                           for item in value['networks'].values()], 'probes': probes,
-            **({'native_translation': True} if access_backend == 'tun' else {})}
+    plan = {'schema': 2, 'units': required_units(value, target_facts=target_facts, integrations=integrations),
+            'interfaces': network_requirements(value), 'probes': probes}
+    if access_backend == 'tun':
+        plan['native_translation'] = True
+    if value['services']['dns']['enabled']:
+        plan['dns'] = dns_requirements(value)
+    return plan
 
 
 def render(value, *, target_facts=None, access_backend='tun'):
@@ -77,5 +169,5 @@ def render(value, *, target_facts=None, access_backend='tun'):
                                                            access_backend=access_backend)).decode(),
             'usr/share/lanrith/administration.json': canonical(
                 {'schema': 1, **{k: admin[k] for k in ('username', 'host_key_state', 'host_key_rotation',
-                                                       'serial', 'root_access')}}).decode(),
+                                                       'serial', 'root_access', 'host_key_pin') if k in admin}}).decode(),
             'usr/share/lanrith/hardware.json': canonical(hardware_config.manifest(value)).decode()}

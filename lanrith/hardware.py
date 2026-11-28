@@ -1,11 +1,16 @@
 """Inspect declared hardware and bind only an explicitly isolated PCI function."""
 
 import argparse
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import fcntl
 import fnmatch
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 
@@ -55,18 +60,6 @@ def ownership_status(manifest, *, sysfs=Path('/sys')):
         vfio_device(binding['pci'], binding['iommu_group'], sysfs=sysfs)
 
 
-def bind_owned(manifest, *, sysfs=Path('/sys'), run=subprocess.run):
-    ownership = check_ownership_manifest(manifest)
-    ownership_memory(ownership, sysfs=sysfs)
-    # Validate every device before changing the first. The individual binder
-    # rechecks each identity immediately before unbinding its Linux driver.
-    for item in ownership['bindings']:
-        binding_device(item['pci'], item['iommu_group'], item['name'], item['mac'], item['driver'], sysfs=sysfs)
-    for item in ownership['bindings']:
-        bind_device(item['pci'], item['iommu_group'], item['name'], item['mac'], item['driver'], sysfs=sysfs, run=run)
-    ownership_status(manifest, sysfs=sysfs)
-
-
 def pci_device(bdf, group=None, *, sysfs=Path('/sys')):
     require(isinstance(bdf, str) and re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]', bdf),
             'Invalid PCI function selection.')
@@ -90,34 +83,242 @@ def vfio_device(bdf, group=None, *, sysfs=Path('/sys')):
     return device
 
 
-def binding_device(bdf, group, interface, mac, driver, *, sysfs=Path('/sys')):
-    require(isinstance(interface, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,14}', interface) and
-            isinstance(mac, str) and re.fullmatch(r'[0-9a-f]{2}(?::[0-9a-f]{2}){5}', mac) and
-            isinstance(driver, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', driver) and
-            driver != 'vfio-pci', 'Declare the expected Linux interface, MAC and kernel driver.')
-    device = pci_device(bdf, group, sysfs=sysfs)
-    observed_driver = (device/'driver').resolve(strict=True).name
-    if observed_driver == 'vfio-pci':
-        vfio_device(bdf, group, sysfs=sysfs)
-        return device
-    require(observed_driver == driver, 'PCI function has an unexpected kernel driver.')
-    require(sorted(path.name for path in (device/'net').iterdir()) == [interface] and
-            (sysfs/'class/net'/interface/'address').read_text().strip().lower() == mac,
-            'PCI interface or MAC differs from the declared device.')
-    return device
+STATE = Path('/run/lanrith-hardware-ownership')
+BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
 
 
-def bind_device(bdf, group, interface, mac, driver, *, sysfs=Path('/sys'), run=subprocess.run):
-    device = binding_device(bdf, group, interface, mac, driver, sysfs=sysfs)
-    if (device/'driver').resolve(strict=True).name == 'vfio-pci':
-        return
-    # No state changes occur until every device identity and isolation check passes.
-    run(['ip', 'link', 'set', 'dev', interface, 'down'], check=True, timeout=15)
-    run(['modprobe', 'vfio-pci'], check=True, timeout=15)
-    (device/'driver_override').write_text('vfio-pci\n')
-    (device/'driver/unbind').write_text(bdf+'\n')
-    (sysfs/'bus/pci/drivers_probe').write_text(bdf+'\n')
-    vfio_device(bdf, group, sysfs=sysfs)
+def timestamp():
+    return datetime.now(timezone.utc).isoformat()
+
+
+@contextmanager
+def binding_lock(directory):
+    directory.mkdir(mode=0o700, exist_ok=True)
+    fd = os.open(directory, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    try:
+        info = os.fstat(fd)
+        require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700,
+                'Unsafe hardware ownership state directory.')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+def driver_name(device):
+    try:
+        return (device/'driver').resolve(strict=True).name
+    except FileNotFoundError:
+        require(not (device/'driver').is_symlink(), 'PCI driver link is inconsistent.')
+        return None
+
+
+def override(device):
+    value = (device/'driver_override').read_text().rstrip('\n')
+    return '' if value == '(null)' else value
+
+
+def netdevs(device):
+    try:
+        return sorted(entry.name for entry in (device/'net').iterdir())
+    except FileNotFoundError:
+        return []
+
+
+def object_id(path):
+    info = path.stat()
+    return [info.st_dev, info.st_ino]
+
+
+def instance(device):
+    return {'pci_object': object_id(device), 'group_object': object_id(device/'iommu_group'),
+            'pci_ids': {key: (device/key).read_text().strip() for key in
+                        ('vendor', 'device', 'subsystem_vendor', 'subsystem_device', 'revision', 'class')}}
+
+
+def read_record(path):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    directory = path.parent.lstat()
+    require(stat.S_ISDIR(directory.st_mode) and stat.S_IMODE(directory.st_mode) == 0o700 and
+            directory.st_uid == os.geteuid() and info.st_uid == os.geteuid() and
+            stat.S_IMODE(info.st_mode) == 0o600, 'Hardware ownership record is not private.')
+    record = json.loads(read(path, 16384))
+    require(isinstance(record, dict), 'Malformed hardware ownership record.')
+    return record
+
+
+class Reservation:
+    """The one verified Linux function a bind transaction may change."""
+
+    def __init__(self, item, digest, state, sysfs):
+        self.bdf = item['pci']
+        self.group = item['iommu_group']
+        self.interface = item['name']
+        self.mac = item['mac']
+        self.driver = item['driver']
+        require(isinstance(self.interface, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,14}', self.interface)
+                and isinstance(self.mac, str) and re.fullmatch(r'[0-9a-f]{2}(?::[0-9a-f]{2}){5}', self.mac)
+                and isinstance(self.driver, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', self.driver)
+                and self.driver != 'vfio-pci', 'Declare the expected Linux interface, MAC and kernel driver.')
+        self.sysfs = sysfs
+        self.device = pci_device(self.bdf, self.group, sysfs=sysfs)
+        self.path = state/(self.bdf+'.json')
+        self.identity = {'boot_id': BOOT_ID.read_text().strip(), 'manifest_sha256': digest,
+                         'binding': item, 'instance': instance(self.device)}
+
+    def record(self):
+        record = read_record(self.path)
+        if record is None:
+            return None
+        require(isinstance(record, dict) and record.get('identity') == self.identity
+                and record.get('phase') in ('prepared', 'pending', 'restoring', 'restored', 'bound')
+                and record.get('prior_override') in ('', self.driver)
+                and type(record.get('attempts')) is int and 0 <= record['attempts'] <= 2
+                and isinstance(record.get('observed_at'), str), 'Stale or invalid hardware ownership record.')
+        return record
+
+    def save(self, record):
+        # The directory lock covers both this temporary file and the PCI changes.
+        pending = self.path.with_suffix('.pending')
+        fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(canonical(record))
+        os.replace(pending, self.path)
+
+    def observe(self):
+        device = pci_device(self.bdf, self.group, sysfs=self.sysfs)
+        require(instance(device) == self.identity['instance'], 'PCI function or IOMMU group was replaced.')
+        return driver_name(device), override(device), netdevs(device)
+
+    def linux_interface(self, names, *, restoring=False):
+        require(len(names) == 1 and (restoring or names == [self.interface]) and
+                (self.device/'net'/names[0]).samefile(self.sysfs/'class/net'/names[0]) and
+                (self.device/'net'/names[0]/'address').read_text().strip().lower() == self.mac,
+                'PCI interface or MAC differs from the declared device.')
+        return names[0]
+
+    def inspect(self, record):
+        driver, current, names = self.observe()
+        if driver == 'vfio-pci':
+            require(not (self.device/'net').exists() and (not record or record['phase'] in ('pending', 'bound')),
+                    'Unexpected VFIO state.')
+            if record:
+                require(current == 'vfio-pci', 'PCI driver override changed.')
+            return driver
+        prior = record['prior_override'] if record else current
+        require(prior in ('', self.driver), 'Foreign PCI driver override.')
+        if record and record['phase'] in ('pending', 'restoring'):
+            require(current in (prior, 'vfio-pci'), 'PCI driver override changed.')
+            if record['phase'] == 'pending' and record['attempts']:
+                require(driver is None, 'PCI driver changed after the verified detach.')
+            if driver is None:
+                require(not names and (current == 'vfio-pci' or record['phase'] == 'restoring'),
+                        'Unexplained driverless PCI function.')
+                return None
+        else:
+            require(current == prior and (not record or record['phase'] in ('prepared', 'restored')),
+                    'PCI binding changed outside the reservation.')
+        require(driver == self.driver, 'PCI function has an unexpected kernel driver.')
+        self.linux_interface(names, restoring=record is not None and record['phase'] == 'restoring')
+        return driver
+
+    def driver_write(self, driver, operation):
+        (self.sysfs/'bus/pci/drivers'/driver/operation).write_text(self.bdf+'\n')
+
+    def restore(self, record, run):
+        # A crash between clearing the override and binding Linux resumes here.
+        driver = self.inspect(record)
+        require(driver in (None, self.driver), 'Unexpected driver during Linux restoration.')
+        record['phase'] = 'restoring'
+        self.save(record)
+        self.inspect(record)
+        if override(self.device) != record['prior_override']:
+            (self.device/'driver_override').write_text(record['prior_override']+'\n')
+        if self.inspect(record) is None:
+            self.driver_write(self.driver, 'bind')
+        driver, current, names = self.observe()
+        require(driver == self.driver and current == record['prior_override'], 'Linux PCI restore failed.')
+        name = self.linux_interface(names, restoring=True)
+        run(['ip', 'link', 'set', 'dev', name, 'down'], check=True, timeout=15)
+        record['phase'] = 'restored'
+        self.save(record)
+        raise ReleaseError('VFIO binding failed. Restored the Linux driver and lowered its link.')
+
+    def bind(self, run):
+        record = self.record()
+        driver = self.inspect(record)
+        if driver == 'vfio-pci':
+            if record and record['phase'] != 'bound':
+                record['phase'] = 'bound'
+                self.save(record)
+            return
+        if record and record['phase'] == 'restoring':
+            self.restore(record, run)
+        if driver == self.driver:
+            if not record or record['phase'] == 'restored':
+                record = {'identity': self.identity, 'observed_at': timestamp(),
+                          'prior_override': override(self.device), 'phase': 'prepared', 'attempts': 0}
+                self.save(record)
+            require(self.inspect(record) == self.driver, 'PCI ownership changed before link setup.')
+            run(['ip', 'link', 'set', 'dev', self.interface, 'down'], check=True, timeout=15)
+            try:
+                run(['modprobe', 'vfio-pci'], check=True, timeout=15)
+            except (OSError, subprocess.SubprocessError):
+                self.restore(record, run)
+            require(self.inspect(record) == self.driver, 'PCI ownership changed before detachment.')
+            record['phase'] = 'pending'
+            self.save(record)
+            require(self.inspect(record) == self.driver, 'PCI ownership changed before override.')
+            try:
+                (self.device/'driver_override').write_text('vfio-pci\n')
+                require(self.inspect(record) == self.driver and override(self.device) == 'vfio-pci',
+                        'PCI ownership changed before detachment.')
+                self.driver_write(self.driver, 'unbind')
+            except OSError:
+                if self.inspect(record) == self.driver:
+                    self.restore(record, run)
+        while record['attempts'] < 2:
+            driver = self.inspect(record)
+            if driver == 'vfio-pci':
+                break
+            require(driver is None, 'PCI function was not detached.')
+            record['attempts'] += 1
+            self.save(record)
+            driver = self.inspect(record)
+            if driver == 'vfio-pci':
+                break
+            require(driver is None, 'PCI driver changed before binding VFIO.')
+            try:
+                self.driver_write('vfio-pci', 'bind')
+            except OSError:
+                pass  # The driver link, isolation and override determine the actual outcome.
+        if self.inspect(record) != 'vfio-pci':
+            self.restore(record, run)
+        record['phase'] = 'bound'
+        self.save(record)
+
+
+def bind_owned(manifest, *, sysfs=Path('/sys'), state=STATE, run=subprocess.run):
+    ownership = check_ownership_manifest(manifest)
+    ownership_memory(ownership, sysfs=sysfs)
+    digest = hashlib.sha256(canonical(manifest)).hexdigest()
+    with binding_lock(state):
+        reservations = [Reservation(item, digest, state, sysfs) for item in ownership['bindings']]
+        for reservation in reservations:
+            reservation.inspect(reservation.record())
+        for reservation in reservations:
+            reservation.bind(run)
+        ownership_status(manifest, sysfs=sysfs)
+
+
+def bind_device(bdf, group, interface, mac, driver, *, sysfs=Path('/sys'), state=STATE, run=subprocess.run):
+    item = {'pci': bdf, 'iommu_group': str(group), 'name': interface, 'mac': mac, 'driver': driver}
+    digest = hashlib.sha256(canonical(item)).hexdigest()
+    with binding_lock(state):
+        Reservation(item, digest, state, sysfs).bind(run)
 
 
 def network_status(value, *, sysfs=Path('/sys'), run=subprocess.run):
@@ -156,7 +357,7 @@ def main(arguments=None):
     verify = commands.add_parser('verify')
     verify.add_argument('--bdf', required=True)
     verify.add_argument('--group', required=True)
-    commands.add_parser('status')
+    commands.add_parser('status').add_argument('--details', action='store_true')
     commands.add_parser('bind-owned')
     args = parser.parse_args(arguments)
     try:
@@ -168,12 +369,22 @@ def main(arguments=None):
             if args.command == 'bind-owned':
                 bind_owned(json.loads(read(Path('/usr/share/lanrith/ownership.json'), 1024*1024)))
             else:
-                network_status(json.loads(read(Path('/usr/share/lanrith/hardware.json'), 1024*1024)))
+                value = json.loads(read(Path('/usr/share/lanrith/hardware.json'), 1024*1024))
                 path = Path('/usr/share/lanrith/ownership.json')
-                if path.exists():
-                    ownership_status(json.loads(read(path, 1024*1024)))
+                manifest = json.loads(read(path, 1024*1024)) if path.exists() else None
+                if args.details:
+                    from .hardware_diagnostics import collect
+                    print(json.dumps(collect(value, manifest), sort_keys=True))
+                network_status(value)
+                if manifest is not None:
+                    ownership_status(manifest)
+                if args.details:
+                    return 0
         print('Declared router hardware verified.')
-    except (ReleaseError, OSError, ValueError, subprocess.SubprocessError):
+    except ReleaseError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    except (OSError, ValueError, subprocess.SubprocessError):
         print('Declared router hardware verification failed.', file=sys.stderr)
         return 1
     return 0

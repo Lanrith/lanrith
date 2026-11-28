@@ -140,9 +140,15 @@ class CredentialProtocolTests(unittest.TestCase):
                         self.assertFalse((tree/'etc/systemd/system'/(ordinary+'.d')/'50-lanrith-credentials.conf').exists())
                     self.assertIn('lanrith-dns-state.service', manifest['units'])
                     self.assertIn('lanrith-policy-helper-requests.socket', manifest['units'])
-                    for unit in manifest['units']:
-                        self.assertIn('Requires=lanrith-credential-ready.service',
-                            (tree/'etc/systemd/system'/(unit+'.d')/'50-lanrith-credentials.conf').read_text())
+                    from lanrith.credential_values import STARTUP_UNITS
+                    for kind, readers in STARTUP_UNITS.items():
+                        for unit in readers:
+                            self.assertIn('Requires=lanrith-credential-'+kind+'.service',
+                                (tree/'etc/systemd/system'/(unit+'.d')/'50-lanrith-credentials.conf').read_text())
+                    for independent in ('lanrith-policy-bootstrap.service', 'lanrith-policy-bindings.service',
+                                        'lanrith-policy-helper.service', 'lanrith-policy-helper-status.socket',
+                                        'lanrith-policy-helper-requests.socket'):
+                        self.assertFalse((tree/'etc/systemd/system'/(independent+'.d')/'50-lanrith-credentials.conf').exists())
                     self.assertNotIn('lanrith-credential-ready', (units/'lanrith-image-completion.service').read_text())
 
 
@@ -297,7 +303,8 @@ class CredentialExecutionTests(unittest.TestCase):
             pass
 
     def test_unadmitted_credentials_fail_health_before_any_other_boot_action(self):
-        with patch.object(runtime, 'installed', return_value=self.value), \
+        with patch.object(runtime, 'BOOT_OBSERVATION', self.root/'boot.json'), \
+                patch.object(runtime, 'installed', return_value=self.value), \
                 patch.object(operation, 'ready', return_value=False), patch.object(runtime.factory, 'initialize') as init, \
                 self.assertRaisesRegex(ReleaseError, 'credentials'):
             runtime.health()

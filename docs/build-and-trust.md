@@ -197,6 +197,24 @@ Changed, missing or substituted companion files invalidate the request before
 signing. Independent private evidence checks them again. The signing snapshot
 contains these build inputs; the deployed root and initrd do not.
 
+After accepting a private NAT64 release, mount its verified, read-only root and
+advance the owner's private allocation file. Run this command in the platform
+checkout, using the same history file for each release of this image and pool.
+
+```sh
+python3 -m lanrith.translation_history --accepted-root /mnt/accepted --history /private/owner/translation-allocations.json
+```
+
+Review and retain this file with the next build inputs. If a preparation script
+regenerates the build directory, copy the latest reviewed file into it. The file
+records the accepted image and machine IDs, deployment sequence, configuration
+digest, pool and all reserved aliases. The first handover can extend the original migration map. If the
+owner has never had a map, add `--initialize` on the first run. Later
+handovers must preserve every binding. Keep the newest file across a boot
+rollback and use it when building a new release from older configuration.
+The build calculates callback eligibility from that configuration and the
+current grants. A pool migration needs its own reviewed allocation history.
+
 The shared snapshot helper opens each source through directory handles and
 rejects file or parent symlinks, hard links, changed modes and changed bytes.
 It copies only the admitted file sizes, preserves reviewed modes, and removes

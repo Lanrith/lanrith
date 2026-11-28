@@ -62,7 +62,7 @@ def main(arguments=None):
                              help='Private JSON snapshot of verified target hardware')
         command.add_argument('--hardware-facts-sha256', help='Reviewed SHA-256 of the hardware snapshot')
         command.add_argument('--translation-allocations', type=Path,
-                             help='Private strict JSON map of retained IPv6 to IPv4 source identities')
+                             help='Reviewed NAT64 reservation history or legacy IPv6 to IPv4 migration map')
         command.add_argument('--translation-allocations-sha256',
                              help='Reviewed SHA-256 of the retained source identity map')
     image.add_argument('--integration-lock', type=Path,
@@ -70,6 +70,8 @@ def main(arguments=None):
     recovery = commands.add_parser('build-recovery', parents=[image], add_help=False)
     recovery.add_argument('--recovery-disk-by-id', required=True)
     recovery.add_argument('--recovery-state-uuid')
+    recovery.add_argument('--firmware-transition', type=Path,
+                          help='Bind recovery to an approved destination PCR 7 and pre-maintenance state inventory')
     recovery.add_argument('--allow-slot-repair', action='store_true',
                           help='Admit confirmed OS slot repair using the bound signed release and offline state key')
     recovery.add_argument('--recovery-offline-inputs', type=Path,
@@ -134,6 +136,10 @@ def main(arguments=None):
                 release.require(args.initrd_base.name in selection['files'] and
                                 release.file_record(args.initrd_base)['sha256'] == selection['files'][args.initrd_base.name],
                                 'Selected initrd differs from admitted platform inputs.')
+            configuration = config.load(args.configuration)
+            if args.command == 'build-recovery':
+                from .recovery_console import require_build_terminal
+                require_build_terminal(configuration['hardware']['boot']['recovery_console'])
             integrations = {}
             if args.integration_lock:
                 pins = json.loads(release.read(args.integration_lock, 65536), object_pairs_hook=release.unique)
@@ -151,7 +157,7 @@ def main(arguments=None):
                         '-out',str(args.certificate)],check=True,capture_output=True)
                     args.key.chmod(0o600)
                 release.require(args.key is not None and args.certificate is not None, 'Signed image assembly requires owner authority.')
-                identity = build.assembly(config.load(args.configuration), args.base.resolve(), args.workspace.resolve(),
+                identity = build.assembly(configuration, args.base.resolve(), args.workspace.resolve(),
                                           version=args.version, sequence=args.sequence,
                                           certificate=args.certificate.resolve(), private_key=args.key, integrations=integrations,
                                           serial_hash=args.serial_passphrase_hash, initrd_base=args.initrd_base.resolve(),
@@ -171,9 +177,11 @@ def main(arguments=None):
                     release.require(not args.allow_slot_repair or args.recovery_offline_inputs and args.recovery_state_uuid,
                                     'Slot repair requires bound offline release inputs and the encrypted state UUID.')
                     operations = (['repair'] if args.allow_slot_repair else []) + (['backup', 'restore'] if args.recovery_offline_backup else [])
+                    if args.firmware_transition:
+                        operations.append('reenroll-tpm')
                     recovery_policy = recovery_build.prepare(args.workspace.resolve(), disk_by_id=args.recovery_disk_by_id,
                         credential=args.recovery_passphrase_hash.resolve(), state_uuid=args.recovery_state_uuid,
-                        offline_inputs=binding(args.recovery_offline_inputs),
+                        transition=binding(args.firmware_transition), offline_inputs=binding(args.recovery_offline_inputs),
                         offline_backup=binding(args.recovery_offline_backup),
                         operations=operations or None)
                     digest = hashlib.sha256(release.canonical({'configuration_sha256': identity['configuration_sha256'],

@@ -48,6 +48,49 @@ omits the socket, hook and post-start check. The socket remains administrative I
 Kea's service account; ordinary users and observation-only consumers must not
 receive access to it. Lease observations alone grant no forwarding permission.
 
+## Link readiness and IPv6 client routes
+
+Network-online waits for the configured address families on host-managed LANs.
+Set `uplink.required_for_online: true` when boot requires addresses on the WAN.
+The default permits the LAN to start with the WAN unplugged. An untagged,
+IPv4-only interface with `role: management` keeps its static address without
+carrier. IPv6 management retains duplicate-address detection.
+
+`uplink.ipv6: ra` selects SLAAC. The router accepts prefix information and
+upstream routes and ignores DHCPv6 Managed and Other Configuration flags.
+
+A LAN with a global gateway prefix inside a fixed, routed `uplink.downstream_prefix`
+advertises a default IPv6 route. Other LANs default to `ipv6_delivery: local`.
+A local LAN advertises its SLAAC prefixes, specific routes to internal networks,
+and routes to its selected DNS and NTP services. Its default-router lifetime is
+zero. Clients that use the advertised off-link routes need RFC 4191 support.
+
+Set `networks.<name>.ipv6_delivery: routed` when the upstream routes that LAN's
+assigned subnet to the router. With `uplink.delivery: on_link`, install a more
+specific upstream route for each routed LAN before selecting this option.
+Verify the upstream route lookup and return traffic for a fresh client address.
+For on-link delivery, networkd installs a proxy NDP entry for each selected
+service address whenever the WAN appears. These addresses belong to the router
+while that link is configured, including when a local service is stopped.
+
+Use `networks.<name>.ipv6_upstream_routes` for specific unicast destinations
+reachable through a private upstream. It takes a list of IPv6 prefixes, for
+example `[fd12:3456:7890::/64]`. The upstream must route the client's source
+prefix back to the router. The local scope permits native IPv6 WAN forwarding
+only to these destinations and declared IPv6 `uplink.private_services`.
+In routed scope, sources from the LAN's provider allocation can also reach
+the public Internet. The ordered access policy still applies in both cases.
+
+On an RA-enabled LAN, set `pref64: nat64` or `pref64: nat64-internal` to
+advertise the enabled translator's prefix. The compiler checks for an applicable
+IPv6 access grant, including a deliberately restricted one. Every client on
+that LAN can see the prefix. The access rule still controls destinations,
+ports and identities. Omit `pref64` to leave the option out. Existing profiles
+that relied on automatic PREF64 need this selection on each eligible LAN.
+Networkd advertises a lifetime of 1,800 seconds while the translator unit is
+active. When the unit stops, the router removes the option from subsequent
+advertisements. Clients can retain an earlier advertisement until it expires.
+
 ## Access rules
 
 Image builds use the TUN policy backend by default. The compiler emits immutable
@@ -180,6 +223,104 @@ traffic does not gain arbitrary egress. SSH, DNS, DHCP and NTP service units bin
 to successful nftables activation. Replacing a complete firewall through an
 admitted integration also requires qualification of these boundaries.
 
+Host processes reach the managed DNS endpoint over the service veth. Chrony
+uses the resolver on loopback inside their shared namespace. Public DNS uses
+direct recursion by default. Set `services.dns.upstreams` to numeric addresses
+for plain forwarding, or select authenticated DNS over TLS under `services.dns`.
+
+```yaml
+services:
+  dns:
+    tls_forwarding:
+      trust: system
+      upstreams:
+        - address: 192.0.2.53
+          authentication_name: resolver.example.net
+```
+
+Supply the address of a reachable forwarder on TCP port 853. Its certificate
+must cover the declared name and chain to the image's system CA bundle.
+If every forwarder fails verification, the resolver returns SERVFAIL. Private
+zones retain their own handlers.
+For private DNS64, `services.dns.private_dns64_startup` defaults to `required`.
+Choose `independent` to start public DNS after a failed private service start.
+The private service still participates in boot health checks. Enabling
+NAT64 with discovery also starts this resolver when BIND is disabled.
+Discovery lookups use an eight-second TCP deadline at the child authority and
+a thirty-second outer deadline across the DNS64 chain.
+
+Ordinary DNS clients query Unbound. Add an attachment and source address to
+`services.dns.authoritative.direct_readers` for each client that needs to query
+the primary directly. Configured publishers can query from their declared sources.
+A writer needs a TSIG credential and explicit grants. When upgrading an existing
+writer, list the record types and names its publisher maintains.
+
+```yaml
+direct_readers:
+  - {network: home, addresses: 192.168.10.23}
+writers:
+  inventory:
+    zone: example.test
+    sources: {network: home, addresses: 192.168.10.20}
+    key_name: inventory-key
+    credential: inventory_tsig
+    zone_transfer: true
+    grants:
+      - {subtree: apps, types: [A, AAAA, CNAME, SRV, TXT]}
+      - {name: status, types: [TXT]}
+```
+
+Names are relative to the writer's zone. A subtree includes its root. Use
+`subtree: '@'` to grant the listed types throughout the zone. The source and
+signing key must belong to the same writer. Zone transfers require
+`zone_transfer: true`. Set `grants: []` for a transfer-only client.
+
+To delegate discovery views, add `discovery_delegation` to the immutable
+authoritative zone matching `services.discovery.domain`. For example,
+`discovery_delegation: {views: [home, devices], publish_browse: true}` creates
+child NS records, addresses for the discovery nameserver, and DNS-SD browse
+PTRs for those views. Readers can discover the default view when it appears
+in this list. Omit `publish_browse` to publish only referrals and nameserver
+addresses. To admit an independent resolver, declare its source in both
+`services.dns.authoritative.direct_readers` and `services.discovery.direct_readers`,
+for example `[{network: home, addresses: 192.168.10.23}]`. A child reader can
+query all configured discovery views. With the lists omitted, ordinary clients
+use the managed recursive resolver. Choose a forward domain outside `local.` and
+`arpa.` and map each DNS view to a distinct collected link.
+
+A persistent authoritative zone starts from its image seed. To keep a particular
+RRset under release management after first boot, declare it under
+`services.dns.authoritative.zones.<zone>.managed_rrsets`. This zone fragment
+adds a service IPv6 address and changes an existing IPv4 address.
+
+```yaml
+persistent: true
+records:
+  status: {AAAA: '2001:db8::53'}
+  relay: {A: 192.0.2.22}
+managed_rrsets:
+  status: {AAAA: {previous: []}}
+  relay: {A: {previous: [192.0.2.20]}}
+```
+
+`previous` lists every value in the expected old RRset. An empty list requires
+the set to be absent. To withdraw a record, remove it from the seed and keep
+its old values under `managed_rrsets` with `remove: true`. A, AAAA and CNAME
+are supported, including addresses that the compiler generates for services.
+
+At startup a private BIND instance replays the zone journal and applies all
+pending changes for that zone in one DNS UPDATE. If the current data matches
+neither the desired set nor its prerequisite, named stays stopped and the boot
+health check fails. Assign each managed set with its publisher before upgrading.
+Publishers lose write access to each selected address type and to CNAME at
+that name. A managed CNAME reserves the whole name. Other seed entries continue
+to serve as first-boot defaults.
+
+Both image slots share the zone and journal. Check fallback against the
+post-upgrade records. An older slot with a managed declaration needs a matching
+reverse transition to restore the previous value. If only the journal survives a
+restore, recover the matching base zone before starting named.
+
 The built-in compiler covers DNS, DHCP, NTP, controlled discovery, bounded BGP,
 RADIUS MAC admission, directory policy, NAT64, NAT46, IDS, metrics, log delivery,
 SNMP and VPP ownership. It derives listener, peer, namespace, translation and
@@ -187,6 +328,50 @@ return rules from typed component settings while preserving ordered owner denies
 through native and translated paths. Enabling a package or component grants no
 trust to a cluster, directory or backend. Temporary broad permissions remain
 explicit owner rules.
+
+The system journal stores logs on encrypted `/var`. At boot the flush unit
+writes a marker through `/dev/log`, then reads it from the persistent machine
+journal and checks journald's reported storage limits. If the unit fails,
+inspect `journalctl -b -u systemd-journal-flush.service`. After repairing the
+destination, restart the unit to retry the flush before rebooting.
+
+Use `observability.journal.system_keep_free_mib: 8192` to reserve 8 GiB
+against journal growth. Omit the field to use journald's filesystem-based
+reserve. `system_max_use_mib` sets the journal cap in MiB and defaults to
+1024. It accepts values from 128 through the configured state partition
+size. Other services can consume space inside the reserve. The updater checks
+its own working space when it admits an image.
+
+For local syslog delivery, set `observability.journal.syslog_receiver_unit`
+to the name of a socket-activated service installed under
+`/usr/lib/systemd/system/` by the base or a selected integration. The service
+must consume the datagram descriptor from
+`syslog.socket`. Without a declaration journald accepts `/dev/log` input and
+disables local syslog forwarding. Alloy reads the journal independently.
+
+Set `observability.ids.enabled` to observe the WAN with two signed packet
+signatures. SID 1000001 reports an incoming TCP SYN to port 22. SID 1000002
+reports an incoming ICMPv6 echo request. Each signature emits up to six
+observations per minute across all senders. The destination group uses declared
+attached and managed service subnets, routed client prefixes and static
+addresses on the router's WAN. The provider gateway counts as external. An
+address learned dynamically on the WAN can fall outside these groups. WAN
+observations alone cannot identify a client behind source NAT or establish an
+SSH authentication outcome.
+
+The sensor writes local EVE to `/var/log/suricata/eve.json`. To forward the
+SID, event time and WAN interface to the configured log destination, set
+`observability.ids.forward_alerts: true` with log delivery enabled. The
+observer projects these fields before Alloy queues the message. With metrics
+enabled, the host collector also receives aggregate capture-health counters.
+
+With discovery enabled, the collector can browse Avahi records, the publisher can
+create and withdraw them, and root can query the daemon state. To grant another
+installed Unix account access, set `services.discovery.local_clients` to a map
+from account name to `status`, `browse` or `publish`. For example,
+`local_clients: {admin: status}` allows the administrator to call `GetState`.
+A publish grant lets that account register records directly on Avahi's selected
+links. Membership in `netdev` alone grants no Avahi methods.
 
 Directory policy generates host egress for the policy reader's UID, exact
 server addresses, TCP port, interface and assigned router sources. Targets need
@@ -229,13 +414,60 @@ With metrics enabled, a separate credential-free identity observes verified
 directory TLS. Its results describe transport health; authenticated collection
 and fresh grants have separate requirements. See [router health metrics](metrics.md).
 
-When authenticated log delivery is enabled, Lanrith also emits a one-minute
-heartbeat containing the accepted boot ID, selected entry, release sequence and
-effective configuration digest. The timer is part of boot health and the event
-uses the same redacted, TLS-authenticated, bounded Alloy queue as the journal.
-The remote collector must alert on a missing or stale heartbeat and retain the
-event outside the router. This is a liveness signal, not remote attestation: an
-attacker with unrestricted root can forge local events.
+The policy helper requires a synchronized kernel clock at startup and after a
+link replacement. If this image supplies clock synchronization, configure trusted
+upstreams in `services.ntp`. Without a synchronized clock the helper withholds
+grants. Test clock recovery alongside restoration of the policy interfaces.
+
+Enabling log delivery installs a one-minute heartbeat timer. After promotion, a
+dedicated unprivileged writer emits the accepted boot ID, selected EFI entry,
+release identity, configuration digest, monotonic tick and original UTC time
+in nanoseconds. Alloy sends it through the same bounded TLS queue as the
+journal. Retain the receiver records outside the router and check them against
+the accepted boot. A privileged router process can forge local events.
+[Receiver alarm and qualification](qualification.md)
+
+### Local time service
+
+Omitting `services.ntp` disables chrony and the DHCP NTP option. To enable time
+service, list the upstreams your site trusts. A string selects a pool with
+chrony's default target of four responding members for a name. A numeric
+address identifies one peer. The addresses and names below are examples.
+
+```yaml
+services:
+  ntp:
+    enabled: true
+    upstreams:
+      - {type: server, address: 192.0.2.123}
+      - {type: pool, address: time.example.test, family: ipv6, maxsources: 2}
+    total_sources: 3
+    require_numeric_source: true
+    ratelimit: {interval: 3, burst: 8, leak: 2}
+```
+
+`family` accepts `ipv4` or `ipv6`. A pool's `maxsources` target ranges from 1
+to 16. Optional `total_sources` checks the sum of the targets. A pool may try
+more candidates while finding responders. Distinct names can resolve to the same
+peer. Check actual diversity and reachability with `chronyc -n sources`.
+
+Use `require_numeric_source` when a cold router must acquire time even if DNSSEC
+rejects upstream names because its clock is stale. Choose a maintained, reachable
+address whose time you trust. Directory grants need synchronized kernel time.
+Declare the local NTP service for that deployment, or explicitly set
+`services.ntp.enabled: false` when another mechanism disciplines the clock.
+
+On LANs with NTP access and DHCPv4, Kea advertises the local listener in
+option 42. Client-selected destinations follow ordinary forwarding policy. **Before upgrading a LAN that
+enforces local time**, set `networks.<name>.ntp_intercept: true` to retain its
+UDP/123 redirection. A redirected client cannot authenticate an NTS response
+for its original external server.
+
+The optional `ratelimit` applies per apparent client IP. The example permits
+a burst of eight replies with an average interval of eight seconds and a
+one-in-four chance of replying beyond the limit. Clients behind a single NAT
+address share that budget. Omitting the setting leaves chrony's response
+limiting disabled.
 
 ## Hardware and optional integrations
 
@@ -243,6 +475,14 @@ See [router health metrics](metrics.md) for collector units, metric names,
 query and inventory bounds, and source-admission behavior.
 
 Defaults allocate a 1 GiB ESP, two 4 GiB root slots and 64 GiB encrypted state.
+On the installed router, `hardware.storage.initialization_timeout_seconds`
+bounds the host slot and encrypted-state check. The default is 120 seconds.
+Set a value from 1 to 3600 seconds using cold-start measurements from the
+target storage. The initrd factory and recovery enrollment have separate
+deadlines. The host check journals any busy or undersized standby roles.
+Root can read the most recent storage observation in
+`/run/lanrith/slot-health.json`.
+
 Surplus storage stays unallocated. Factory installation requires an eligible
 512-byte logical-sector disk and explicit destructive confirmation. TPM is
 required by default. A profile without TPM uses an operator-entered encryption
@@ -250,6 +490,15 @@ passphrase; it is never embedded in an image. Record the separate recovery key
 offline before boot acceptance. Serial login is disabled unless enabled with a
 private provisioning hash and a selected console. Kernel and journal output
 must not disclose secrets on that console.
+
+For a shared serial port, set `administration.serial.cooldown` to a mapping
+with `attempts` (2–10) and `seconds` (1–300). For example, three attempts
+and 30 seconds block serial passphrase checks for 30 seconds after the third
+consecutive rejection. Each counted rejection starts a fresh interval. A
+successful check or an interval without another counted rejection clears the
+count. Attempts during the cooldown leave the deadline in place. The count
+survives getty restarts and clears on reboot. The default omits this cooldown.
+Authorized SSH agent elevation remains available during a serial cooldown.
 
 Factory prompts are available on the monitor and the serial ports selected by
 `hardware.boot.console`, `hardware.boot.recovery_console`, or enabled
@@ -275,6 +524,41 @@ unprivileged operator can still upload an image and trigger the fixed update
 service. A separately provisioned fixed-command recovery menu remains available
 through `--recovery-passphrase-hash`; it grants no shell access. See
 [boot recovery](recovery.md) for PCR signing and recovery build inputs.
+
+SSH binds the gateway addresses of the selected host management networks on
+`administration.ssh_port` (default 22). If a link comes up late, SSH starts
+on the available addresses and reloads as the others arrive. Boot readiness
+requires every declared address and its listening socket. Inspect
+`journalctl -u ssh.service -u lanrith-ssh-listeners.service` for pending
+addresses and reloads.
+
+To keep agent-backed sudo and close the other SSH forwarding channels, add
+these mappings under `administration`.
+
+```yaml
+ssh_forwarding:
+  agent: true
+  tcp: false
+  unix: false
+  x11: false
+ssh_limits:
+  max_auth_tries: 3
+  login_grace_seconds: 30
+  client_alive_interval_seconds: 300
+  client_alive_count_max: 3
+```
+
+Each forwarding choice is optional. Omitted channels follow Debian’s SSH
+configuration, which enables all four. Rootless images disable agent forwarding
+and reject `agent: true`. Setting `agent: false` on a root-enabled image
+removes the forwarded agent needed for sudo over SSH.
+
+Debian defaults to six authentication attempts and a 120-second login grace
+period. The default probe interval is zero and the default count is three.
+Specify whole seconds for the two time settings. A zero grace period removes
+the authentication deadline. A zero interval disables probes, and a zero count
+keeps unresponsive sessions open. The attempt limit must be at least one.
+All four settings accept integers up to 2147483647.
 
 Hardware watchdog defaults are `mode: auto`, `device: /dev/watchdog0` and
 `timeout_seconds: 60`. Root and initrd use the same systemd watchdog policy.
@@ -514,6 +798,15 @@ budget in 2 MiB pages. No OOB port, separate LAN port, NIC model or fixed
 hugepage count is required. Keep the associated units disabled until
 that integration's configuration and hardware have been qualified.
 
+Run `/usr/lib/lanrith/router-network-status --details` as root to print a
+timestamped JSON sample. It includes Linux port drivers and MTUs, the configured
+hugepage size and its persistent, free and reserved page counts. For a dormant
+reservation it also shows the PCI driver, IOMMU members, netdevs and any Linux
+identity observed before binding during this boot. A null field means unknown.
+The VFIO descriptor sample lists visible PIDs holding the selected group or
+device character node. An incomplete scan is marked unknown. A descriptor
+observation alone cannot establish exclusive DMA access.
+
 Extensions are executable runtime code and policy supplied by the owner. Review
 all bytes and qualify the resulting network behavior, disabled combinations,
 state migration and withdrawal behavior. Adding a package to an owner image
@@ -526,15 +819,33 @@ The default is `/var/lib/lanrith/ssh-host-keys`; an owner migrating existing sta
 can select its existing root-owned directory. Every parent must be root-owned
 and protected from writes by other users. An update keeps an existing key.
 
-`administration.host_key_rotation` defaults to `retain`. After a root-compromise
-recovery, set it to a freshly generated 128-bit lowercase hexadecimal value in
-the signed build input. On the first boot of that generation, Lanrith atomically
-replaces the persistent Ed25519 host key before SSH starts and records the
-generation only after the new key and public key are durable. Reusing a value is
-not a new rotation. The generation is not a secret, but it must be unpredictable
-to persistent state prepared before the recovery image is isolated and built.
-Clients must receive and verify the new fingerprint through an independent
-channel.
+`administration.host_key_rotation` defaults to `retain`. A new appliance
+generates one Ed25519 key on empty state. If a public key or provisioning
+record survives without the private key, SSH waits for recovery. Restore the
+device's private key from its encrypted backup and compare the served
+fingerprint with the device record held outside the router. An intact pair
+starts on full state. A missing or stale public half is repaired from the
+private key when space is available.
+
+To rotate after recovery, set `host_key_rotation` in the signed build input to a
+fresh, unpredictable 32-digit lowercase hexadecimal generation. First install
+and accept a release with the transactional host-key reader and `retain` on the
+same state directory. Image admission checks that the fallback can read the new
+format. On the rotation release the helper stages one private candidate,
+commits its fingerprint and generation, and removes the staged copy. If power
+fails during this operation, boot the image authorizing the pending generation
+to finish it. Once committed, the fallback can serve the new identity. Verify
+and distribute its SHA256 fingerprint through an independent channel.
+
+For restore verification, set `administration.host_key_pin` in the signed image
+to a mapping with `generation` and `fingerprint`. Use the 32-digit generation
+(or `retain` for a never-rotated key) and the OpenSSH `SHA256:...` fingerprint
+from the device's independent record. The helper checks the private key before
+adopting a historical generation-only marker. A wrong or missing private key
+blocks SSH. An unpinned image can accept a consistent older snapshot of all
+state. Keep the current generation and fingerprint outside the backup, and
+use the pin when restoring. A fallback pinned to a different identity cannot
+accompany a new rotation.
 
 Extensions cannot overwrite base package binaries. Existing service configuration
 files need an explicit admitted `replaces` entry. Selected health requirements
@@ -581,15 +892,65 @@ both fields selects Basic authentication; `authentication: basic` can make that
 choice explicit. A partial pair or credentials combined with `none` is rejected,
 so a missing password cannot silently turn authentication off.
 
-RADIUS MAC admission currently uses a UDP proxy backend. Each NAS client and
-upstream proxy may specify `transport: udp` (the default); this protocol requires
-a matching shared secret. These are not per-device passwords. Other transports
-are rejected at build time rather than assigned an empty or invented secret.
-`admission: {network: devices}` uses the upstream server's admission decision
-without a directory bind. Add `directory` and `group_dn` only when integrating
-with Lanrith's directory policy; that integration requires its matching enabled
-policy and bind credential. Every accepted reply remains limited to the declared
-admission VLAN. Local RADIUS authentication and RADIUS/TLS are not implemented.
+RADIUS MAC admission uses a UDP proxy. Set each NAS client and proxy to
+`transport: udp`, or omit the field for its default. Give each endpoint its
+shared-secret reference. These credentials authenticate the endpoints. The
+backend supports proxy authentication over UDP only. With
+`admission: {network: devices}`, the router accepts the upstream decision for
+the declared VLAN.
+
+For directory admission, select `directory`, `group_dn` and `network`.
+The directory policy reader uses its own bind credential. FreeRADIUS uses the
+provider's authenticated reply. Set `admission.provider_policy` to the logical
+provider name (`provider`), the SHA-256 of the active provider policy
+(`revision`), and its independently trusted export digest (`binding_sha256`).
+The release checks these fields during configuration validation.
+
+Obtain the export from the provider administrator's authenticated readback of
+the effective group policy and response mapping. Export a group DN only when
+membership is required on every path that can grant the VLAN. The provider
+administrator should verify this with both a member and a nonmember. The
+following JSON illustrates the export fields. Substitute the active revision.
+
+```json
+{
+  "schema": 1,
+  "provider": "inventory-admission",
+  "revision": "<64 lowercase hex digits>",
+  "endpoint": "10.20.10.32",
+  "directory": "inventory",
+  "directory_url": "ldaps://directory.site.example.test:636",
+  "directory_base_dn": "dc=example,dc=test",
+  "group_dn": "cn=devices,ou=groups,dc=example,dc=test",
+  "vlan": 20
+}
+```
+
+`endpoint` is the canonical IP of the RADIUS provider. The directory name,
+URL and DNs use the strings in the release. Hash the **provider export**
+using `hashlib.sha256(lanrith.release.canonical(export)).hexdigest()`. This
+encoding sorts JSON keys, uses ASCII escapes and compact separators, and ends
+with one newline. Pin the digest through the release owner's trusted channel.
+Requalify the active provider revision and its member and nonmember decisions
+when changing the group, upstream or VLAN. Keep the provider revision in sync
+with every router slot that might run during rollout or rollback.
+
+For wired fallback, `fallback.clients` selects individual wired NAS addresses
+and ports. Set `provider_response_seconds` to the qualified upper bound on
+ordinary RADIUS responses, rounded up to 1–26 seconds. Set `nas_retry_seconds`
+to the shortest first retry or give-up interval among those clients, in whole
+seconds rounded down. The deadline must allow three seconds beyond the
+provider bound, up to 120 seconds total. The proxy gives the provider one
+second of headroom and leaves at least two seconds for local handling and
+delivery before the NAS retries. Measure these values with the actual NAS
+and provider under expected load.
+
+An unanswered request may use the last live approval for that MAC, NAS and
+port. The in-memory cache holds at most 256 entries for five minutes each.
+A wired fallback lookup preserves the original expiry. An authenticated reject,
+a challenge, or a live approval with incompatible VLAN attributes removes the
+entry.
+Restarting FreeRADIUS starts with an empty cache.
 
 Paths must be absolute and canonical. Files must have mode `0400` or `0600`
 and belong to the build user. Assembly rejects missing, linked or malformed

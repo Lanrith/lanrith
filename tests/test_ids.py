@@ -45,7 +45,7 @@ class IDSTests(unittest.TestCase):
             overlay = root/'enabled/mkosi.extra'
             self.assertIn('lanrith-ids.service',
                           (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
-            self.assertTrue((overlay/'etc/systemd/system/lanrith-ids.service').is_symlink())
+            self.assertTrue((overlay/'usr/lib/systemd/system/multi-user.target.wants/lanrith-ids.service').is_symlink())
             value['observability']['ids']['enabled'] = False
             files = config.render(value)
             self.assertFalse(any('suricata' in name or 'lanrith-ids' in name for name in files))

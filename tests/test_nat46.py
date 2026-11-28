@@ -175,21 +175,63 @@ class Nat46Tests(unittest.TestCase):
 
     def test_failed_setup_removes_only_the_interface_it_created(self):
         manifest = json.loads(nat46.render(config.normalize(declaration()))['usr/share/lanrith/nat46.json'])
-        for present in (False, True):
-            calls = []
-            def command(*arguments, **unused):
-                calls.append(arguments)
-                if 'address' in arguments:
-                    raise OSError('Synthetic interrupted setup')
-                return []
-            with self.subTest(present=present), patch.object(translation_runtime, 'validate'), \
-                    patch.object(translation_runtime, 'existing', return_value=present), \
-                    patch.object(translation_runtime.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=61000)), \
-                    patch.object(translation_runtime, 'run', side_effect=command):
-                with self.assertRaises(OSError):
-                    translation_runtime.configure(manifest, 'start')
-            deleted = ('ip', 'link', 'delete', 'dev', 'nat46') in calls
-            self.assertEqual(deleted, not present)
+        for previous_index in (None, 17):
+            with self.subTest(previous_index=previous_index), \
+                    patch.object(translation_runtime, 'owned_route', return_value=False), \
+                    patch.object(translation_runtime, 'existing', return_value=17), \
+                    patch.object(translation_runtime, 'create_link', return_value=17), \
+                    patch.object(Path, 'read_text', return_value='1'), \
+                    patch.object(translation_runtime, 'address_state', side_effect=OSError('interrupted')), \
+                    patch.object(translation_runtime, 'delete_index') as delete:
+                with self.assertRaisesRegex(OSError, 'interrupted'):
+                    translation_runtime.setup(manifest, 61000, previous_index)
+            if previous_index is None:
+                delete.assert_called_once_with(17)
+            else:
+                delete.assert_not_called()
+
+    def test_effective_routes_include_every_mapping_on_its_client_and_server(self):
+        raw = declaration()
+        raw['networks']['home']['additional_subnets'] = ['192.0.2.0/28']
+        raw['networks']['servers']['routed_prefixes'] = ['198.18.12.7/32']
+        value = config.normalize(raw)
+        files = nat46.render(value)
+        manifest = json.loads(files['usr/share/lanrith/nat46.json'])
+        cases = set(translation_runtime.forwarding_cases(manifest))
+        self.assertEqual(manifest['route_contexts']['clients'],
+                         [['lan', '192.0.2.2'], ['lan', '192.168.10.2'], ['servers', '198.18.12.7']])
+        for entry in manifest['mappings'].values():
+            self.assertIn((entry['ipv4'], 'lan', '192.168.10.2', 'forward'), cases)
+            self.assertIn((entry['ipv4'], 'servers', '198.18.12.7', 'forward'), cases)
+            self.assertIn(('fd42:1234:5678:fd46::c612:c07', 'servers', entry['ipv6'], 'return'), cases)
+            self.assertIn(('fd42:1234:5678:fd46::c0a8:a02', 'servers', entry['ipv6'], 'return'), cases)
+        self.assertIn((manifest['ipv4'], None, None, 'local'), cases)
+        self.assertIn((manifest['ipv6'], None, None, 'local'), cases)
+        del manifest['route_contexts']
+        older = set(translation_runtime.forwarding_cases(manifest))
+        self.assertIn((entry['ipv4'], None, None, 'forward'), older)
+
+    def test_native_boundary_checks_declared_aliases_before_access(self):
+        raw = declaration()
+        maps = raw['translation']['nat46']['mappings']
+        maps['service2']['ipv4'] = '10.255.200.90'
+        policy = firewall.render(config.normalize(raw), access_backend='tun')
+        aliases = ', '.join(entry['ipv4'] for entry in maps.values())
+        boundary = policy.split(' chain tp_boundary {', 1)[1].split('\n }', 1)[0]
+        self.assertIn(f'oifname "nat46" ip daddr != {{ {aliases} }} drop', boundary)
+        forward = policy.split(' chain forward {', 1)[1].split('\n }', 1)[0]
+        self.assertLess(forward.index('jump tp_boundary'), forward.index('goto tp_fresh'))
+        self.assertLess(forward.index('jump tp_boundary'), forward.index('goto tp_access'))
+
+    def test_only_the_declared_direct_route_is_reused(self):
+        prefix = '10.255.200.0/24'
+        row = {'dst': prefix, 'dev': 'nat46', 'scope': 'link', 'flags': ['linkdown']}
+        self.assertTrue(translation_runtime.direct(row, prefix, 'nat46'))
+        for change in ({'dev': 'lan'}, {'type': 'blackhole'}, {'scope': 'host'},
+                       {'table': 'local'}, {'metric': 2}, {'protocol': 'bgp'},
+                       {'gateway': '192.0.2.1'}, {'nhid': 3}, {'nexthops': []}, {'encap': {}}):
+            with self.subTest(change=change):
+                self.assertFalse(translation_runtime.direct({**row, **change}, prefix, 'nat46'))
 
     def test_rule_names_are_not_part_of_enforcement(self):
         raw = declaration()
@@ -206,7 +248,7 @@ class Nat46Tests(unittest.TestCase):
             build.assembly(declaration(), base, root/'image', version='0.1.0', sequence=9)
             overlay = root/'image/mkosi.extra'
             service = 'lanrith-nat46.service'
-            self.assertEqual((overlay/'etc/systemd/system'/service).readlink(),
+            self.assertEqual((overlay/'usr/lib/systemd/system/multi-user.target.wants'/service).readlink(),
                              Path('/usr/lib/systemd/system')/service)
             self.assertIn(service, (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
             self.assertTrue((overlay/'usr/lib/lanrith/lanrith/translation_runtime.py').is_file())

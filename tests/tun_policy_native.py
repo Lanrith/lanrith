@@ -29,7 +29,7 @@ WAN = '93.184.216.2'
 FOUR = '10.240.40.2'
 
 
-def prepare(output):
+def prepare(output, *, owner_callback_port=None, configure=None, retained=None):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from lanrith import config, firewall, policy_agent, translation, tun_policy
     from test_intent import minimal
@@ -66,6 +66,9 @@ def prepare(output):
     for protocols, ports in ((['tcp', 'udp'], {'ports': [11111]}), ('icmp', {})):
         rules.append({'action': 'allow', 'from': {'network': 'four', 'addresses': FOUR},
                       'to': {'translation': 'nat46'}, 'protocol': protocols, 'authorization': 'owner', **ports})
+    if owner_callback_port is not None:
+        rules.append({'action': 'allow', 'from': 'servers', 'to': {'network': 'four', 'addresses': FOUR},
+                      'protocol': 'udp', 'ports': [owner_callback_port], 'authorization': 'owner'})
     for source, destination in (('any', {'network': 'six', 'addresses': SIX+'2'}),
                                 ('servers', {'network': 'four', 'addresses': FOUR})):
         # A later broader owner permit deliberately tests terminal directory
@@ -77,13 +80,16 @@ def prepare(output):
         {'mode': mode, 'from': {'network': 'servers', 'addresses': SERVERS+'14'},
          'to': {'network': 'six', 'addresses': SIX+'3'}}
         for mode in ('tcp_dsr', 'icmp_echo_reply')]}
+    if configure is not None:
+        configure(raw)
     value = config.normalize(raw)
     output.mkdir(mode=0o700)
     (output/'accounts.passwd').write_text('root:x:0:0:root:/root:/bin/sh\n'
         'nobody:x:65534:65534:nobody:/:/usr/sbin/nologin\n'
         'router-policy-reader:x:61000:61000:synthetic reader:/:/usr/sbin/nologin\n')
     (output/'connlabel.conf').write_text(policy_agent.render(value, access_backend='tun')['etc/xtables/connlabel.conf'])
-    retained = {SIX+'2': '10.250.0.200'}
+    if retained is None:
+        retained = {SIX+'2': '10.250.0.200'}
     (output/'policy.nft').write_text(firewall.render(value, access_backend='tun', retained_allocations=retained))
     (output/'identity-egress.nft').write_text(tun_policy.identity_egress(value))
     (output/'baseline.json').write_text(json.dumps(policy_agent.baseline(value, retained), sort_keys=True)+'\n')

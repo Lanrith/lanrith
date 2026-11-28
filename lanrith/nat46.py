@@ -277,17 +277,7 @@ def render(value):
         'etc/tayga-nat46.conf': manifest['text'],
         'usr/share/lanrith/nat46.json': canonical(manifest).decode(),
         'usr/lib/sysusers.d/80-lanrith-nat46.conf': 'u lanrith-nat46 - "Mapped translation" /\n',
-        'usr/lib/systemd/system/lanrith-nat46-network.service':
-            '[Unit]\nDescription=Configure mapped translation routes\n'
-            'Requires=nftables.service systemd-networkd.service\n'
-            'After=nftables.service systemd-networkd.service systemd-sysusers.service systemd-tmpfiles-setup.service\n'
-            'BindsTo=nftables.service\nBefore=lanrith-nat46.service\n'
-            '[Service]\nType=oneshot\nRemainAfterExit=yes\n'
-            'Environment=PYTHONPATH=/usr/lib/lanrith\n'
-            'ExecStart=/usr/bin/python3 -m lanrith.translation_runtime start\n'
-            'ExecStop=/usr/bin/python3 -m lanrith.translation_runtime stop\n'
-            'NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
-            'CapabilityBoundingSet=CAP_NET_ADMIN\nRestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET AF_INET6\n',
+        'usr/lib/systemd/system/lanrith-nat46-network.service': translation.network_unit('nat46'),
         'usr/lib/systemd/system/lanrith-nat46.service':
             '[Unit]\nDescription=Mapped IPv4 to IPv6 translation\n'
             f'Requires=lanrith-nat46-network.service nftables.service{policy_dependency}\n'

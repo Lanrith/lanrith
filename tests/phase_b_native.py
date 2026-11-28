@@ -82,6 +82,8 @@ while True:
 DHCP_CLIENT = '''
 import json,socket,struct,sys,time
 mode=sys.argv[1]
+gateway=sys.argv[2] if len(sys.argv)>2 else '192.168.10.1'
+addresses=set(sys.argv[3:]) if len(sys.argv)>3 else {'192.168.10.100','192.168.10.101','192.168.10.104','192.168.10.105'}
 s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET,socket.SO_BROADCAST,1)
 s.setsockopt(socket.SOL_SOCKET,socket.SO_BINDTODEVICE,b'eth0\\0')
@@ -125,18 +127,17 @@ if mode=='deny':
  assert exchange(1,1) is None
 else:
  result=[]
- for index in range(1,5):
+ for index in range(1,len(addresses)+1):
   offer=exchange(index,1);assert offer is not None
   address,options=offer;assert options[53]==bytes([2])
   answer=exchange(index,3,address,options[54]);assert answer is not None
   leased,options=answer;assert leased==address and options[53]==bytes([5])
-  expected={1:'255.255.255.0',3:'192.168.10.1',6:'10.255.254.10',42:'10.255.254.40'}
+  expected={1:'255.255.255.0',3:gateway,6:'10.255.254.10',42:'10.255.254.40'}
   for code,target in expected.items():assert options[code]==socket.inet_aton(target),(code,options)
   assert 0<struct.unpack('!I',options[51])[0]<=3600
   result.append(address)
- assert len(set(result))==4
- assert set(result)=={'192.168.10.100','192.168.10.101','192.168.10.104','192.168.10.105'}
- assert exchange(5,1) is None,'DHCP allocated outside its exhausted pools'
+ assert set(result)==addresses
+ assert exchange(len(addresses)+1,1) is None,'DHCP allocated outside its exhausted pools'
  print(json.dumps(result))
 '''
 
@@ -193,12 +194,15 @@ def main():
         run('ip', '-6', 'address', 'add', 'fd42:1234:5678:10::1/64', 'dev', 'lan', 'nodad')
         ns('lan-test', 'ip', '-6', 'address', 'add', 'fd42:1234:5678:10::2/64', 'dev', 'eth0', 'nodad')
         ns('lan-test', 'ip', '-6', 'route', 'add', 'default', 'via', 'fd42:1234:5678:10::1')
+        run('ip', '-4', 'route', 'add', 'default', 'via', '198.51.100.2', 'dev', 'wan')
         if args.gua:
             run('ip', '-6', 'address', 'add', '2001:db8:200:10::1/64', 'dev', 'lan', 'nodad')
             ns('lan-test', 'ip', '-6', 'address', 'add', '2001:db8:200:10::2/64', 'dev', 'eth0', 'nodad')
             run('ip', '-6', 'address', 'add', '2001:db8:200::2/48', 'dev', 'wan', 'nodad')
             ns('wan-test', 'ip', '-6', 'address', 'add', '2001:db8:200::1/48', 'dev', 'eth0', 'nodad')
             run('ip', '-6', 'route', 'add', 'default', 'via', '2001:db8:200::1', 'dev', 'wan')
+        # The isolated runner may be a fresh VM instead of a preconfigured container.
+        run('sysctl', '-qw', 'net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1')
         assert run('sysctl', '-n', 'net.ipv4.ip_forward').stdout.strip() == '1'
         assert run('sysctl', '-n', 'net.ipv6.conf.all.forwarding').stdout.strip() == '1'
         run('nft', '--check', '-f', str(root/'etc/nftables.conf'))
@@ -227,12 +231,11 @@ for path in pathlib.Path(sys.argv[1], 'lanrith').glob('*.py'):
 assert not any(name == 'yaml' or name.startswith('yaml.') for name in sys.modules)
 assert not any(name in sys.modules for name in ('lanrith.config', 'lanrith.intent', 'lanrith.build'))
 from lanrith import boot_health
-from unittest.mock import patch
-original = boot_health.command
-def command(args):
-    return 'active' if args[:2] == ['systemctl', 'is-active'] else original(args)
-with patch.object(boot_health, 'command', command):
-    boot_health.check(json.loads(pathlib.Path(sys.argv[2]).read_bytes()))
+# This preliminary stage has only built the interfaces. The systemd guest
+# exercises the complete acceptance decision with named, Unbound and Kea.
+plan = json.loads(pathlib.Path(sys.argv[2]).read_bytes())
+for interface in plan['interfaces']:
+    boot_health.check_interface(interface, lambda args, label: boot_health.command(args))
 """, str(compiled/'usr/lib/lanrith'), str(compiled/'usr/share/lanrith/health.json'))
             checks.append('installed boot runtime imports and inspects real gateways without source YAML or compiler')
 
@@ -322,7 +325,7 @@ assert len(response)>=48 and response[0]&7==4
 """
             for target in plane['endpoints']['ntp']:
                 ns('lan-test', 'python3', '-c', ntp_query, target)
-            checks.append('real Chrony serves all managed addresses through time redirection with clock control disabled')
+            checks.append('real Chrony serves its managed addresses with clock control disabled')
 
             # Acquire leases with an unconfigured client, then restart the daemon
             # against its original database and confirm leases and gaps survive.

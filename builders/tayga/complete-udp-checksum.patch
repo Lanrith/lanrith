@@ -1,0 +1,81 @@
+diff --git a/nat64.c b/nat64.c
+index 1d636f8..1a683da 100644
+--- a/nat64.c
++++ b/nat64.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "tayga.h"
++#include <inttypes.h>
+ 
+ /* Protocol headers */
+ struct ip6_data {
+@@ -277,6 +278,15 @@ static void xlate_header_4to6(struct pkt *p, struct ip6 *ip6,
+ 	ip6->hop_limit = p->ip4->ttl;
+ }
+ 
++static uint64_t incomplete_udp_drops;
++
++void log_incomplete_udp_drops(void)
++{
++	if (incomplete_udp_drops)
++		slog(LOG_NOTICE, "Incomplete IPv4 UDP checksum inputs dropped: %" PRIu64 "\n",
++		     incomplete_udp_drops);
++}
++
+ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
+ {
+ 	uint16_t *tck;
+@@ -318,12 +328,24 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
+ 			case UDP_CKSUM_FWD:
+ 				/* Ignore the lack of checksum and forward anyway */
+ 				return ERROR_NONE;
+-			case UDP_CKSUM_CALC:
+-				/* Calculate a real UDP checksum, now */
+-				*tck = ones_add(ip_checksum(p->data,p->data_len), /* Body */
+-								ip6_checksum(ip6,p->data_len,17));/* IP6 header */
++			case UDP_CKSUM_CALC: {
++				uint16_t len;
++				memcpy(&len, p->data + 4, sizeof(len));
++				len = ntohs(len);
++				if ((p->ip4->flags_offset & htons(IP4_F_MF)) ||
++				    len < 8 || len > p->data_len) {
++					/* No reassembly: never synthesize a partial checksum. */
++					uint64_t drops = ++incomplete_udp_drops;
++					if ((drops & (drops - 1)) == 0)
++						log_incomplete_udp_drops();
++					return ERROR_DROP;
++				}
++				cksum = ones_add(ip_checksum(p->data, len),
++						 ip6_checksum(ip6, len, 17));
++				*tck = cksum ? cksum : UINT16_MAX;
+ 				return ERROR_NONE;
+ 			}
++			}
+ 		}
+ 		break;
+ 	/* TCP */
+diff --git a/tayga.c b/tayga.c
+index 6f97800..2c43cb3 100644
+--- a/tayga.c
++++ b/tayga.c
+@@ -363,6 +363,7 @@ static void read_from_signalfd(void)
+ 		}
+ 		if (gcfg->dynamic_pool)
+ 			dynamic_maint(gcfg->dynamic_pool, 1);
++		log_incomplete_udp_drops();
+ 		slog(LOG_NOTICE, "Exiting on signal %d\n", sig);
+ 		exit(0);
+ 	}
+diff --git a/tayga.h b/tayga.h
+index bba8fa4..878a0cc 100644
+--- a/tayga.h
++++ b/tayga.h
+@@ -396,6 +396,7 @@ void load_dynamic(struct dynamic_pool *pool);
+ void dynamic_maint(struct dynamic_pool *pool, int shutdown);
+ 
+ /* nat64.c */
++void log_incomplete_udp_drops(void);
+ void handle_ip4(struct pkt *p);
+ void handle_ip6(struct pkt *p);
+ 

@@ -28,8 +28,9 @@ exact artifact names, lengths and SHA-256 digests. Unknown fields, extra files,
 linked files, wrong trust, replay and incomplete sets fail admission.
 
 On the router, an operator uploads to the unprivileged staging area and triggers
-the fixed image-operation interface. Its privileged service copies into exclusive
-root-owned files before signature verification. The operator can do this with
+the fixed image-operation interface. Its privileged service authenticates private
+copies of the manifest and signature before opening the payloads. It checks
+each copied payload against the signed size and SHA-256 digest. The operator can do this with
 `administration.root_access: disabled`, without root login or sudo.
 The admitted files and publication directories are flushed before staging, so
 the authenticated inbox survives a power cycle after admission.
@@ -59,6 +60,11 @@ restore it is a failed operation and a health fault. This protects against
 ordinary services and accidental writes; unrestricted root can remount it and
 remains inside the trusted boundary described in `security-model.md`.
 
+If the operator worker stops during a transfer, its stop hook verifies the ESP,
+restores its mount flags and reads back the accepted one-shot entry. A new
+trigger can proceed once `lanrith-image status` reports the interrupted
+operation as `failed`. An unresolved selection keeps the operation pending.
+
 The image deliberately installs no static files in `/usr/lib/sysupdate.d`.
 Invoking `systemd-sysupdate` directly is unsupported: only `lanrith-runtime`
 may generate the temporary definitions after it has authenticated the release,
@@ -68,12 +74,33 @@ Staging also requires the running slot to be the explicitly accepted persistent
 default. Accept a healthy candidate before staging another update, so its
 previously accepted fallback cannot be overwritten prematurely.
 
-After an independently authorized reboot, verify the fresh boot observation,
+After an independently authorized reboot, verify the boot observation,
 Secure Boot, dm-verity, encrypted state, selected interfaces, required services
 and recovery enrollment. Only then accept the deployment as default. A failed
 candidate must return automatically to the previously accepted entry. Keep the
 matching factory image, public trust, recovery key and previous configuration
 offline. Exercise recovery with populated state before a production cutover.
+
+Boot health checks the declared LAN gateway prefixes and usable address flags,
+required local routes, and listeners owned by the SSH, Kea and Unbound daemons.
+A disconnected optional uplink can remain offline. When it has carrier, its
+declared static addresses and gateways must be installed. The gate sends local
+DNS queries through the host resolver and, when Chrony has a named upstream,
+through its private resolver. With BIND enabled it also checks each zone's SOA, generated service
+answers and release-managed RRsets against the running authority. Failure
+messages identify the requirement in the journal for `lanrith-health.service`.
+
+Run `lanrith-status` to read the latest whole-boot health check. Its `health`
+object reports `passed` or `failed` for a completed check within 60 seconds
+of its start. `age_seconds` measures time since that start. A missing, stale,
+interrupted or still-running check has an unavailable result. To refresh it,
+run `systemctl start lanrith-health.service` as root. The separate `boot`
+object records the historical boot event. Its `accepted` field stays true
+after a failed refresh if promotion committed the running image.
+
+Advisory observation timers continue to run independently. Check the monitoring
+results and `systemctl --failed` to inspect failures on an accepted boot.
+Staging starts a fresh health check before writing the new slot.
 
 ## Service credential provisioning
 
@@ -98,10 +125,38 @@ removing its file references or keeping those files available. Values do not bel
 in YAML, command arguments or logs. The local builder checks the set again
 against preflight and passes it to the offline container through private tmpfs.
 
-**Treat the resulting private image, build workspace, backups and installer USB
-as secret media.** The verified root is read-only, not encrypted. Anyone who can
-read the raw image can extract its credentials. Keep these artifacts out of
-public releases and shared caches. The public platform contains no owner values.
+The factory image, update root, installer USB and build workspace contain the
+embedded credentials. Anyone with raw read access can recover their values.
+Local builds with credentials set the release directories to mode `0700` and
+each verified artifact to `0600`. Track every copy, its readers, restore and
+export operators, storage location and retirement date. Include CI artifacts,
+snapshots and removable media. Keep working copies on protected storage and
+exclude them from public releases and shared caches.
+
+For offline retention, encrypt the release for a separately held restore key.
+For example, on a controller using Bash and GnuPG, verify the recovery
+certificate fingerprint with its custodian, then write to a new file in a
+private archive directory.
+
+```bash
+set -euo pipefail
+umask 077
+archive=$(mktemp "$archive_directory/.lanrith.XXXXXXXX.gpg")
+tar -C "$private_output" -cf - . |
+  gpg --no-options --batch --recipient-file "$recovery_public_certificate" --encrypt > "$archive"
+```
+
+Record the archive location only after the pipeline succeeds. An authorized
+operator can restore it with `gpg --decrypt "$archive" | tar -xf - -C "$private_restore"`
+in a new mode-`0700` directory, using the same pipeline failure handling.
+Verify both restored release signatures and artifact hashes with the
+independently trusted boot certificate before using either image. Rehearse
+restore with synthetic media and check that an unrelated user cannot open a
+raw copy or decrypt the archive. Retire plaintext staging copies and snapshots
+under the owner's retention policy. An installer left unattended still carries
+a readable root. A deployment requiring confidentiality after loss of that
+media needs separate provisioning or a device-bound design qualified for
+replacement and fallback.
 
 The image stores its selected credentials under
 `/usr/lib/lanrith/credentials/`, in root-owned private directories and files.
@@ -110,19 +165,127 @@ SNMP reads its private image configuration while retaining its engine identity
 and boot counter in encrypted persistent state. Owner YAML and controller source
 paths are not runtime inputs.
 
-First boot validates the image files immediately. There is no credential upload,
-stage/commit operation, or ten-minute provisioning wait. Missing or malformed
-image inputs fail the readiness check; the existing health and fallback logic
-still decides whether the image can be accepted. SSH/OOB, recursive DNS and NTP
-have no dependency on this credential check. Recovery-key acknowledgement
+First boot checks each integration's inputs before starting its daemon or
+preparation helper. A missing log password blocks Alloy. FRR can still start
+with valid routing credentials. Candidate acceptance verifies the complete
+bound catalog and every required extension. Offline recovery-key verification
 remains a separate installation step.
 
-Rotate credentials by building and installing a new image through A/B updates.
-Each slot carries its own set, so booting the previous slot selects its original
-credentials without restoring shared secret files. Keep the previous credentials
-valid at external services while that slot remains a supported fallback; image
-rollback cannot undo a password revocation in an external directory or service.
-Validate backend authentication as part of private image acceptance.
+Rotate credentials by building a new image. Each slot retains its own
+credentials. Before cutover, generate a plan from the mounted, verified roots.
+
+```bash
+tool=scripts/qualify-credential-rotation.py
+slots=(--candidate "$candidate_root" --fallback "$fallback_root")
+python3 "$tool" "${slots[@]}" plan > rotation.json
+```
+
+For each slot and reference, fill its `peers` object with all endpoints using
+that identity. For example, `{"log-a":"overlap","log-b":"reversal"}` describes
+an ingest peer that accepts both accounts and a peer that must reverse its
+single active credential. Use `unchanged` when the same identity remains valid
+after retirement. Compare the secret manager's version identifiers and
+peer inventory for both deployments. Two equal catalogs can bind different
+secret values. For BGP listen ranges and RADIUS client prefixes, include
+each deployed peer that uses the reference.
+
+FRR starts with the selected image's routing configuration. Its systemd unit
+disables live reload. For a BGP peer that accepts one TCP MD5 key, coordinate
+the peer change at cutover and reverse it before testing the fallback slot.
+On each slot, record the time to a fresh established session and check that
+the expected prefix uses that peer as its next hop.
+
+Supply an owner-controlled executable through `--probe`. It receives one JSON
+request on standard input with the expected slot identity, phase, reference,
+peer label and a new challenge. Obtain the observed identity from the booted
+router, authenticate the peer and perform a fresh operation using that slot's
+identity. Return a JSON object containing the observed `identity`, the
+`challenge` from this request and an `outcome` of `authenticated` or `denied`.
+Report `denied` only for explicit rejection of that credential by the
+authenticated peer. For protocols that silently drop a bad credential,
+correlate the attempt with peer-side authentication evidence obtained via an
+independent management account. Exit nonzero on transport failure, timeout
+or ambiguous protocol results. Keep values, peer transcripts and secrets out of the reply.
+
+```bash
+python3 "$tool" "${slots[@]}" check --plan rotation.json --phase candidate --probe "$peer_probe"
+```
+
+Repeat with `fallback` after booting the predecessor and `restored-candidate`
+after returning to the candidate. Before each boot, coordinate single-identity
+peer changes and verify the operator can reverse them during recovery. Record
+any recovery constraint before cutover. While fallback remains supported,
+keep overlap identities valid. Once the owner retires the predecessor, test
+`retired-fallback` in an isolated rehearsal and `retired-candidate` against the
+current identity. Keep the returned slot identities and per-peer outcomes.
+Suspected compromise calls for immediate revocation and a recovery image with
+trusted credentials.
+
+## SNMP polling and fallback
+
+The monitoring owner maintains the list of poller egress addresses. Record the
+IPv6 source **as seen on the router attachment** during both a normal poll and
+a failover poll. A pod address can differ from the address sent by its node.
+For each entry record the poller or shared workload, attachment, CIDR and
+reason for access. Give every temporary prefix a retirement condition, such
+as successful polls from both reserved addresses after a workload migration.
+
+Compare that list with `observability.snmp.clients` and the verified release.
+The unit's `IPAddressAllow=` lines include the host listener and loopback.
+The UDP/161 request and reply rules in `/etc/nftables.conf` show which remote
+CIDRs may use each interface. Account for every admitted subnet, including
+infrastructure and workload ranges, even when no dedicated poller address lies
+in them. Remove a range from the declaration once its retirement condition is
+met, and review the fallback image separately. It can still admit an older
+scope.
+
+On the poller, use its private Net-SNMP profile for the selected slot. Set
+`clientaddr` in the profile when the host has multiple egress addresses. Get
+the IF-MIB name and 64-bit receive counter for the same router interface.
+Supply its current ifIndex in `index` and the image's IPv6 listener in `server`.
+
+```bash
+SNMPCONFPATH="$profile_dir" MIBS= snmpget -v3 -l authPriv -r0 -t2 \
+  "udp6:[$server]:161" ".1.3.6.1.2.1.31.1.1.1.1.$index" \
+  ".1.3.6.1.2.1.31.1.1.1.6.$index"
+```
+
+Require the expected interface name and a Counter64 value from each retained
+poller. In a disposable rehearsal, check that a source inside the retired
+range loses access on its existing UDP tuple while the retained pollers still
+read the counter. Record the source, slot sequence, interface, value and poll
+time. For LibreNMS, also confirm a fresh completed device poll updates that
+port's counters through the normal and failover paths.
+
+For an image with `credential_delivery` set to `image` in
+`/etc/lanrith/integrations/snmp-runtime-policy.json`, build the candidate
+with the new protected `credentials` input. The agent reads the image file
+named by its unit's `-c` argument. Editing a retained Ansible credential cannot
+rotate this image. Keep the old and new poller profiles in the monitoring
+owner's secret store and list both pollers as peers with the `reversal` policy
+in the [rotation plan](#service-credential-provisioning).
+
+| Rehearsal boot | Poller action |
+| --- | --- |
+| Accepted predecessor | Read the interface with its profile. Record the engine ID and boot count. |
+| Candidate | Select the new profile, poll from both paths and confirm the old profile receives an authentication rejection. |
+| Fallback | Restore the predecessor profile, repeat the reads and confirm rejection of the candidate profile. |
+| Restored candidate | Switch the pollers back, repeat the checks and record the completed poll before retiring fallback. |
+
+Keep the same encrypted `/var/lib/snmp` throughout. Restoring an old copy can
+rewind the SNMPv3 replay counter. After each agent start, read only the two
+engine fields through an authorized local console or management session.
+Net-SNMP's persistent file also contains localized authentication material.
+
+```sh
+sudo awk '$1 == "oldEngineID" || $1 == "engineBoots" {print $1, $2}' /var/lib/snmp/snmpd.conf
+```
+
+Require the same engine ID and a strictly increasing count. Count a wrong
+profile as rejected only after an explicit USM authentication failure or
+independent agent-side authentication evidence. A UDP timeout alone could
+indicate a route, filter or listener failure. Keep profiles and full daemon
+state out of the qualification record.
 
 ## Extension credential provisioning
 
@@ -202,7 +365,13 @@ No disk write occurs until the exact confirmation and final disk checks pass.
 First-boot recovery-key enrollment also offers both consoles. Press Enter on
 the console where you will record the key. Recovery keys and encryption
 passphrases use only that console and are never copied to the other screen or
-the journal. Disable recording on the chosen console before continuing.
+the journal. Disable recording on the chosen console before continuing. Record
+the displayed key offline, then enter that copy at the hidden prompt. Reboot
+and enter the same copy if enrollment stops. The first boot of an upgraded
+installation asks for its existing copy. If that copy is lost and the console
+offers replacement, type `REPLACE`. Keep the new copy for any retry. The old
+slot is retired only after the new copy unlocks its own slot. A bound TPM
+migration requires the existing copy and cannot replace it.
 
 Slot and encrypted state provisioning must finish before the initrd switches
 to the installed root. A candidate failure attempts authenticated fallback;
@@ -246,3 +415,15 @@ python3 scripts/evidence-bundle.py verify /absolute/path/to/campaign \
 Do not edit the bundle after sealing. A correction is a new campaign ID and
 seal, not an overwritten manifest or an exception recorded outside the signed
 inventory.
+
+
+## WAN sensor logs
+
+When the sensor is enabled, `lanrith-ids-rotate.timer` checks EVE size every
+minute. At 16 MiB, logrotate renames the file and signals the sensor to reopen
+its output. The service verifies a write to the successor within 65 seconds and
+retains four archives with delayed compression. Check
+`journalctl -u lanrith-ids-rotate.service` after a rotation error and check free
+space on `/var`. Size checks permit overshoot between runs. Set a site retention
+objective from measured EVE bytes per second and available space. A guaranteed
+storage ceiling requires a dedicated quota or allocation.

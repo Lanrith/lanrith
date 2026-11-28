@@ -1,0 +1,70 @@
+#!/usr/bin/python3 -I
+"""Check the current flush and storage settings in the persistent machine journal."""
+
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+PENDING = Path('/run/lanrith-journal-flush/pending')
+
+
+def invocation_id():
+    invocation = os.environ.get('INVOCATION_ID', '')
+    if not re.fullmatch(r'[0-9a-f]{32}', invocation):
+        sys.exit('Missing journal flush invocation.')
+    return invocation
+
+
+def remember():
+    # systemd preserves the root-private directory when a failed flush is retried.
+    if not PENDING.exists():
+        # The manager serializes ExecStartPre for this unit. An interrupted
+        # write must never publish an incomplete invocation ID to the next run.
+        temporary = PENDING.with_name('pending.tmp')
+        temporary.write_text(invocation_id())
+        temporary.replace(PENDING)
+
+
+def verify(maximum, reserve):
+    machine = Path('/etc/machine-id').read_text().strip()
+    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', '')
+    pending = PENDING.read_text()
+    if not all(re.fullmatch(r'[0-9a-f]{32}', item) for item in (machine, boot, pending)):
+        sys.exit('Missing journal flush identity.')
+    directory = Path('/var/log/journal', machine)
+    query = ['/usr/bin/journalctl', '--quiet', '--no-pager', '--directory', directory,
+             '-n', '1', '_BOOT_ID='+boot]
+    for attempt in {pending, invocation_id()}:
+        marker = 'lanrith-journal-flush-'+attempt
+        message = subprocess.check_output([*query, '-o', 'cat', '_TRANSPORT=syslog', '_UID=0',
+                                           'SYSLOG_IDENTIFIER=lanrith-journal-flush', 'MESSAGE='+marker],
+                                          text=True, timeout=10)
+        if message.strip() != marker:
+            sys.exit('The early journal flush marker is missing from persistent state.')
+    usage = subprocess.check_output([*query, '-o', 'json', '--output-fields=MAX_USE,DISK_KEEP_FREE',
+                                     '_TRANSPORT=driver', 'JOURNAL_PATH='+str(directory),
+                                     'MESSAGE_ID=ec387f577b844b8fa948f33cad9a75e6'], text=True, timeout=10)
+    record = json.loads(usage) if usage else {}
+    if record.get('MAX_USE') != str(maximum):
+        sys.exit('Persistent journal maximum differs from the image policy.')
+    if reserve is not None:
+        if record.get('DISK_KEEP_FREE') != str(reserve):
+            sys.exit('Persistent journal reserve differs from the image policy.')
+        capacity = os.statvfs(directory)
+        if reserve >= capacity.f_blocks * capacity.f_frsize:
+            sys.exit('The journal reserve exceeds usable state capacity.')
+    PENDING.unlink()
+
+
+if __name__ == '__main__':
+    try:
+        if sys.argv[1:] == ['remember']:
+            remember()
+        else:
+            verify(int(sys.argv[1]), int(sys.argv[2]) if len(sys.argv) == 3 else None)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        sys.exit('Cannot read persistent journal evidence for this flush.')

@@ -47,7 +47,8 @@ def observation():
 
 def qualify():
     require(os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd' and
-            (Path('/run/.containerenv').exists() or Path('/.dockerenv').exists()) and
+            (Path('/run/.containerenv').exists() or Path('/.dockerenv').exists() or
+             'rdinit=/fixture-init' in Path('/proc/cmdline').read_text().split()) and
             not Path('/usr/share/lanrith/installed.json').exists(),
             'Observer fixture requires an uninitialized disposable systemd container.')
     require({entry['ifname'] for entry in json.loads(command('ip', '-json', 'link').stdout)} == {'lo'},

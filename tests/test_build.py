@@ -23,12 +23,29 @@ class AssemblyTests(unittest.TestCase):
                 value = declaration()
                 value['services']['discovery']['enabled'] = enabled
                 build.assembly(value, base, root/'work', version='0.1.0', sequence=9)
-                units = root/'work/mkosi.extra/etc/systemd/system'
+                tree = root/'work/mkosi.extra'
+                units = tree/'etc/systemd/system'
+                for name in ('avahi-daemon.socket', 'avahi-daemon.service', 'systemd-hostnamed.service'):
+                    self.assertFalse((units/name).is_symlink())
+                    (units/name).symlink_to('/dev/null')
+                networkd = 'systemd-networkd.service'
+                (units/networkd).symlink_to('/usr/lib/systemd/system/'+networkd)
+                (units/'dbus-org.freedesktop.network1.service').symlink_to('/usr/lib/systemd/system/'+networkd)
+                avahi_target = '/usr/lib/systemd/system/avahi-daemon.service' if enabled else '/dev/null'
+                self.assertEqual((units/'dbus-org.freedesktop.Avahi.service').readlink(), Path(avahi_target))
+                self.assertEqual((units/'dbus-org.freedesktop.hostname1.service').readlink(), Path('/dev/null'))
+                (units/'nftables.service').write_text('fixture override')
+                subprocess.run([root/'work/mkosi.postinst'], env={'BUILDROOT': str(tree)}, check=True)
+                self.assertFalse((units/networkd).is_symlink())
+                self.assertTrue((tree/'usr/lib/systemd/system/multi-user.target.wants'/networkd).is_symlink())
+                self.assertEqual((units/'nftables.service').read_text(), 'fixture override')
+                self.assertEqual((units/'systemd-hostnamed.service').readlink(), Path('/dev/null'))
+                self.assertTrue((units/'dbus-org.freedesktop.network1.service').is_symlink())
+                self.assertTrue((units/'dbus-org.freedesktop.Avahi.service').is_symlink())
                 for name in ('avahi-daemon.socket', 'avahi-daemon.service'):
-                    link = units/name
-                    self.assertEqual(link.is_symlink(), enabled)
-                    if enabled:
-                        self.assertEqual(link.readlink(), Path('/usr/lib/systemd/system')/name)
+                    self.assertEqual((units/name).is_symlink(), not enabled)
+                    if not enabled:
+                        self.assertEqual((units/name).readlink(), Path('/dev/null'))
 
     def test_core_confinement_is_carried_into_assembly_from_any_admitted_base(self):
         project = Path(__file__).resolve().parents[1]
@@ -57,11 +74,34 @@ class AssemblyTests(unittest.TestCase):
             units = initrd/'usr/lib/systemd/system'
             self.assertIn('OnFailure=lanrith-initrd-failure.service', (units/'lanrith-factory.service').read_text())
             self.assertIn('ExecStart=/usr/bin/lanrith-factory failed', (units/'lanrith-initrd-failure.service').read_text())
-            self.assertIn('TimeoutStartSec=900s', (units/'lanrith-initrd-failure.service').read_text())
+            self.assertIn('TimeoutStartSec=930s', (units/'lanrith-initrd-failure.service').read_text())
             self.assertIn('ExecStart=/usr/bin/lanrith-factory emergency',
+                          (units/'emergency.service.d/60-lanrith-recovery.conf').read_text())
+            self.assertIn('Description=Hold for independent recovery media',
                           (units/'emergency.service.d/60-lanrith-recovery.conf').read_text())
             self.assertTrue((initrd/'usr/lib/lanrith/lanrith/early_failure.py').is_file())
             self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in initrd.rglob('*')))
+
+    def test_signed_automatic_timeout_and_manager_cleanup_margin(self):
+        from lanrith import early_failure
+        value = config.load(Path(__file__).resolve().parents[1]/'examples/minimal.yaml')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = root/'base.tar'
+            base.write_bytes(b'synthetic')
+            value['hardware']['boot']['fallback_timeout_seconds'] = 120
+            build.assembly(value, base, root/'assembly', version='0.1.0', sequence=9)
+            initrd = root/'assembly/mkosi.images/initrd/mkosi.extra'
+            identity = early_failure.failure_identity(json.loads((initrd/'usr/share/lanrith/initrd-failure.json').read_bytes()))
+            self.assertEqual(identity['fallback_timeout_seconds'], 120)
+            unit = initrd/'usr/lib/systemd/system/lanrith-initrd-failure.service'
+            self.assertIn('TimeoutStartSec=150s', unit.read_text())
+            for bad in (True, 0, 86401, '900'):
+                value['hardware']['boot']['fallback_timeout_seconds'] = bad
+                with self.subTest(bad=bad), self.assertRaisesRegex(ReleaseError, 'timeout'):
+                    config.normalize(value)
+                with self.assertRaisesRegex(ReleaseError, 'timeout'):
+                    early_failure.failure_identity({**identity, 'fallback_timeout_seconds': bad})
 
     def test_failure_console_credential_does_not_enable_root_or_install_yaml(self):
         from lanrith import recovery_failure_build
@@ -80,6 +120,8 @@ class AssemblyTests(unittest.TestCase):
                     patch.object(recovery_failure_build, 'admitted_bootctl', return_value=b'synthetic-bootctl'):
                 recovery_failure_build.prepare(workspace, credential=secret, tty='ttyS0', base=base, initrd_base=base)
             initrd = workspace/'mkosi.images/initrd/mkosi.extra'
+            self.assertIn('Description=Authenticated initrd recovery console',
+                          (initrd/'usr/lib/systemd/system/emergency.service.d/60-lanrith-recovery.conf').read_text())
             self.assertTrue((initrd/'usr/share/lanrith/failure-console.hash').is_file())
             self.assertFalse((workspace/'mkosi.extra/etc/security/admin.serial-passphrase.hash').exists())
             self.assertFalse(any(path.suffix in ('.yaml', '.yml') for path in initrd.rglob('*')))
@@ -130,7 +172,7 @@ class AssemblyTests(unittest.TestCase):
             provision.chmod(0o600)
             build.assembly(value, base, root/'enabled', version='0.1.0', sequence=10, serial_hash=provision)
             overlay = root/'enabled/mkosi.extra'
-            self.assertEqual((overlay/'etc/systemd/system'/unit).readlink(), Path('/usr/lib/systemd/system')/unit)
+            self.assertEqual((overlay/'usr/lib/systemd/system/multi-user.target.wants'/unit).readlink(), Path('/usr/lib/systemd/system')/unit)
             self.assertIn(unit, (overlay/'usr/lib/systemd/system/lanrith-health.service').read_text())
             self.assertIn('After=lanrith-recovery-key.service', (overlay/'usr/lib/systemd/system'/unit).read_text())
 
@@ -156,6 +198,25 @@ class AssemblyTests(unittest.TestCase):
                     build.assembly(value, base, work, version='0.1.0', sequence=9,
                                    serial_hash=provision if enabled else None)
                     units = work/'mkosi.extra/etc/systemd/system'
+                    for template in ('getty@', 'serial-getty@'):
+                        notice = (units/(template+'.service.d/15-lanrith-notice.conf')).read_text()
+                        self.assertIn('ConditionPathExists=/var/lib/lanrith/recovery-key-verified', notice)
+                        self.assertIn('StandardInput=null', notice)
+                        self.assertIn('use SSH on the management network', notice)
+                        self.assertEqual('or the serial port '+tty in notice, enabled)
+                    override = units/('serial-getty@'+tty+'.service.d/15-lanrith-notice.conf')
+                    self.assertEqual(override.is_symlink(), enabled)
+                    if enabled:
+                        self.assertEqual(override.readlink(), Path('/dev/null'))
+                    supervision = list(units.glob('*/18-lanrith-supervision.conf'))
+                    if enabled:
+                        self.assertEqual(supervision, [override.with_name('18-lanrith-supervision.conf')])
+                        guard = supervision[0].read_text()
+                        self.assertIn('BindsTo=lanrith-serial-idle-watchdog.service', guard)
+                        self.assertIn('After=lanrith-serial-idle-watchdog.service', guard)
+                        self.assertIn(' --wait-for-supervision', guard)
+                    else:
+                        self.assertFalse(supervision)
                     lines = list(units.glob('*/20-lanrith-line.conf'))
                     if baud is None:
                         self.assertEqual(lines, [])
@@ -286,7 +347,7 @@ class AssemblyTests(unittest.TestCase):
             for getty in ('getty@tty1', 'serial-getty@ttyS2'):
                 text = (overlay/'etc/systemd/system'/(getty+'.service.d/10-recovery-gate.conf')).read_text()
                 self.assertIn('After=lanrith-recovery-key.service\n', text)
-                self.assertIn('ConditionPathExists=/var/lib/lanrith/recovery-key-enrolled\n', text)
+                self.assertIn('ConditionPathExists=/var/lib/lanrith/recovery-key-verified\n', text)
 
     def test_missing_declared_integrations_fail_before_mkosi(self):
         value = config.load(Path(__file__).resolve().parents[1] / 'examples/minimal.yaml')

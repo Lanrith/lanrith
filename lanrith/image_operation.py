@@ -6,7 +6,6 @@ only status and one digest-selected image operation, never a command or path.
 
 import argparse
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 import os
@@ -23,12 +22,11 @@ import time
 
 from .release import ReleaseError, canonical, document, read, require, unique
 from . import update
-from .update import boot_esp, command, promote, prune_inbox, require_default, select_boot_once, stage
+from .update import command, promote_locked, prune_inbox, require_default, select_boot_once, stage_locked
 
 
 SOCKET = '/run/lanrith-image-operation.sock'
 INSTALLED = Path('/usr/share/lanrith/installed.json')
-LOCK = Path('/run/lock/lanrith-image-operation.lock')
 PHASES = {'staging', 'rebooting', 'accepted', 'failed', 'fallback'}
 IDENTITY = {'image_id', 'deployment_sequence', 'configuration_sha256', 'uki_name'}
 
@@ -119,7 +117,52 @@ def accepted_identity(value):
     return result
 
 
+def promotion_path(value):
+    return state_path(value).with_name('image-promotion.json')
+
+
+def load_promotion(value):
+    path = promotion_path(value)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o600,
+            'Image promotion record is not protected.')
+    intent = json.loads(read(path, 4096), object_pairs_hook=unique)
+    require(isinstance(intent, dict) and set(intent) == {'schema', 'target', 'previous', 'operation', 'manual'} and
+            type(intent['manual']) is bool and
+            type(intent['schema']) is int and intent['schema'] == 1 and
+            isinstance(intent['target'], dict) and set(intent['target']) == IDENTITY and
+            (intent['previous'] is None or isinstance(intent['previous'], dict) and
+             set(intent['previous']) == IDENTITY) and (intent['operation'] is None or
+             isinstance(intent['operation'], str) and re.fullmatch(r'[0-9a-f]{64}/[0-9a-f]{32}', intent['operation'])),
+            'Image promotion record is malformed.')
+    identity(intent['target'])
+    if intent['previous'] is not None:
+        identity(intent['previous'])
+    return intent
+
+
+def visible_accepted(value):
+    # The file may already contain the target while its operation is committing.
+    result = accepted_identity(value)
+    return result if load_promotion(value) is None else None
+
+
+def finish_promotion(value):
+    path = promotion_path(value)
+    path.unlink()
+    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def save_accepted(value):
+    from .runtime import invalidate_boot_receipt
+    invalidate_boot_receipt()
     atomic(state_path(value).with_name('accepted-image.json'), identity(value))
 
 
@@ -145,20 +188,19 @@ def recovery_information(value):
         return None
 
 
+def operation_lock(*, wait=False):
+    return update.image_lock(update.OPERATION_LOCK_NAME, wait=wait)
+
+
 @contextmanager
-def operation_lock():
-    descriptor = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-    try:
-        info = os.fstat(descriptor)
-        require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1 and
-                stat.S_IMODE(info.st_mode) == 0o600, 'Image operation lock is unsafe.')
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise ReleaseError('An image operation is already running.') from error
-        yield
-    finally:
-        os.close(descriptor)
+def admission_lock(installed_path):
+    from .runtime import require_accepted_boot
+    with operation_lock():
+        value = policy(installed_path)
+        require(not is_pending(load(value)), 'The pending image operation must finish before another trigger.')
+        require(load_promotion(value) is None, 'Image promotion must finish before another trigger.')
+        require_accepted_boot(value)
+        yield value
 
 
 def uploaded(value, digest):
@@ -182,14 +224,10 @@ def uploaded(value, digest):
 
 
 def trigger(digest, installed_path=INSTALLED):
-    value = policy(installed_path)
-    with operation_lock():
-        previous = load(value)
-        require(previous is None or previous['phase'] in ('accepted', 'failed', 'fallback'),
-                'The pending image operation must finish before another trigger.')
+    with admission_lock(installed_path) as value:
         prune_inbox(value)
         manifest, source = uploaded(value, digest)
-        admitted = promote(source, installed_path, expected_digest=digest, stage_payload=False)
+        admitted = promote_locked(source, installed_path, expected_digest=digest)
         # Only an independently verified root-owned copy may become durable
         # authority for this operation, including after a power interruption.
         manifest = document(read(admitted/'release.json', 65536))
@@ -201,14 +239,13 @@ def trigger(digest, installed_path=INSTALLED):
         # Publish intent durably before stage can select the candidate for boot.
         save(value, record)
         try:
-            stage(admitted, installed_path)
+            stage_locked(admitted, installed_path)
         except (OSError, ValueError, KeyError):
             # A failure can occur after setting OneShot but before its readback.
             # Do not permit another transfer until that ambiguity is removed.
             failed = {**record, 'phase': 'rebooting', 'error': 'admission-or-staging-failed'}
             save(value, failed)
-            select_boot_once(boot_esp(value)/'EFI/Linux'/value['uki_name'])
-            save(value, {**failed, 'phase': 'failed'})
+            close_failed_stage(value, failed)
             raise ReleaseError('Image admission or staging failed; no success was recorded.') from None
         save(value, {**record, 'phase': 'rebooting'})
         try:
@@ -220,76 +257,222 @@ def trigger(digest, installed_path=INSTALLED):
         return {'schema': 1, 'digest': digest, 'phase': 'rebooting', 'candidate': candidate}
 
 
-def complete(installed_path=INSTALLED, *, deadline_seconds=180):
-    """Accept a healthy boot, or reboot a failed candidate to its old default."""
+def operation_id(record):
+    return record['digest'] + '/' + record['executor_id'] if record else None
+
+
+def is_pending(record):
+    return record is not None and record['phase'] in ('staging', 'rebooting')
+
+
+def current_promotion(value, record):
+    intent = load_promotion(value)
+    if intent is None or intent['operation'] == operation_id(record):
+        return intent
+    # An older predecessor ignores the sidecar. It can finish fallback and admit a
+    # later update. Discard the obsolete intent only with independently agreeing
+    # new authorization, recorded acceptance and persistent predecessor selection.
+    require(is_pending(record) and identity(value) in (record['candidate'], record['fallback'])
+            and record['fallback'] in (intent['target'], intent['previous'])
+            and record['candidate']['deployment_sequence'] > intent['target']['deployment_sequence']
+            and accepted_identity(value) == record['fallback'],
+            'Promotion intent differs from the current image operation.')
+    require_default(Path(record['fallback']['uki_name']))
+    finish_promotion(value)
+    return None
+
+
+def promote_running(value, *, manual=False):
+    """Commit or resume one promotion under the caller's image-operation lock."""
     from . import runtime
+    running = identity(value)
+    record = load(value)
+    accepted = accepted_identity(value)
+    intent = current_promotion(value, record)
+    pending = is_pending(record)
+    if pending:
+        require(running in (record['candidate'], record['fallback']), 'Running image is outside the authorized operation.')
+        require(running != record['candidate'] or record['error'] not in
+                ('admission-or-staging-failed', 'readiness-failed'), 'Candidate has already failed.')
+    if intent:
+        require(running in (intent['target'], intent['previous'])
+                and accepted in (intent['previous'], intent['target'], None),
+                'Promotion intent differs from the current image operation.')
+        if (not intent['manual'] and record and record['phase'] in ('fallback', 'failed')
+                and intent['target'] == record['candidate']):
+            require(running == record['fallback'], 'Candidate promotion was superseded by fallback.')
+        if pending:
+            require(not intent['manual'] and intent['target'] in (record['candidate'], record['fallback']) and
+                    intent['previous'] == record['fallback'],
+                    'Promotion intent differs from the authorized update.')
+    elif not pending and not manual and accepted != running:
+        if accepted is not None:
+            # Root-only manual staging requires explicit acceptance of the new slot.
+            return None
+        require(record is None and not value.get('image_contract', {}).get('recovery'),
+                'Initial promotion requires an unbound installation.')
+    if pending and intent is None:
+        require(accepted in (None, record['fallback']), 'Recorded predecessor differs from the authorized update.')
+
+    # Revalidate even if a prior invocation already changed the persistent selector.
+    require(identity(runtime.health()) == running, 'Readiness result differs from the running image.')
+    runtime.complete_target()
+    stable = runtime.bless(value)
+    require(stable.name == running['uki_name'], 'Blessed image differs from the authorized promotion.')
+    try:
+        selected = update.default_entry()
+    except FileNotFoundError:
+        selected = None
+    if intent:
+        previous = intent['previous']
+        if running == intent['target']:
+            allowed = (previous['uki_name'] if previous else None, stable.name)
+        else:
+            # Power returned to the original default before promotion completed.
+            allowed = (stable.name,)
+    else:
+        previous = record['fallback'] if pending else accepted
+        allowed = (previous['uki_name'],) if previous else (None, stable.name)
+    require(selected in allowed, 'Persistent boot selector differs from the authorized promotion.')
+
+    if intent is None and (selected != stable.name or accepted != running or pending and running == record['candidate']):
+        intent = {'schema': 1, 'operation': operation_id(record), 'target': running, 'previous': previous,
+                  'manual': manual and not pending}
+        runtime.invalidate_boot_receipt()
+        atomic(promotion_path(value), intent)
+    if selected != stable.name:
+        command(['bootctl', 'set-default', stable.name])
+    require_default(stable)
+    if accepted != running:
+        save_accepted(value)
+    if pending:
+        candidate = running == record['candidate']
+        save(value, {**record, 'phase': 'accepted' if candidate else 'fallback',
+                     'error': None if candidate else 'readiness-failed'})
+    if intent:
+        finish_promotion(value)
+    return runtime.publish_boot(value, stable, accepted=True)
+
+
+def complete(installed_path=INSTALLED, *, deadline_seconds=180):
+    """Accept a healthy boot, or reboot a failed candidate to its verified predecessor."""
+    from .boot_health import LocalRequirementFailed
     from .credential_operation import wait_ready
 
     value = policy(installed_path)
     require(type(deadline_seconds) is int and 30 <= deadline_seconds <= 600, 'Invalid readiness deadline.')
     with operation_lock():
         record = load(value)
-        pending = record is not None and record['phase'] in ('staging', 'rebooting')
-        candidate = record is not None and record['candidate'] == identity(value)
-        fallback = pending and record['fallback'] == identity(value)
-        require(not pending or candidate or fallback, 'Running image is outside the authorized operation.')
-        if not pending and accepted_identity(value) not in (None, identity(value)):
-            # Preserve the old root-only manual staging interface. Only an
-            # operator trigger authorizes automatic completion of later images.
-            return
-        # The provisioning socket uses a separate lock and remains usable
-        # while this observer waits. Its failure never suppresses fallback.
-        provisioned = (False if candidate and record['error'] == 'admission-or-staging-failed'
+        pending = is_pending(record)
+        running = identity(value)
+        require(not pending or running in (record['candidate'], record['fallback']),
+                'Running image is outside the authorized operation.')
+        candidate = record is not None and running == record['candidate'] and (
+            pending or record['phase'] == 'accepted' and load_promotion(value) is not None)
+        provisioned = (False if candidate and record['error'] in ('admission-or-staging-failed', 'readiness-failed')
                        else wait_ready(value))
         deadline = time.monotonic()+deadline_seconds
+        reported_requirements = set()
         while provisioned:
             try:
-                # accept() rechecks health and blessings and verifies the durable
-                # boot default. Merely reaching multi-user is never acceptance.
-                runtime.accept(value['deployment_sequence'])
-                save_accepted(value)
-                if candidate:
-                    save(value, {**record, 'phase': 'accepted', 'error': None})
-                elif fallback:
-                    save(value, {**record, 'phase': 'fallback', 'error': 'readiness-failed'})
-                return
-            except (OSError, ValueError, KeyError):
+                return promote_running(value)
+            except (OSError, ValueError, KeyError) as error:
+                # Only the boot verifier can supply a journal-safe requirement.
+                # Other errors can carry paths, command output or credential details.
+                if isinstance(error, LocalRequirementFailed) and len(reported_requirements) < 16:
+                    reason = str(error)
+                    if len(reason) <= 512 and reason.isprintable() and reason not in reported_requirements:
+                        reported_requirements.add(reason)
+                        print(reason, file=sys.stderr)
                 if time.monotonic() >= deadline:
                     break
                 time.sleep(2)
         if candidate:
-            # Do not change default on failure. Read it back before rebooting;
-            # the accepted image was protected throughout the transfer.
-            fallback_boot(installed_path)
+            rollback_running(value)
         raise ReleaseError('Image readiness deadline expired.')
 
 
-def fallback_boot(installed_path=INSTALLED):
-    """Also runs after a completion-service crash or its hard runtime deadline."""
-    value = policy(installed_path)
+def rollback_running(value):
+    """Verify a pending candidate's predecessor while holding the operation lock."""
     record = load(value)
-    if (record is None or record['phase'] not in ('staging', 'rebooting') or
-            record['candidate'] != identity(value)):
+    intent = current_promotion(value, record)
+    running = identity(value)
+    if record is None or running != record['candidate'] or not (
+            is_pending(record) or record['phase'] == 'accepted' and intent is not None):
         return
     require('image_contract' in value and 'recovery_state' in value,
             'Automatic fallback is blocked pending recovery qualification.')
+    binding = value['image_contract']['recovery']['binding']['release']
+    previous = record['fallback']
+    accepted = accepted_identity(value)
+    require(accepted is None or accepted == previous or intent and accepted == running,
+            'Recorded acceptance differs from the authorized rollback.')
+    require(previous['image_id'] == running['image_id'] and previous['deployment_sequence'] == binding['sequence']
+            and previous['uki_name'] == binding['uki_name'], 'Rollback target differs from the authorized predecessor.')
+    if intent:
+        require(intent == {'schema': 1, 'operation': operation_id(record), 'target': running, 'previous': previous,
+                           'manual': False},
+                'Rollback promotion intent differs from the authorized operation.')
     from .steady_recovery import runtime_fallback
-    runtime_fallback(value)
+    # A later retry may continue rollback, even if a reboot request fails.
+    save(value, {**record, 'phase': 'rebooting', 'error': 'readiness-failed'})
+
+    def restored():
+        # Older slots understand these two schema-1 records and ignore the journal.
+        save_accepted({**value, **previous})
+        if intent:
+            finish_promotion(value)
+
+    runtime_fallback(value, restore_promoted=bool(intent), restored=restored)
+
+
+def fallback_boot(installed_path=INSTALLED):
+    """Reconcile a crash between intent, EFI selection, commit and publication."""
+    value = policy(installed_path)
+    with operation_lock():
+        intent = load_promotion(value)
+        record = load(value)
+        if intent or not is_pending(record) and accepted_identity(value) == identity(value):
+            try:
+                promote_running(value)
+                return
+            except (OSError, ValueError, KeyError):
+                if not is_pending(record) and not (intent and record and record['phase'] == 'accepted'):
+                    raise
+        rollback_running(value)
+
+
+def close_failed_stage(value, record):
+    from .runtime import require_accepted_boot
+    require_accepted_boot(value)
+    esp = update.restore_esp(value)
+    current = Path(command(['bootctl', '--print-stub-path']).strip())
+    entry = update.accepted_boot(current, value['uki_name'], esp)
+    require_default(entry)
+    select_boot_once(entry)
+    save(value, {**record, 'phase': 'failed', 'error': 'admission-or-staging-failed'})
 
 
 def cancel_request(installed_path=INSTALLED):
     """Undo an ambiguous OneShot after this executor crashes in the old image."""
     value = policy(installed_path)
-    with operation_lock():
-        record = load(value)
-        if (record is None or record['phase'] not in ('staging', 'rebooting') or
-                record.get('executor_id') != os.environ.get('INVOCATION_ID') or
-                record['fallback'] != identity(value)):
-            return
-        entry = boot_esp(value)/'EFI/Linux'/value['uki_name']
-        select_boot_once(entry)
-        require_default(entry)
-        save(value, {**record, 'phase': 'failed', 'error': 'admission-or-staging-failed'})
+    executor = os.environ.get('INVOCATION_ID')
+    successful_stop = os.environ.get('SERVICE_RESULT') == 'success'
+    running = identity(value)
+
+    def owned(record):
+        # systemd can report success for SIGTERM in the write window. A clean
+        # stop after the committed reboot checkpoint preserves the selected image.
+        return (is_pending(record) and record['executor_id'] == executor and record['fallback'] == running and
+                (not successful_stop or record['phase'] == 'staging' or record['error'] is not None))
+
+    if owned(load(value)):
+        # A rejecting competitor may hold the lock briefly after the staging
+        # worker exits. Recheck the record under lock before restoring anything.
+        with operation_lock(wait=True):
+            record = load(value)
+            if owned(record):
+                close_failed_stage(value, record)
 
 
 def request(data):
@@ -320,7 +503,7 @@ def serve(connection, installed_path=INSTALLED):
     if selected['action'] == 'trigger':
         result = trigger(selected['digest'], installed_path)
     else:
-        result = {'schema': 1, 'operation': load(value), 'accepted': accepted_identity(value),
+        result = {'schema': 1, 'operation': load(value), 'accepted': visible_accepted(value),
                   'recovery': recovery_information(value)}
     try:
         connection.sendall(canonical({'ok': True, 'result': result}))
@@ -357,7 +540,7 @@ def main(arguments=None):
                 complete()
             elif args.action == 'fallback' and os.environ.get('SERVICE_RESULT') != 'success':
                 fallback_boot()
-            elif args.action == 'cancel-request' and os.environ.get('SERVICE_RESULT') != 'success':
+            elif args.action == 'cancel-request':
                 cancel_request()
         else:
             selected = {'schema': 1, 'action': args.action}

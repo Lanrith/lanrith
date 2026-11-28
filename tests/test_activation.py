@@ -44,7 +44,7 @@ class OptionalActivationTests(unittest.TestCase):
                 'future-api.socket', 'systemd-networkd.socket'])
 
     @unittest.skipUnless(shutil.which('systemctl'), 'Native systemd preset verification needs systemctl.')
-    def test_distribution_presets_cannot_remove_the_boot_failure_gate(self):
+    def test_distribution_presets_preserve_only_the_declared_boot_gate(self):
         value = config.load(Path(__file__).parents[1]/'examples/minimal.yaml')
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -62,8 +62,10 @@ class OptionalActivationTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)
             required = root/'usr/lib/systemd/system/boot-complete.target.requires'
-            for unit in (name, 'lanrith-health.service'):
-                self.assertEqual((required/unit).readlink(), Path('/usr/lib/systemd/system')/unit)
+            self.assertFalse((required/name).is_symlink())
+            self.assertFalse((root/'etc/systemd/system/boot-complete.target.requires'/name).is_symlink())
+            self.assertEqual((required/'lanrith-health.service').readlink(),
+                             Path('/usr/lib/systemd/system/lanrith-health.service'))
 
     @unittest.skipUnless(shutil.which('systemctl'), 'Native systemd preset verification needs systemctl.')
     def test_component_units_cannot_be_reenabled_by_package_presets(self):

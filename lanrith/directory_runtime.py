@@ -1,5 +1,6 @@
 """Observe verified directory TLS without binding or reading a credential."""
 
+import hashlib
 import ipaddress as ip
 import json
 import os
@@ -8,10 +9,12 @@ import pwd
 import re
 import socket
 import ssl
+import subprocess
 import tempfile
 import time
 
 from .policy_runtime import decode, exact, read
+from .release import CERTIFICATE
 
 
 MANIFEST = Path('/usr/share/lanrith/directory-health.json')
@@ -55,6 +58,28 @@ def load(path=MANIFEST, *, owner=0):
     else:
         require(value['addresses'] == [str(literal)])
     return value
+
+
+def trust_expiries(deadline):
+    # Inspect only the selected installed public bundle. Bounds match admission.
+    authority = read(Path(load()['ca_file']), 64*1024).decode('ascii')
+    blocks = CERTIFICATE.findall(authority)
+    require(1 <= len(blocks) <= 16 and ''.join(blocks) == authority)
+    deadline = min(deadline, time.monotonic()+2)
+    result = {}
+    for block in blocks:
+        fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(block)).hexdigest()
+        try:
+            parsed = subprocess.run(['/usr/bin/openssl', 'x509', '-noout', '-enddate'],
+                                    input=block.encode('ascii'), stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, timeout=remaining(deadline),
+                                    env={'LC_ALL': 'C'})
+        except subprocess.TimeoutExpired:
+            raise DirectoryHealthError('Directory trust metadata timed out.') from None
+        line = parsed.stdout.decode('ascii').strip()
+        require(parsed.returncode == 0 and line.startswith('notAfter=') and len(line) <= 64)
+        result[fingerprint] = int(ssl.cert_time_to_seconds(line.removeprefix('notAfter=')))
+    return result
 
 
 def remaining(deadline):

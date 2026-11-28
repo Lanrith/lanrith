@@ -267,12 +267,13 @@ def exercise_extensions():
             for _, remote, family in uplink:
                 ns('router', 'ip', '-'+str(family), 'route', 'add', 'default', 'via', remote)
             sysctls = work/'routing.conf'
-            sysctls.write_text(firewall.sysctls())
-            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
+            activation = firewall.activation(value)
+            sysctls.write_text(activation['usr/lib/lanrith/firewall-forwarding.conf'] + firewall.sysctls())
             host_rules, peer_rules = work/'host.nft', work/'peer.nft'
             host_rules.write_text(firewall.render(value, extension_rules=plan))
             peer_rules.write_text(service_plane.namespace_firewall(value, plane, extension_rules=plan))
             ns('router', 'nft', '--file', str(host_rules))
+            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
             ns('services', 'nft', '--file', str(peer_rules))
             processes.append(server('router', work, uid=1801))
             processes.append(server('services', work))
@@ -308,6 +309,7 @@ def exercise_extensions():
             host_rules.write_text(firewall.render(value))
             peer_rules.write_text(service_plane.namespace_firewall(value, plane))
             ns('router', 'nft', '--file', str(host_rules))
+            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
             ns('services', 'nft', '--file', str(peer_rules))
             for gateway, _, _ in client:
                 probe('extension-client', gateway, 8888, False)
@@ -339,8 +341,8 @@ def exercise(example):
         processes, namespaces = [], ['router', 'upstream']
         try:
             sysctls = work/'routing.conf'
-            sysctls.write_text(config.render(value)['etc/sysctl.d/90-lanrith-routing.conf'])
-            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
+            activation = firewall.activation(value)
+            sysctls.write_text(activation['usr/lib/lanrith/firewall-forwarding.conf'] + firewall.sysctls())
             wan = value['hardware']['interfaces'][value['uplink']['interface']]['name']
             uplink = connection(wan, 'upstream', ['198.51.100.1/24', '2001:db8:ffff::1/64'], 0)
             for gateway, remote, family in uplink:
@@ -350,10 +352,10 @@ def exercise(example):
                 namespace = 'client'+str(index)
                 namespaces.append(namespace)
                 clients.append((namespace, key, connection(network['name'], namespace, network['addresses'], index)))
-            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
             rules = work/'policy.nft'
             rules.write_text(config.render(value)['etc/nftables.conf'])
             ns('router', 'nft', '--file', str(rules))
+            ns('router', '/usr/lib/systemd/systemd-sysctl', str(sysctls))
             for namespace in namespaces:
                 processes.append(server(namespace, work))
             first_client = clients[0]

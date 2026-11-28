@@ -13,7 +13,7 @@ import yaml
 
 from .release import canonical, require, ReleaseError
 from . import access as access_rules
-from . import fancontrol_config
+from . import fancontrol_config, journal, networkd
 from . import dhcp4 as dhcp4_config
 from . import firewall, hardware_config as hardware_policy, intent, integrations, service_plane, routing, authoritative, nat46, nat64, translation, ids, metrics, bindings, runtime_plan, radius, logs, discovery
 
@@ -21,6 +21,10 @@ from . import firewall, hardware_config as hardware_policy, intent, integrations
 FEATURES = {'dns', 'dhcp4', 'ntp', 'discovery', 'radius', 'policy', 'bgp', 'nat64',
             'nat46', 'ids', 'metrics', 'logs', 'snmp', 'vpp'}
 IDENTIFIER = re.compile(r'[a-z][a-z0-9-]{0,11}\Z')
+SSH_FORWARDING = {'agent': 'AllowAgentForwarding', 'tcp': 'AllowTcpForwarding',
+                  'unix': 'AllowStreamLocalForwarding', 'x11': 'X11Forwarding'}
+SSH_LIMITS = {'max_auth_tries': 'MaxAuthTries', 'login_grace_seconds': 'LoginGraceTime',
+              'client_alive_interval_seconds': 'ClientAliveInterval', 'client_alive_count_max': 'ClientAliveCountMax'}
 IFNAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,14}\Z')
 
 
@@ -84,7 +88,7 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None, *, ta
     if target_facts is not None:
         inputs['hardware_ownership'] = hardware_policy.ownership_manifest(value, target_facts)
     if retained_allocations is not None:
-        inputs['translation_allocations'] = translation.allocate(value, retained_allocations)
+        inputs.update(translation.allocation_inputs(value, retained_allocations))
     if boot_inputs:
         require(isinstance(boot_inputs, dict) and set(boot_inputs) <= {
             'pcr_public_key_sha256', 'recovery_credential_sha256', 'fallback_binding'},
@@ -97,6 +101,7 @@ def effective_digest(value, integrations, serial_provisioning_sha256=None, *, ta
 
 
 def normalize(value):
+    declaration = value
     value = intent.prepare(value)
     from . import credential_image
     credential_image.sources(value)
@@ -128,17 +133,28 @@ def normalize(value):
             type(watchdog['timeout_seconds']) is int and 10 <= watchdog['timeout_seconds'] <= 3600,
             'Invalid hardware watchdog policy.')
     boot = hardware.setdefault('boot', {'secure_boot': True, 'tpm': 'required'})
-    fields(boot, {'secure_boot', 'tpm', 'console', 'recovery_console'})
+    fields(boot, {'secure_boot', 'tpm', 'console', 'recovery_console', 'removable_shim_sha256', 'fallback_timeout_seconds'})
+    if 'removable_shim_sha256' in boot:
+        require(boot.get('secure_boot', True) is True and isinstance(boot['removable_shim_sha256'], str) and
+                re.fullmatch(r'[0-9a-f]{64}', boot['removable_shim_sha256']),
+                'Vendor shim requires Secure Boot and its approved SHA-256 digest.')
     require(type(boot.get('secure_boot', True)) is bool and boot.get('tpm', 'required') in ('required', 'disabled'),
             'Invalid boot protection profile.')
     require(isinstance(boot.get('console', 'tty0'), str) and
             re.fullmatch(r'(tty0|ttyS[0-9]+(?:,[0-9]+n8)?|hvc[0-9]+)', boot.get('console', 'tty0')),
             'Invalid boot console.')
+    if 'fallback_timeout_seconds' in boot:
+        require(type(boot['fallback_timeout_seconds']) is int and 1 <= boot['fallback_timeout_seconds'] <= 86400,
+                'hardware.boot.fallback_timeout_seconds must be between 1 and 86400 seconds.')
     recovery = boot.setdefault('recovery_console', boot.get('console', 'tty0').split(',')[0])
     require(isinstance(recovery, str) and re.fullmatch(r'(tty0|ttyS[0-9]+|ttyUSB[0-9]+|ttyAMA[0-9]+|hvc[0-9]+)', recovery),
             'Invalid recovery console.')
     storage = hardware.setdefault('storage', {})
-    fields(storage, {'target', 'root_mib', 'state_mib', 'esp_mib'})
+    fields(storage, {'target', 'root_mib', 'state_mib', 'esp_mib', 'initialization_timeout_seconds'})
+    if 'initialization_timeout_seconds' in storage:
+        seconds = storage['initialization_timeout_seconds']
+        require(type(seconds) is int and 1 <= seconds <= 3600,
+                'hardware.storage.initialization_timeout_seconds must be between 1 and 3600 seconds.')
     if 'target' in storage:
         require(isinstance(storage['target'], str) and
                 re.fullmatch(r'/dev/disk/by-id/[A-Za-z0-9_.:+-]+', storage['target']),
@@ -183,7 +199,7 @@ def normalize(value):
     fancontrol_config.normalize(hardware)
     uplink = value['uplink']
     fields(uplink, {'interface', 'ipv4', 'ipv6', 'addresses', 'gateways', 'upload_shaping', 'masquerade',
-                    'downstream_prefix', 'delivery', 'private_services'}, {'interface'})
+                    'downstream_prefix', 'delivery', 'private_services', 'required_for_online'}, {'interface'})
     require(type(uplink.get('masquerade', False)) is bool, 'Uplink masquerading must be a boolean.')
     require(uplink['interface'] in interfaces, 'Uplink interface is not declared.')
     require(uplink.get('ipv4', 'dhcp') in ('dhcp', 'static', 'disabled') and
@@ -217,7 +233,8 @@ def normalize(value):
     for key, network in networks.items():
         require(IDENTIFIER.fullmatch(key), 'Invalid network key.')
         fields(network, {'interface', 'vlan', 'addresses', 'dhcp4', 'ra', 'dns', 'name', 'namespace',
-                         'forwarding', 'routed_prefixes', 'role', 'ntp', 'additional_subnets'},
+                         'forwarding', 'routed_prefixes', 'role', 'ntp', 'ntp_intercept', 'additional_subnets',
+                         'ipv6_delivery', 'ipv6_upstream_routes', 'pref64'},
                {'interface', 'addresses'})
         require(network['interface'] in interfaces and network['interface'] != uplink['interface'],
                 'Internal networks cannot use the uplink.')
@@ -287,7 +304,7 @@ def normalize(value):
                     all(type(port) is int and 1 <= port <= 65535 for port in rule['ports']), 'Invalid connection ports.')
     administration = value['administration']
     fields(administration, {'networks', 'authorized_keys', 'ssh_port', 'username', 'serial', 'host_key_state',
-                            'host_key_rotation', 'root_access'},
+                            'host_key_rotation', 'host_key_pin', 'root_access', 'ssh_forwarding', 'ssh_limits'},
            {'networks', 'authorized_keys'})
     host_key_state = administration.setdefault('host_key_state', '/var/lib/lanrith/ssh-host-keys')
     require(isinstance(host_key_state, str) and re.fullmatch(r'/var/lib/[A-Za-z0-9_/-]+', host_key_state) and
@@ -296,21 +313,45 @@ def normalize(value):
     rotation = administration.setdefault('host_key_rotation', 'retain')
     require(rotation == 'retain' or isinstance(rotation, str) and re.fullmatch(r'[0-9a-f]{32}', rotation),
             'Host-key rotation must be retain or a random 128-bit lowercase hexadecimal generation.')
+    if 'host_key_pin' in administration:
+        pin = administration['host_key_pin']
+        fields(pin, {'generation', 'fingerprint'}, {'generation', 'fingerprint'})
+        require(isinstance(pin['generation'], str) and (pin['generation'] == 'retain' or
+                re.fullmatch(r'[0-9a-f]{32}', pin['generation'])) and rotation in ('retain', pin['generation']) and
+                isinstance(pin['fingerprint'], str) and
+                re.fullmatch(r'SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]', pin['fingerprint']),
+                'Host-key recovery requires a matching generation and an OpenSSH SHA256 fingerprint.')
     username = administration.setdefault('username', 'admin')
     require(isinstance(username, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,30}', username) and
             username not in ('root', 'nobody', 'daemon'), 'Invalid administrator account.')
     serial = administration.setdefault('serial', {'enabled': False})
-    fields(serial, {'enabled', 'tty', 'timeout_seconds'}, {'enabled'})
+    fields(serial, {'enabled', 'tty', 'timeout_seconds', 'cooldown'}, {'enabled'})
     require(type(serial['enabled']) is bool and
             re.fullmatch(r'(ttyS[0-9]+|ttyUSB[0-9]+|ttyAMA[0-9]+|hvc[0-9]+)', serial.get('tty', 'ttyS0')) and
             type(serial.get('timeout_seconds', 300)) is int and 30 <= serial.get('timeout_seconds', 300) <= 3600,
             'Invalid serial administration policy.')
+    if 'cooldown' in serial:
+        cooldown = serial['cooldown']
+        fields(cooldown, {'attempts', 'seconds'}, {'attempts', 'seconds'})
+        require(serial['enabled'] and type(cooldown['attempts']) is int and
+                2 <= cooldown['attempts'] <= 10 and type(cooldown['seconds']) is int and
+                1 <= cooldown['seconds'] <= 300, 'Invalid serial cooldown policy.')
     root_access = administration.setdefault('root_access', 'enabled')
     require(root_access in ('enabled', 'disabled'), 'Root access must be enabled or disabled.')
+    forwarding = administration.get('ssh_forwarding', {})
+    fields(forwarding, SSH_FORWARDING)
+    require(all(type(allowed) is bool for allowed in forwarding.values()), 'SSH forwarding choices must be booleans.')
+    require(root_access == 'enabled' or not forwarding.get('agent'), 'Rootless SSH cannot forward an agent.')
+    limits = administration.get('ssh_limits', {})
+    fields(limits, SSH_LIMITS)
+    for key, limit in limits.items():
+        minimum = 1 if key == 'max_auth_tries' else 0
+        require(type(limit) is int and minimum <= limit <= 2147483647, f'Invalid SSH limit {key}.')
     require(root_access == 'enabled' or not serial['enabled'],
             'Serial login requires root access to be enabled.')
     require(isinstance(administration['networks'], list) and administration['networks'] and
-            all(key in networks for key in administration['networks']), 'Declare management networks explicitly.')
+            all(isinstance(key, str) and key in networks and 'namespace' not in networks[key]
+                for key in administration['networks']), 'SSH management networks must be attached in the host namespace.')
     require(isinstance(administration['authorized_keys'], list) and administration['authorized_keys'],
             'At least one administrator public key is required.')
     for key in administration['authorized_keys']:
@@ -339,10 +380,12 @@ def normalize(value):
     services = value.setdefault('services', {})
     fields(services, FEATURES)
     for feature, settings in services.items():
-        fields(settings, {'enabled', 'configuration'} | ({'domain', 'upstreams', 'blocked_domains', 'authoritative'}
-               if feature == 'dns' else {'upstreams'} if feature == 'ntp' else
+        fields(settings, {'enabled', 'configuration'} | ({'domain', 'upstreams', 'blocked_domains', 'authoritative',
+                                           'tls_forwarding', 'private_dns64_startup'}
+               if feature == 'dns' else
+               {'upstreams', 'total_sources', 'require_numeric_source', 'ratelimit'} if feature == 'ntp' else
                {'domain', 'alias_prefix', 'networks', 'additional_sources', 'browse', 'external_publishers',
-                'exclude', 'views', 'default_view'} if feature == 'discovery' else set()), {'enabled'})
+                'exclude', 'views', 'default_view', 'direct_readers', 'local_clients'} if feature == 'discovery' else set()), {'enabled'})
         require(type(settings['enabled']) is bool, 'Service enable flags must be booleans.')
         # Native integration modules must be explicitly admitted until their typed compiler is qualified.
         if settings['enabled'] and feature not in {'dns', 'dhcp4', 'ntp', 'discovery'}:
@@ -371,7 +414,14 @@ def normalize(value):
             services.get('dhcp4', {}).get('enabled', False), 'DHCP pools require the DHCP service.')
     intent.validate_allocations(value)
     integrations.validate(value)
+    if 'ntp' not in declaration.get('services', {}):
+        require(not value.get('identity', {}).get('policy', {}).get('enabled'),
+                'Directory policy requires synchronized time. Configure services.ntp with site upstreams '
+                'or explicitly disable it when providing synchronized kernel time independently.')
+        require(not any(lan.get('ntp') for lan in declaration['networks'].values()),
+                'LAN NTP access requires explicit services.ntp with site upstreams or an explicit global disable.')
     bindings.validate(value)
+    networkd.validate(value)
     return value
 
 
@@ -379,17 +429,42 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
     require(access_backend in ("legacy", "tun"), "Unknown build access backend.")
     value = normalize(value)
     integrations.require_runtime(value, target_facts)
-    user = value['administration']['username']
-    root_access = value['administration']['root_access']
-    ssh_policy = ('PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n' +
-                  ('AllowAgentForwarding no\n' if root_access == 'disabled' else '') +
-                  f'AllowUsers {user}\nHostKey {value["administration"]["host_key_state"]}/ssh_host_ed25519_key\n' +
-                  f'Port {value["administration"].get("ssh_port", 22)}\n')
+    admin = value['administration']
+    user, root_access = admin['username'], admin['root_access']
+    port = admin.get('ssh_port', 22)
+    ssh_interfaces = {}
+    for key in admin['networks']:
+        network = value['networks'][key]
+        ssh_interfaces[network['name']] = [str(ipaddress.ip_interface(a).ip) for a in network['addresses']]
+    ssh_policy = ('PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n'
+                  f'AllowUsers {user}\nHostKey {admin["host_key_state"]}/ssh_host_ed25519_key\nPort {port}\n')
+    forwarding = dict(admin.get('ssh_forwarding', {}))
+    if root_access == 'disabled':
+        forwarding['agent'] = False
+    for channel, allowed in forwarding.items():
+        ssh_policy += f'{SSH_FORWARDING[channel]} {"yes" if allowed else "no"}\n'
+    for key, limit in admin.get('ssh_limits', {}).items():
+        ssh_policy += f'{SSH_LIMITS[key]} {limit}\n'
+    for addresses in ssh_interfaces.values():
+        ssh_policy += ''.join(f'ListenAddress {address}\n' for address in addresses)
     files = {'etc/hostname': value['hostname'] + '\n',
              'etc/hosts': '127.0.0.1 localhost\n127.0.1.1 '+value['hostname']+'\n'
                  '::1 localhost ip6-localhost ip6-loopback\n',
-             'etc/sysctl.d/90-lanrith-routing.conf': firewall.sysctls(),
              'etc/ssh/sshd_config.d/00-lanrith.conf': ssh_policy,
+             'usr/share/lanrith/ssh-listeners.json': canonical({'port': port, 'interfaces': ssh_interfaces}).decode(),
+             'etc/systemd/system/ssh.service.d/30-lanrith-listeners.conf': (
+                 '[Unit]\nWants=lanrith-ssh-listeners.timer\n'
+                 '[Service]\nExecCondition=/usr/lib/lanrith/verify-ssh-listeners wait\n'),
+             'usr/lib/systemd/system/lanrith-ssh-listeners.timer': (
+                 '[Unit]\nDescription=Check for late SSH management addresses\nPartOf=ssh.service\n'
+                 '[Timer]\nOnActiveSec=5s\nOnUnitInactiveSec=15s\nAccuracySec=1s\n'),
+             'usr/lib/systemd/system/lanrith-ssh-listeners.service': (
+                 '[Unit]\nDescription=Restore available SSH management listeners\nAfter=ssh.service\n'
+                 '[Service]\nType=oneshot\nExecStart=/usr/lib/lanrith/verify-ssh-listeners repair\n'
+                 'TimeoutStartSec=15s\nRuntimeDirectory=lanrith-ssh-listeners\nRuntimeDirectoryMode=0700\n'
+                 'RuntimeDirectoryPreserve=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n'
+                 'CapabilityBoundingSet=CAP_SYS_PTRACE CAP_NET_BIND_SERVICE\n'
+                 'NoNewPrivileges=yes\nRestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX\n'),
              f'home/{user}/.ssh/authorized_keys': '\n'.join(value['administration']['authorized_keys']) + '\n'}
     if root_access == 'disabled':
         # The SSH master still needs a small capability set to authenticate and
@@ -414,6 +489,15 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
             'SystemCallFilter=chroot\n')
     if root_access == 'enabled':
         files['etc/security/authorized_keys'] = '\n'.join(value['administration']['authorized_keys']) + '\n'
+        auth = ['auth sufficient pam_rssh.so auth_key_file=/etc/security/authorized_keys']
+        if admin['serial']['enabled']:
+            auth.append('auth sufficient pam_exec.so quiet quiet_log seteuid expose_authtok '
+                        '/usr/lib/lanrith/verify-serial-passphrase')
+        files['etc/pam.d/lanrith-sudo-auth'] = '\n'.join([*auth, 'auth requisite pam_deny.so', ''])
+        for service, session in (('sudo', 'common-session-noninteractive'), ('sudo-i', 'common-session')):
+            limits = 'session required pam_limits.so\n' if service == 'sudo-i' else ''
+            files['etc/pam.d/'+service] = ('#%PAM-1.0\n'+limits+'@include lanrith-sudo-auth\n'
+                                           '@include common-account\n@include '+session+'\n')
         files['etc/sudoers.d/60-lanrith'] = (
             f'{user} ALL=(ALL:ALL) ALL\nDefaults:{user} env_keep += "SSH_AUTH_SOCK"\n'
             f'Defaults:{user} timestamp_type=tty\nDefaults:{user} timestamp_timeout=5\n')
@@ -437,18 +521,27 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
     wan = interfaces[value['uplink']['interface']]['name']
     uplink = value['uplink']
     dhcp = 'ipv4' if uplink.get('ipv4', 'dhcp') == 'dhcp' else 'no'
-    proxy_ndp = bool(service_plane.topology(value)['proxy'])
+    proxy_addresses = service_plane.topology(value)['proxy']
+    files['etc/dbus-1/system.d/60-lanrith-network1.conf'] = networkd.bus_policy()
+    wait_links = []
+    wan_ready = 'RequiredForOnline=no'
+    if uplink.get('required_for_online'):
+        wait_links.append(wan)
+        families = networkd.required_uplink_families(uplink)
+        family = 'both' if len(families) == 2 else families[0]
+        wan_ready = f'RequiredForOnline=routable\nRequiredFamilyForOnline={family}'
     files['etc/systemd/network/20-uplink.network'] = (
-        f'[Match]\nName={wan}\n\n[Network]\nDHCP={dhcp}\n'
+        f'[Match]\nName={wan}\n\n[Link]\n{wan_ready}\n\n[Network]\nDHCP={dhcp}\n'
         f'IPv6AcceptRA={"yes" if uplink.get("ipv6", "ra") == "ra" else "no"}\n'
-        # Networkd reapplies this switch when restarted. It must agree with
-        # the service attachment instead of disabling its on-link replies.
-        f'IPv6ProxyNDP={"yes" if proxy_ndp else "no"}\n'
+        f'IPv6ProxyNDP={"yes" if proxy_addresses else "no"}\n' +
+        ''.join(f'IPv6ProxyNDPAddress={address}\n' for address in proxy_addresses) +
         'LLMNR=no\nMulticastDNS=no\n' +
         ('LinkLocalAddressing=no\n' if uplink.get('ipv6', 'ra') == 'disabled' else 'LinkLocalAddressing=ipv6\n') +
         ''.join(f'Address={address}\n' for address in uplink.get('addresses', [])) +
         ''.join(f'Gateway={gateway}\n' for gateway in uplink.get('gateways', [])) +
         '\n[DHCPv4]\nUseDNS=no\nUseNTP=no\nUseHostname=no\n')
+    if uplink.get('ipv6', 'ra') == 'ra':
+        files['etc/systemd/network/20-uplink.network'] += '\n[IPv6AcceptRA]\nDHCPv6Client=no\nUseDNS=no\n'
     if 'upload_shaping' in uplink:
         files['etc/systemd/network/20-uplink.network'] += (
             '\n[CAKE]\nParent=root\nBandwidth=' + str(uplink['upload_shaping']['mbps']) +
@@ -459,21 +552,38 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
             files[f'etc/systemd/network/30-{key}.netdev'] = (
                 f'[NetDev]\nName={network["name"]}\nKind=vlan\n\n[VLAN]\nId={network["vlan"]}\n')
             parents.setdefault(interfaces[network['interface']]['name'], []).append(network['name'])
-        text = f'[Match]\nName={network["name"]}\n\n[Network]\n'
+        family = networkd.families(network['addresses'])
+        offline_management = not networkd.requires_carrier(network)
+        if 'namespace' in network:
+            ready = 'RequiredForOnline=no'
+        else:
+            wait_links.append(network['name'])
+            state = 'no-carrier' if offline_management else 'routable'
+            ready = f'RequiredForOnline={state}\nRequiredFamilyForOnline={family}'
+        text = f'[Match]\nName={network["name"]}\n\n[Link]\n{ready}\n\n[Network]\n'
+        if offline_management:
+            text += 'ConfigureWithoutCarrier=yes\n'
         text += ''.join(f'Address={address}\n' for address in intent.gateway_addresses(network))
         text += 'IPv6AcceptRA=no\nIPv6SendRA=' + ('yes' if network.get('ra') else 'no') + '\n'
         text += 'LinkLocalAddressing=' + ('ipv6' if any(':' in a for a in network['addresses']) else 'no') + '\n'
         text += 'LLMNR=no\nMulticastDNS=no\n'
         if network.get('ra'):
+            text += '\n[IPv6SendRA]\n'
+            local_only = not networkd.routed(value, network)
+            if local_only:
+                text += 'RouterLifetimeSec=0\n'
             if network.get('dns'):
                 resolvers = intent.service_addresses(value, 'dns')[1:]
-                text += '\n[IPv6SendRA]\nDNS=' + ' '.join(resolvers) + '\nEmitDNS=yes\n'
+                text += 'DNS=' + ' '.join(resolvers) + '\nEmitDNS=yes\n'
+            else:
+                text += 'EmitDNS=no\n'
+            if local_only:
+                for route in networkd.local_routes(value, key):
+                    text += f'\n[IPv6RoutePrefix]\nRoute={route}\n'
             for address in network['addresses']:
                 parsed = ipaddress.ip_interface(address)
                 if parsed.version == 6:
                     text += f'\n[IPv6Prefix]\nPrefix={parsed.network}\n'
-            if 'nat64' in intent.translations(value):
-                text += '\n[IPv6PREF64Prefix]\nPrefix=64:ff9b::/96\nLifetimeSec=1800\n'
         files[f'etc/systemd/network/40-{key}.network'] = text + routing.static_routes(value, key)
     for parent, vlans in parents.items():
         require(not any(n['name'] == parent for n in networks.values()),
@@ -481,29 +591,21 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
         files[f'etc/systemd/network/25-{parent}-trunk.network'] = (
             f'[Match]\nName={parent}\n\n[Network]\nLinkLocalAddressing=no\n' +
             ''.join(f'VLAN={vlan}\n' for vlan in vlans))
+    files.update(networkd.pref64_units(value))
+    waiter = 'etc/systemd/system/systemd-networkd-wait-online.service.d/60-lanrith.conf'
+    if wait_links:
+        selection = ' '.join('--interface=' + name for name in sorted(wait_links))
+        files[waiter] = ('[Service]\nExecStart=\nExecStart=/usr/lib/systemd/systemd-networkd-wait-online '
+                         + selection + ' --timeout=30\n')
+    else:
+        # Namespace-owned LANs have their own readiness contract.
+        files[waiter] = '[Unit]\nConditionPathExists=/etc/lanrith/enable-network-wait-online\n'
     from . import directory_config
     files['etc/hosts'] += directory_config.hosts(value)
+    files.update(firewall.activation(value))
     files['etc/nftables.conf'] = firewall.render(value, access_backend=access_backend, retained_allocations=retained_allocations)
     if value['services'].get('dhcp4', {}).get('enabled'):
-        scopes = dhcp4_config.scopes(value)
-        dhcp4 = {
-            'interfaces-config': {'interfaces': [scope['interface'] for scope in scopes]},
-            # Kea's automatic CPU-sized pool can exceed the fixed service task
-            # ceiling on large hosts. Bound workers and queued packets instead
-            # of depending on the build machine or increasing that ceiling.
-            'multi-threading': {'enable-multi-threading': True, 'thread-pool-size': 2,
-                                'packet-queue-size': 64},
-            'lease-database': {'type': 'memfile', 'persist': True, 'name': '/var/lib/kea/kea-leases4.csv'},
-            'valid-lifetime': 3600, 'subnet4': scopes}
-        if radius.directory_admission(value):
-            dhcp4['control-socket'] = {'socket-type': 'unix', 'socket-name': '/run/kea/kea4-ctrl-socket'}
-            # The qualified x86-64 Kea package supplies the commands used by
-            # the bounded admission collector. A socket alone cannot serve them.
-            dhcp4['hooks-libraries'] = [{'library': '/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so'}]
-            files['etc/systemd/system/kea-dhcp4-server.service.d/60-lanrith-control.conf'] = (
-                '[Service]\nExecStartPost=/usr/bin/python3 /usr/lib/lanrith/lanrith/kea_runtime.py $MAINPID\n'
-                'TimeoutStartSec=20s\n')
-        files['etc/kea/kea-dhcp4.conf'] = json.dumps({'Dhcp4': dhcp4}, indent=2) + '\n'
+        files.update(dhcp4_config.render(value))
     files.update(service_plane.render(value))
     files.update(authoritative.render(value))
     files.update(routing.render(value))
@@ -513,9 +615,12 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
         files.update(nat46.render(value))
         files.update(nat64.render(value, retained_allocations))
     files.update(ids.render(value))
-    files.update(metrics.render(value))
+    if metrics.active(value):
+        files.update(metrics.render(value, rules=(files['etc/nftables.conf'], files['etc/lanrith/services.nft']),
+                                    access_backend=access_backend))
     files.update(directory_config.render(value))
     files.update(radius.render(value))
+    files.update(journal.render(value))
     files.update(logs.render(value))
     files.update(discovery.render(value, retained_allocations, access_backend=access_backend))
     from . import snmp
@@ -530,16 +635,13 @@ def render(value, *, target_facts=None, retained_allocations=None, access_backen
         # This strict JSON is an intermediate compiler input. The finalizer
         # consumes and removes it after producing the pinned runtime profile.
         files['usr/lib/lanrith-build/policy-baseline.json'] = canonical(
-            policy_agent.baseline(value, retained_allocations)).decode()
+            policy_agent.baseline(value, retained_allocations, access_backend=access_backend)).decode()
         files.update(policy_agent.render(value, access_backend=access_backend))
         if access_backend == 'tun':
             from . import tun_policy
             files['usr/lib/lanrith-build/policy-backend'] = 'tun\n'
             files['usr/lib/lanrith-build/policy-egress.nft'] = tun_policy.identity_egress(value)
             files['usr/lib/lanrith-build/policy-interfaces.json'] = canonical(tun_policy.Compiler(value).physical).decode()
-    for key in value['administration']['networks']:
-        files['etc/ssh/sshd_config.d/00-lanrith.conf'] += ''.join(
-            'ListenAddress '+str(ipaddress.ip_interface(a).ip)+'\n' for a in networks[key]['addresses'])
     files.update(runtime_plan.render(value, target_facts=target_facts, access_backend=access_backend))
     files['usr/share/lanrith/configuration.sha256'] = rendered_digest(
         value, target_facts, retained_allocations=retained_allocations, access_backend=access_backend) + '\n'
@@ -553,7 +655,7 @@ def rendered_digest(value, target_facts=None, *, retained_allocations=None, acce
     if retained_allocations is not None:
         if target_facts is None:
             inputs = {'configuration': value}
-        inputs['translation_allocations'] = translation.allocate(value, retained_allocations)
+        inputs.update(translation.allocation_inputs(value, retained_allocations))
     if access_backend != 'legacy':
         if inputs is value:
             inputs = {'configuration': value}

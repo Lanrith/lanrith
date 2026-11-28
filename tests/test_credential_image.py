@@ -78,6 +78,36 @@ class ImageCredentialsTests(unittest.TestCase):
             self.assertNotIn('ReadWritePaths=/var/lib/snmp /usr/', snmp)
             self.assertIn('-c /usr/lib/lanrith/credentials/core/monitor_user/snmpd.conf', snmp)
 
+    def test_reader_gates_cover_the_actual_image_inputs_and_keep_the_v1_binding(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temporary:
+            value = fixture(Path(temporary))
+            selected = credential_config.catalog(value)
+            self.assertEqual(hashlib.sha256(credential_config.encoded(value)).hexdigest(),
+                             '551907efdc6416c0aa2de95ffd39ee01ed69fe8bf66ed81d93e7ab6780622bf6')
+            files = config.render(value)
+            helper_units = {'bgp-token': 'lanrith-routing-credentials.service',
+                            'tsig-base64': 'lanrith-dns-state.service',
+                            'radius-secret': 'lanrith-radius-runtime.service',
+                            'directory-password': 'lanrith-policy-reader-setup.service',
+                            'log-password': 'alloy.service', 'snmp-user': 'snmpd.service'}
+            for kind, unit in helper_units.items():
+                prefix = 'etc/systemd/system/'+unit+'.d/'
+                native = '\n'.join(text for path, text in files.items()
+                                   if path == 'usr/lib/systemd/system/'+unit or path.startswith(prefix))
+                items = [row for row in selected['credentials'] if row['format'] == kind]
+                gate = 'lanrith-credential-'+kind+'.service'
+                self.assertIn('Requires='+gate+'\nAfter='+gate+'\n', native)
+                self.assertIn('ExecStart=/usr/bin/lanrith-credentials gate '+kind+'\n',
+                              files['usr/lib/systemd/system/'+gate])
+                loaded = {line.removeprefix('LoadCredential=') for line in native.splitlines()
+                          if line.startswith('LoadCredential=')}
+                if kind == 'snmp-user':
+                    self.assertFalse(loaded)
+                    self.assertIn('-c '+items[0]['path'], native)
+                else:
+                    self.assertEqual(loaded, {row['reference']+':'+row['path'] for row in items})
+
     def test_missing_and_malformed_inputs_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -267,7 +297,7 @@ class ImageCredentialsTests(unittest.TestCase):
                                      (tree/'etc/systemd/system').rglob('*')))
                 self.assertFalse((tree/'usr/lib/systemd/system/lanrith-credential-ready.service').exists())
                 self.assertTrue((tree/'etc/unbound/unbound.conf.d/lanrith.conf').is_file())
-                self.assertTrue((tree/'etc/chrony/chrony.conf').is_file())
+                self.assertEqual((tree/'etc/chrony/chrony.conf').is_file(), name != 'explicit-disabled')
                 self.assertTrue((tree/'etc/kea/kea-dhcp4.conf').is_file())
                 if name == 'static-dns':
                     self.assertTrue((tree/'etc/bind/named.conf').is_file())

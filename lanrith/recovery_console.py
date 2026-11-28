@@ -22,13 +22,24 @@ CERTIFICATE = Path('/sysroot/usr/share/lanrith/owner.crt')
 HASH = re.compile(r'scrypt:32768:8:1:([0-9a-f]{32}):([0-9a-f]{64})\n?\Z')
 
 
+TERMINAL = re.compile(r'(?:tty(?:S|AMA|USB|ACM)|hvc)[0-9]{1,3}')
+
+
+def require_build_terminal(tty):
+    if not isinstance(tty, str) or not TERMINAL.fullmatch(tty):
+        label = tty if isinstance(tty, str) and re.fullmatch(r'[A-Za-z0-9]{1,32}', tty) else '<invalid>'
+        raise release.ReleaseError(
+            f'hardware.boot.recovery_console={label} cannot host authenticated recovery. '
+            'Select a serial (ttyS, ttyAMA, ttyUSB) or hypervisor (hvc) terminal with a 1-3 digit number.')
+
+
 def policy(value):
     required = {'schema', 'tty', 'image_id', 'disk_by_id'}
     release.require(isinstance(value, dict) and required <= set(value) and
-                    set(value) <= required | {'state_uuid', 'offline_inputs', 'offline_backup', 'operations'} and
+                    set(value) <= required | {'state_uuid', 'offline_inputs', 'offline_backup', 'operations', 'firmware_transition'} and
                     type(value['schema']) is int and value['schema'] == 1 and
                     isinstance(value['tty'], str) and
-                    re.fullmatch(r'(?:tty(?:S|AMA|USB|ACM)|hvc)[0-9]{1,3}', value['tty']) and
+                    TERMINAL.fullmatch(value['tty']) and
                     isinstance(value['image_id'], str) and re.fullmatch(r'[a-z][a-z0-9-]{0,47}', value['image_id']) and
                     isinstance(value['disk_by_id'], str) and re.fullmatch(
                         r'/dev/disk/by-id/[A-Za-z0-9_.:+-]{1,180}', value['disk_by_id']) and
@@ -57,11 +68,18 @@ def policy(value):
         release.require('state_uuid' in value and binding['state_uuid'] == value['state_uuid'] and
                         binding['target_disk_by_id'] == value['disk_by_id'],
                         'Offline backup differs from the recovery target.')
+    if 'firmware_transition' in value:
+        from . import firmware_recovery
+        firmware_recovery.validate(value['firmware_transition'])
+        release.require('state_uuid' in value and isinstance(value.get('operations'), list) and
+                        'reenroll-tpm' in value['operations'],
+                        'Firmware maintenance requires a bound state volume and operation.')
     if 'operations' in value:
         operations = value['operations']
         release.require(isinstance(operations, list) and operations and
-                        operations == [name for name in ('repair', 'backup', 'restore') if name in operations] and
+                        operations == [name for name in ('repair', 'backup', 'restore', 'reenroll-tpm') if name in operations] and
                         (not ({'backup', 'restore'} & set(operations)) or 'offline_backup' in value) and
+                        ('reenroll-tpm' not in operations or 'firmware_transition' in value) and
                         ('repair' not in operations or 'state_uuid' in value and 'offline_inputs' in value),
                         'Invalid recovery write operations.')
     return value
@@ -109,19 +127,25 @@ def secret_from_tty(stream, output, *, prompt='Recovery passphrase: '):
 
 def fixed_menu(value, *, read_command, write, inspect, read_state_key=None, inspect_state=None,
                read_restore_key=None, restore=None, read_backup_key=None, backup=None,
-               read_repair_key=None, repair_slot=None):
+               read_repair_key=None, repair_slot=None, reenroll=None, firmware_preflight=None):
     """Accept fixed commands only after the entry point has authenticated."""
     commands = 'status, inspect, inspect-state, exit' if 'state_uuid' in value else 'status, inspect, exit'
     restore_available = 'offline_backup' in value and callable(read_restore_key) and callable(restore)
     backup_available = 'offline_backup' in value and callable(read_backup_key) and callable(backup)
     repair_available = 'repair' in value.get('operations', []) and callable(read_repair_key) and callable(repair_slot)
+    firmware_available = ('reenroll-tpm' in value.get('operations', []) and callable(reenroll) and
+                          callable(firmware_preflight) and callable(read_state_key))
+    if firmware_available:
+        commands += ', reenroll-tpm'
     if repair_available:
         commands += ', repair'
     if backup_available:
         commands += ', backup'
     if restore_available:
         commands += ', restore'
-    if repair_available:
+    if firmware_available:
+        write('Recovery console: '+commands+'. Firmware maintenance replaces the bound TPM enrollment.\n')
+    elif repair_available:
         write('Recovery console: '+commands+'. Repair replaces one OS slot and preserves encrypted state.\n')
     elif restore_available or backup_available:
         write('Recovery console: '+commands+'. '+('Restore replaces encrypted state.' if restore_available else
@@ -140,6 +164,26 @@ def fixed_menu(value, *, read_command, write, inspect, read_state_key=None, insp
                   (' Confirmed OS slot repair is available.\n' if repair_available else
                   (' Restore is gated and destructive.\n' if restore_available else
                    ' Backup is gated.\n' if backup_available else ' Repair is not available.\n')))
+        elif command == 'reenroll-tpm' and firmware_available:
+            try:
+                firmware_preflight(value)
+            except (release.ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+                write('The signed firmware destination is unavailable on this boot.\n')
+                continue
+            write('New SHA-256 PCR 7: '+value['firmware_transition']['pcr7_sha256']+
+                  '\nType REENROLL to authorize the bound TPM change: ')
+            if read_command() != 'REENROLL':
+                write('Firmware maintenance cancelled.\n')
+                continue
+            secret = read_state_key()
+            try:
+                reenroll(value, secret)
+                write('Firmware TPM enrollment verified. Cold boot the installed disk.\n')
+            except (release.ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError):
+                write('Firmware TPM enrollment incomplete. Retain the offline key and recovery media.\n')
+            finally:
+                if isinstance(secret, bytearray):
+                    secret[:] = bytes(len(secret))
         elif command == 'repair' and repair_available:
             secret = read_repair_key()
             try:
@@ -371,7 +415,13 @@ def main():
                         recovery_backup_preflight.prepare_readonly(policy['offline_backup'], include_backup=True)
                         return recovery_restore.restore(policy['offline_backup'], name, key,
                                                         image_id=policy['image_id'], confirm=confirm)
-            fixed_menu(value, read_command=read_command, write=sys.stdout.write, inspect=inspect_configured,
+            reenroll_fn = firmware_preflight = None
+            if 'reenroll-tpm' in value.get('operations', []):
+                from . import firmware_recovery
+                reenroll_fn = firmware_recovery.reenroll
+                firmware_preflight = firmware_recovery.approved_destination
+            fixed_menu(value, reenroll=reenroll_fn, firmware_preflight=firmware_preflight,
+                       read_command=read_command, write=sys.stdout.write, inspect=inspect_configured,
                        read_state_key=lambda: secret_from_tty(sys.stdin.buffer, sys.stdout,
                                                             prompt='Offline recovery key: '),
                        inspect_state=inspect_state_configured,

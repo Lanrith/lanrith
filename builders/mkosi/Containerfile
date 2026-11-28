@@ -6,6 +6,11 @@ FROM ${MKOSI_BUILDER_OCI}
 ARG DEBIAN_SNAPSHOT
 ARG DEBIAN_SECURITY_SNAPSHOT
 
+COPY sensor-package /packages
+RUN sqv --keyring /usr/share/keyrings/debian-archive-keyring.pgp --cleartext --output /tmp/ids.Release /packages/InRelease \
+ && cd /packages && sha256sum --check --strict SHA256SUMS \
+ && rm InRelease SHA256SUMS /tmp/ids.Release
+
 COPY lanrith-apt-bootstrap /opt/lanrith-apt-bootstrap
 RUN /bin/sh /opt/lanrith-apt-bootstrap/install.sh
 
@@ -44,7 +49,7 @@ RUN apt-get update \
       qemu-system-x86 \
       reprepro \
       sbsigntool \
-      suricata \
+      /packages/suricata_*_amd64.deb \
       systemd-journal-remote \
       swtpm \
       shim-signed \

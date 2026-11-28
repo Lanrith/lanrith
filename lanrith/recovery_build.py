@@ -46,7 +46,7 @@ RESTORE_MODULES = ('recovery_backup_preflight.py', 'recovery_backup_auth.py', 'r
 
 
 def prepare(destination, *, disk_by_id, credential, state_uuid=None, offline_inputs=None, offline_backup=None,
-            operations=None):
+            operations=None, transition=None):
     """Replace factory provisioning with a constrained console in a scratch build."""
     release.require(offline_backup is None or RESTORE_RECOVERY_BUILD_QUALIFIED or
                     isinstance(operations, list) and {'backup', 'restore'} <= set(operations),
@@ -79,6 +79,7 @@ def prepare(destination, *, disk_by_id, credential, state_uuid=None, offline_inp
                     'Invalid recovery credential format.')
     installed = json.loads(release.read(destination/'mkosi.extra/usr/share/lanrith/installed.json', 65536),
                            object_pairs_hook=release.unique)
+    recovery_console.require_build_terminal(installed['boot']['recovery_console'])
     value = {'schema': 1, 'tty': installed['boot']['recovery_console'],
              'image_id': installed['image_id'], 'disk_by_id': disk_by_id}
     if state_uuid is not None:
@@ -89,9 +90,14 @@ def prepare(destination, *, disk_by_id, credential, state_uuid=None, offline_inp
     if offline_backup is not None:
         value['offline_backup'] = {name: item.lower() if name in ('state_uuid', 'state_partuuid', 'backup_partuuid') and isinstance(item, str) else item
                                    for name, item in offline_backup.items()} if isinstance(offline_backup, dict) else offline_backup
+    if transition is not None:
+        release.require('tpm_policy' in installed and 'tpm_transition' not in installed,
+                        'Firmware maintenance requires a steady signed TPM image.')
+        value['firmware_transition'] = transition
     if operations is not None:
         value['operations'] = operations
     value = recovery_console.policy(value)
+    release.require(len(release.canonical(value)) <= 4096, 'Signed recovery policy exceeds the initrd read limit.')
     root = destination/'mkosi.images/initrd/mkosi.extra'
     library = root/'usr/lib/lanrith/lanrith'
     units = root/'usr/lib/systemd/system'
@@ -111,8 +117,10 @@ def prepare(destination, *, disk_by_id, credential, state_uuid=None, offline_inp
     modules = list(RESTORE_MODULES) if offline_backup is not None else []
     if modules or operations:
         modules.append('recovery_authority.py')
-    if operations and 'repair' in operations:
+    if operations and ('repair' in operations or 'reenroll-tpm' in operations):
         modules.append('recovery_slot.py')
+    if transition is not None:
+        modules.append('firmware_recovery.py')
     if modules:
         for name in modules:
             source, target = Path(__file__).with_name(name), library/name
@@ -134,14 +142,14 @@ def prepare(destination, *, disk_by_id, credential, state_uuid=None, offline_inp
     hold.chmod(0o755)
     (units/'lanrith-factory.service').write_text(
         '[Unit]\nDescription=Authenticated recovery console\nDefaultDependencies=no\n'
-        'Requires=initrd-root-fs.target\nAfter=initrd-root-fs.target systemd-udev-trigger.service\n'
+        'Requires=initrd-root-fs.target\nAfter=initrd-root-fs.target systemd-udev-trigger.service systemd-pcrphase-initrd.service\n'
         'Before=initrd-udevadm-cleanup-db.service initrd-cleanup.service initrd-switch-root.target shutdown.target\n'
         'Conflicts=shutdown.target\nOnFailure=emergency.target\nOnFailureJobMode=isolate\n'
         '[Service]\nType=oneshot\nExecStart=/usr/bin/lanrith-recovery\n'
         f'StandardInput=tty-force\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/{value["tty"]}\n'
         'TTYReset=yes\nTTYVHangup=no\nTimeoutStartSec=infinity\nLimitCORE=0\nNoNewPrivileges=yes\n')
     emergency = units/'emergency.service.d/60-lanrith-recovery.conf'
-    emergency.write_text('[Service]\nType=exec\nExecStart=\nExecStart=/usr/bin/lanrith-recovery-hold\n'
+    emergency.write_text('[Unit]\nDescription=Hold after independent recovery media failure\n[Service]\nType=exec\nExecStart=\nExecStart=/usr/bin/lanrith-recovery-hold\n'
                          'StandardInput=null\nStandardOutput=journal+console\nStandardError=journal+console\n')
     # The recovery initrd has no callable destructive installer entry point.
     (root/'usr/bin/lanrith-factory').unlink()

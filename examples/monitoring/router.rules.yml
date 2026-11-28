@@ -1,0 +1,167 @@
+groups:
+  - name: lanrith-router
+    interval: 15s
+    rules:
+      - record: lanrith:collection_observed
+        expr: |
+          (lanrith_router_metrics_collection_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_expected_router == 1)
+          and on (job, instance) (up == 1)
+          and on (job, instance) (lanrith_router_metrics_collection_timestamp_seconds >= time() - 120)
+          and on (job, instance) (lanrith_router_metrics_collection_timestamp_seconds <= time() + 5)
+      - record: lanrith:collection_current
+        expr: (lanrith_router_metrics_collection_success == 1) and on (job, instance) lanrith:collection_observed
+      - alert: LanrithRouterCollectionUnavailable
+        expr: (lanrith_expected_router == 1) unless on (job, instance) lanrith:collection_current
+      - record: lanrith:directory_collection_observed
+        expr: |
+          (lanrith_expected_router{directory="enabled"} == 1)
+          and on (job, instance) lanrith:collection_observed
+          and on (job, instance)
+            ((lanrith_router_metrics_collection_success == 1) or on (job, instance) lanrith_router_metrics_query_success)
+      - record: lanrith:directory_tls_observed
+        expr: |
+          lanrith_router_directory_tls_verified
+          and on (job, instance) lanrith:directory_collection_observed
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="directory"} == 1)
+          and on (job, instance) (lanrith_router_directory_tls_observation_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_router_directory_tls_observation_timestamp_seconds >= time() - 90)
+          and on (job, instance) (lanrith_router_directory_tls_observation_timestamp_seconds <= time() + 5)
+          and on (job, instance) lanrith_router_directory_tls_certificate_not_after_seconds
+      - record: lanrith:directory_tls_healthy
+        expr: |
+          (lanrith:directory_tls_observed == 1)
+          and on (job, instance) (lanrith_router_directory_tls_certificate_not_after_seconds > time())
+      - alert: LanrithDirectoryTLSProbeStale
+        expr: lanrith:directory_collection_observed unless on (job, instance) lanrith:directory_tls_observed
+      - alert: LanrithDirectoryTLSUnhealthy
+        expr: lanrith:directory_tls_observed unless on (job, instance) lanrith:directory_tls_healthy
+      - alert: LanrithDirectoryLeafExpiring
+        expr: |
+          (lanrith_router_directory_tls_certificate_not_after_seconds < time() + 14 * 86400)
+          and on (job, instance) lanrith:directory_tls_healthy
+      - alert: LanrithDirectoryIssuedLeafMismatch
+        expr: |
+          (abs(lanrith_router_directory_tls_certificate_not_after_seconds - on (job, instance) lanrith_directory_issued_leaf_not_after_seconds) > 1)
+          and on (job, instance) (lanrith_directory_issued_leaf_not_after_seconds > 0)
+          and on (job, instance) (lanrith_router_directory_tls_endpoints_total == 1)
+          and on (job, instance) lanrith:directory_tls_healthy
+      - record: lanrith:directory_trust_not_after_seconds
+        expr: |
+          lanrith_router_directory_trust_certificate_not_after_seconds
+          and on (job, instance) lanrith:directory_collection_observed
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="directory_trust"} == 1)
+      - alert: LanrithDirectoryTrustUnknown
+        expr: lanrith:directory_collection_observed unless on (job, instance) lanrith:directory_trust_not_after_seconds
+      - alert: LanrithDirectoryTrustExpiring
+        expr: lanrith:directory_trust_not_after_seconds < time() + 180 * 86400
+      - record: lanrith:chrony_synchronised
+        expr: |
+          lanrith_router_chrony_synchronised
+          and on (job, instance) lanrith:collection_observed
+          and on (job, instance) (lanrith_expected_router{ntp="enabled"} == 1)
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="chrony"} == 1)
+          and on (job, instance) (lanrith_router_chrony_observation_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_router_chrony_observation_timestamp_seconds >= time() - 180)
+          and on (job, instance) (lanrith_router_chrony_observation_timestamp_seconds <= time() + 5)
+      - record: lanrith:chrony_state
+        expr: |
+          max by (job, instance) (lanrith:chrony_synchronised)
+          or on (job, instance) (0 - max by (job, instance) (lanrith_expected_router{ntp="enabled"} == 1))
+      - record: lanrith:chrony_accuracy_state
+        expr: |
+          max by (job, instance) (
+            ((time() - lanrith_router_chrony_reference_timestamp_seconds)
+              <= bool on (job, instance) (lanrith_chrony_max_reference_age_seconds > 0))
+            * on (job, instance) (lanrith_router_chrony_clock_error_bound_seconds
+              <= bool on (job, instance) (lanrith_chrony_max_clock_error_seconds >= 0))
+            and on (job, instance) (lanrith:chrony_synchronised == 1)
+            and on (job, instance) (lanrith_chrony_max_reference_age_seconds < Inf)
+            and on (job, instance) (lanrith_chrony_max_clock_error_seconds < Inf)
+            and on (job, instance) (lanrith_router_chrony_reference_timestamp_seconds > 0)
+            and on (job, instance) (lanrith_router_chrony_reference_timestamp_seconds <= time() + 5)
+            and on (job, instance) (lanrith_router_chrony_reference_timestamp_seconds
+              <= on (job, instance) (lanrith_router_chrony_observation_timestamp_seconds + 5))
+            and on (job, instance) (lanrith_router_chrony_clock_error_bound_seconds >= 0)
+            and on (job, instance) (lanrith_router_chrony_clock_error_bound_seconds < Inf)
+            and on (job, instance) (lanrith_expected_router{ntp="enabled",chrony_accuracy="enabled"} == 1)
+          )
+          or on (job, instance) (0 - max by (job, instance)
+            (lanrith_expected_router{ntp="enabled",chrony_accuracy="enabled"} == 1))
+      - record: lanrith:policy_application_fresh
+        expr: |
+          (lanrith_router_policy_last_application == 1)
+          and on (job, instance) lanrith:collection_observed
+          and on (job, instance) (lanrith_router_policy_helper_ready == 1)
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="policy_status"} == 1)
+          and on (job, instance) (lanrith_router_policy_status_query_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_router_policy_status_query_timestamp_seconds <= time() + 5)
+          and on (job, instance) ((lanrith_router_policy_status_query_timestamp_seconds - lanrith_router_policy_directory_age_seconds) >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) ((lanrith_router_policy_status_query_timestamp_seconds - lanrith_router_policy_apply_age_seconds) >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) ((lanrith_router_policy_status_query_timestamp_seconds - lanrith_router_policy_directory_age_seconds) > time() - 90)
+          and on (job, instance) ((lanrith_router_policy_status_query_timestamp_seconds - lanrith_router_policy_apply_age_seconds) > time() - 90)
+      - alert: LanrithDirectoryPolicyApplicationAging
+        expr: |
+          (lanrith_expected_router{policy="enforce"} == 1) unless on (job, instance)
+          (lanrith:policy_application_fresh
+           and on (job, instance) ((lanrith_router_policy_status_query_timestamp_seconds - lanrith_router_policy_directory_age_seconds) > time() - 60)
+           and on (job, instance) ((lanrith_router_policy_status_query_timestamp_seconds - lanrith_router_policy_apply_age_seconds) > time() - 60))
+      - record: lanrith:policy_reader_outcome
+        expr: |
+          (lanrith_router_policy_reader_latest_attempt == 1)
+          and on (job, instance) lanrith:directory_collection_observed
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="policy_reader"} == 1)
+          and on (job, instance) (lanrith_router_policy_reader_attempt_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_router_policy_reader_attempt_timestamp_seconds >= time() - 90)
+          and on (job, instance) (lanrith_router_policy_reader_attempt_timestamp_seconds <= time() + 5)
+      - record: lanrith:inventory_current
+        expr: |
+          (lanrith_router_client_inventory_complete == 1)
+          and on (job, instance) lanrith:collection_current
+          and on (job, instance) (lanrith_router_client_inventory_collection_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_router_client_inventory_collection_timestamp_seconds >= time() - 120)
+          and on (job, instance) (lanrith_router_client_inventory_collection_timestamp_seconds <= time() + 5)
+      - record: lanrith:reconcilable_attachment
+        expr: |
+          (lanrith_attachment_info{placement!=""} == 1)
+          and on (job, instance, network, interface)
+          (count by (job, instance, network, interface) (lanrith_attachment_info == 1) == 1)
+          and on (job, instance) lanrith:inventory_current
+      - record: lanrith:enrollable_neighbor
+        expr: |
+          (lanrith_router_client_neighbor_info == 1)
+          * on (job, instance, network, interface) group_left (placement) lanrith:reconcilable_attachment
+      - record: lanrith:ids_capture_current
+        expr: |
+          (lanrith_router_ids_stats_fresh == 1)
+          and on (job, instance) lanrith:collection_current
+          and on (job, instance) (lanrith_expected_router{ids="enabled"} == 1)
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="ids_capture"} == 1)
+          and on (job, instance) (lanrith_router_ids_stats_timestamp_seconds >= on (job, instance) node_boot_time_seconds)
+          and on (job, instance) (lanrith_router_ids_stats_timestamp_seconds >= time() - 75)
+          and on (job, instance) (lanrith_router_ids_stats_timestamp_seconds <= time() + 5)
+      - alert: LanrithIDSCaptureUnavailable
+        expr: (lanrith_expected_router{ids="enabled"} == 1) unless on (job, instance) lanrith:ids_capture_current
+      - alert: LanrithIDSKernelDrops
+        expr: (increase(lanrith_router_ids_kernel_drops_total[5m]) > 0) and on (job, instance) lanrith:ids_capture_current
+      - record: lanrith:alloy_queue_observed
+        expr: |
+          (lanrith_expected_router{logs="enabled"} == 1)
+          and on (job, instance) lanrith:collection_observed
+          and on (job, instance) (lanrith_router_metrics_query_success{collector="alloy"} == 1)
+          and on (job, instance) (lanrith_router_alloy_queue_capacity_bytes > 0)
+          and on (job, instance) lanrith_router_alloy_queue_size_bytes
+          and on (job, instance) lanrith_router_alloy_enqueue_failed_records_total
+          and on (job, instance) lanrith_router_alloy_send_failed_records_total
+      - alert: LanrithLogQueueObservationUnavailable
+        expr: (lanrith_expected_router{logs="enabled"} == 1) unless on (job, instance) lanrith:alloy_queue_observed
+      - alert: LanrithLogQueueGrowing
+        expr: |
+          (deriv(lanrith_router_alloy_queue_size_bytes[5m]) > 0)
+          and on (job, instance) (lanrith_router_alloy_queue_size_bytes > 0)
+          and on (job, instance) lanrith:alloy_queue_observed
+        for: 5m
+      - alert: LanrithLogEnqueueFailures
+        expr: (increase(lanrith_router_alloy_enqueue_failed_records_total[5m]) > 0) and on (job, instance) lanrith:alloy_queue_observed
+      - alert: LanrithLogSendFailures
+        expr: (increase(lanrith_router_alloy_send_failed_records_total[5m]) > 0) and on (job, instance) lanrith:alloy_queue_observed

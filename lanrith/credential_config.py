@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 from . import authoritative, bindings
 from .release import canonical, require
-from .credential_values import FORMAT_UNITS, FORMATS, UNITS, validate_catalog
+from .credential_values import FORMAT_UNITS, FORMATS, STARTUP_UNITS, UNITS, consumer_units, validate_catalog
 
 
 def catalog(value):
@@ -58,9 +58,12 @@ def render(value):
         files = {'usr/share/lanrith/credentials.json': canonical(result).decode(),
             'usr/lib/systemd/system/lanrith-credential-ready.service': image_gate(
                 '/usr/bin/lanrith-credentials gate')}
-        for unit in result['units']:
-            files['etc/systemd/system/'+unit+'.d/50-lanrith-credentials.conf'] = (
-                '[Unit]\nRequires=lanrith-credential-ready.service\nAfter=lanrith-credential-ready.service\n')
+        for kind in sorted({item['format'] for item in result['credentials']}):
+            gate = 'lanrith-credential-'+kind+'.service'
+            files['usr/lib/systemd/system/'+gate] = image_gate('/usr/bin/lanrith-credentials gate '+kind)
+            for unit in STARTUP_UNITS[kind]:
+                files['etc/systemd/system/'+unit+'.d/50-lanrith-credentials.conf'] = (
+                    '[Unit]\nRequires='+gate+'\nAfter='+gate+'\n')
         return files
     control = '/var/lib/lanrith/credential-provisioning'
     directories = sorted({str(PurePosixPath(i['path']).parent) for i in result['credentials']})
@@ -101,17 +104,17 @@ def render(value):
             'StandardInput=socket\nStandardOutput=journal\nStandardError=journal\n'
             'RuntimeMaxSec=300s\nTimeoutStopSec=15s\nKillMode=control-group\n'
             'ReadWritePaths='+control+' '+' '.join(directories)+'\n'+hardening)}
-    for unit in result['units']:
+    for unit in consumer_units(result):
         files['etc/systemd/system/'+unit+'.d/50-lanrith-credentials.conf'] = (
             '[Unit]\nRequires=lanrith-credential-ready.service\nAfter=lanrith-credential-ready.service\n')
     return files
 
 
-def image_gate(command):
+def image_gate(command, *, remain=True):
     """One immediate check of signed image inputs, with no provisioning wait."""
     return ('[Unit]\nDescription=Validate credentials supplied by this image\n'
         'DefaultDependencies=no\nBefore=shutdown.target\nConflicts=shutdown.target\n'
-        '\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart='+command+'\n'
+        '\n[Service]\nType=oneshot\n'+('RemainAfterExit=yes\n' if remain else '')+'ExecStart='+command+'\n'
         'TimeoutStartSec=30s\nUMask=0077\nNoNewPrivileges=yes\n'
         'CapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\n'
         'ProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nPrivateNetwork=yes\n'

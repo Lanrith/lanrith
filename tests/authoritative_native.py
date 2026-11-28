@@ -18,9 +18,18 @@ from phase_b_native import run, ns
 
 
 def main():
-    assert os.geteuid() == 0 and Path('/run/.containerenv').exists()
+    assert os.geteuid() == 0
+    if '--isolated-systemd' in sys.argv:
+        assert Path('/proc/1/comm').read_text().strip() == 'systemd'
+        assert run('systemd-detect-virt', '--vm').stdout.strip()
+        assert not Path('/usr/share/lanrith/installed.json').exists()
+    else:
+        assert Path('/run/.containerenv').exists()
     assert {p.name for p in Path('/sys/class/net').iterdir()} == {'lo'}
     value = declaration()
+    value['services']['dns']['authoritative']['direct_readers'] = [
+        {'network': 'home', 'addresses': '192.168.10.23'},
+        {'network': 'home', 'addresses': 'fd42:1234:5678:10::20'}]
     value['networks']['home']['dhcp4'] = {'enabled': False}
     value['services']['ntp'] = {'enabled': False}
     value['hardware']['interfaces']['guest'] = {'name': 'guest', 'match': {'mac': '02:00:00:00:30:01'}}
@@ -58,6 +67,10 @@ def main():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
         Path('/run/lanrith-dns').mkdir(mode=0o755)
+        Path('/run/named').mkdir(exist_ok=True)
+        Path('/var/cache/bind').mkdir(parents=True, exist_ok=True)
+        bind = pwd.getpwnam('bind')
+        os.chown('/var/cache/bind', bind.pw_uid, bind.pw_gid)
         credentials = work/'credentials'
         credentials.mkdir(mode=0o700)
         for index, name in enumerate(('first', 'second')):
@@ -94,11 +107,14 @@ def main():
                 ns(namespace, 'ip', 'link', 'set', 'eth0', 'up')
                 ns(namespace, 'ip', 'link', 'set', 'lo', 'up')
                 ns(namespace, 'ip', 'route', 'add', 'default', 'via', gateway.split('/')[0])
-            for address in ('192.168.10.21/24', '192.168.10.22/24'):
+            for address in ('192.168.10.21/24', '192.168.10.22/24', '192.168.10.23/24'):
                 ns('lan-test', 'ip', 'addr', 'add', address, 'dev', 'eth0')
             run('ip', '-6', 'addr', 'add', 'fd42:1234:5678:10::1/64', 'dev', 'lan', 'nodad')
             ns('lan-test', 'ip', '-6', 'addr', 'add', 'fd42:1234:5678:10::20/64', 'dev', 'eth0', 'nodad')
             ns('lan-test', 'ip', '-6', 'route', 'add', 'default', 'via', 'fd42:1234:5678:10::1')
+            ns('lan-test', 'ip', '-6', 'addr', 'add', 'fd42:1234:5678:10::22/64', 'dev', 'eth0', 'nodad')
+            if '--isolated-systemd' in sys.argv:
+                run('sysctl', '-qw', 'net.ipv4.ip_forward=1', 'net.ipv6.conf.all.forwarding=1')
             if ipv6_upstream:
                 run('ip', '-6', 'addr', 'add', '2001:db8:feed::1/64', 'dev', 'wan', 'nodad')
                 ns('wan-test', 'ip', '-6', 'addr', 'add', '2001:db8:feed::20/64', 'dev', 'eth0', 'nodad')
@@ -146,9 +162,24 @@ def main():
                 for n in range(6):
                     for kind, expected in (('A', '10.255.200.'+str(n+2)),
                                            ('AAAA', 'fd42:1234:5678:10::'+str(n+30))):
-                        answer = ns('lan-test', 'dig', '+time=1', '+tries=1', '+short', '@'+target,
-                                    f'service-{n}.example.test', kind).stdout.strip()
+                        source = 'fd42:1234:5678:10::20' if ':' in target else '192.168.10.20'
+                        result = subprocess.run(['ip', 'netns', 'exec', 'lan-test', 'dig', '+time=2', '+tries=1',
+                                                 '+short', '-b', source, '@'+target, f'service-{n}.example.test',
+                                                 kind], capture_output=True, text=True)
+                        answer = result.stdout.strip()
                         assert answer == expected, (target, kind, answer)
+            for index, (diagnostic, ordinary) in enumerate((
+                    ('192.168.10.23', '192.168.10.22'), ('fd42:1234:5678:10::20', 'fd42:1234:5678:10::22'))):
+                for transport in ('+tcp', '+notcp'):
+                    for source, target, allowed in ((ordinary, resolver[index], True),
+                                                    (ordinary, authority[index], False),
+                                                    (diagnostic, authority[index], True)):
+                        result = subprocess.run(['ip', 'netns', 'exec', 'lan-test', 'dig', transport, '+short',
+                                                 '+time=1', '+tries=1', '-b', source, '@'+target,
+                                                 'seeded.example.test.', 'A'], capture_output=True, text=True)
+                        assert (result.stdout.strip() == '192.0.2.20') == allowed, (source, target, result.stdout)
+                        if not allowed:
+                            assert result.returncode != 0, 'Direct query bypassed the firewall.'
             if dns64_enabled:
                 for target in resolver:
                     for name, expected in (
@@ -195,6 +226,8 @@ def main():
             update('192.168.10.20', 'first', 'dynamic-first', True)
             update('192.168.10.21', 'second', 'dynamic-second', True)
             update('192.168.10.20', 'first', 'dynamic-udp', True, tcp=False)
+            update('192.168.10.21', 'second', 'undeclared', False)
+            update('192.168.10.23', 'first', 'diagnostic-only', False)
             update('192.168.10.20', 'second', 'wrong-key', False)
             update('192.168.10.21', 'first', 'wrong-key', False)
             update('192.168.10.22', 'first', 'wrong-source', False)

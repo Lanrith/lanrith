@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import runpy
 from types import SimpleNamespace
 import tempfile
 import time
@@ -34,7 +35,7 @@ class NtpHealthTests(unittest.TestCase):
         collector = files['usr/lib/systemd/system/lanrith-router-metrics.service']
         self.assertIn('SupplementaryGroups=_chrony\n', collector)
         self.assertIn('CapabilityBoundingSet=CAP_NET_ADMIN\n', collector)
-        self.assertIn('lanrith-ntp-health.timer', json.loads(files['usr/share/lanrith/health.json'])['units'])
+        self.assertNotIn('lanrith-ntp-health.timer', json.loads(files['usr/share/lanrith/health.json'])['units'])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root/'base.tar').write_bytes(b'synthetic')
@@ -42,7 +43,7 @@ class NtpHealthTests(unittest.TestCase):
             overlay = root/'image/mkosi.extra'
             self.assertTrue((overlay/'usr/lib/lanrith/ntp-health').is_file())
             self.assertTrue((overlay/'usr/lib/lanrith/lanrith/ntp_health_runtime.py').is_file())
-            self.assertTrue((overlay/'etc/systemd/system/lanrith-ntp-health.timer').is_symlink())
+            self.assertTrue((overlay/'usr/lib/systemd/system/multi-user.target.wants/lanrith-ntp-health.timer').is_symlink())
         value['observability']['metrics']['enabled'] = False
         self.assertFalse(any('ntp-health' in path for path in config.render(value)))
 
@@ -68,6 +69,85 @@ class NtpHealthTests(unittest.TestCase):
                           {**original, 'query_success': False, 'synchronised': False}):
                 runtime.publish(value, path)
                 self.assertEqual(runtime.read_observation(path, boot='synthetic-boot', namespace=1234), value)
+
+    def test_accuracy_uses_reference_time_and_remaining_correction_from_same_tracking_row(self):
+        fields = ['C0000201', '', '3', '12345.5', '-0.01', '30', '0', '0', '0', '0',
+                  '0.04', '0.02', '64', 'Normal']
+        for index, value, reference, error in ((3, '12345.5', 12345.5, 0.05),
+                                                (3, '1', 1, 0.05), (4, '-120', 12345.5, 120.04),
+                                                (11, '25', 12345.5, 25.03)):
+            row = fields.copy()
+            row[index] = value
+            measured = router_metrics_runtime.tracking_measurements(','.join(row))
+            self.assertTrue(measured['synchronised'])
+            self.assertEqual(measured['reference_timestamp_seconds'], reference)
+            self.assertAlmostEqual(measured['clock_error_bound_seconds'], error)
+        for index, value in ((3, '0'), (11, '-0.1'), (0, '7F7F0101'), (13, 'Not synchronised')):
+            row = fields.copy()
+            row[index] = value
+            measured = router_metrics_runtime.tracking_measurements(','.join(row))
+            self.assertIsNone(measured['clock_error_bound_seconds'])
+            self.assertIsNone(measured['reference_timestamp_seconds'])
+        for invalid in ('NaN', 'inf', '-inf'):
+            row = fields.copy()
+            row[10] = invalid
+            with self.assertRaises(ValueError):
+                router_metrics_runtime.tracking_measurements(','.join(row))
+
+    def test_v2_snapshot_rejects_partial_inconsistent_and_unrepresentable_measurements(self):
+        account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(runtime.pwd, 'getpwnam', return_value=account):
+            root = Path(temporary)
+            root.chmod(0o750)
+            path = root/'health.json'
+            pair = {'reference_timestamp_seconds': 123.5, 'clock_error_bound_seconds': 0.01}
+            original = {**self.observation(), 'schema': 2, **pair}
+            runtime.publish(original, path)
+            self.assertEqual(runtime.read_observation(path, boot='synthetic-boot', namespace=1234), original)
+            for change in ({'schema': 1}, {'synchronised': False}, {'query_success': False},
+                           {'reference_timestamp_seconds': 0}, {'clock_error_bound_seconds': -0.1},
+                           {'clock_error_bound_seconds': True}, {'reference_timestamp_seconds': None},
+                           {'clock_error_bound_seconds': None}, {'clock_error_bound_seconds': 10**400},
+                           {'reference_timestamp_seconds': '42'}):
+                with self.subTest(change=change):
+                    runtime.publish({**original, **change}, path)
+                    with self.assertRaises(ValueError):
+                        runtime.read_observation(path, boot='synthetic-boot', namespace=1234)
+            nulls = dict.fromkeys(pair)
+            for query, sync in ((False, False), (True, False), (True, True)):
+                value = {**original, **nulls, 'query_success': query, 'synchronised': sync}
+                runtime.publish(value, path)
+                self.assertEqual(runtime.read_observation(path, boot='synthetic-boot', namespace=1234), value)
+            for name in pair:
+                value = original.copy()
+                del value[name]
+                runtime.publish(value, path)
+                with self.assertRaises(ValueError):
+                    runtime.read_observation(path, boot='synthetic-boot', namespace=1234)
+
+    def test_client_qualification_uses_selected_families_and_omissions(self):
+        qualify = runpy.run_path(str(Path(__file__).resolve().parents[1]/'scripts/qualify-ntp-client.py'))['qualify']
+        measure = mock.Mock(side_effect=lambda target, scopes: {'family': target.version, 'accepted': True})
+        with mock.patch.dict(qualify.__globals__, measure=measure):
+            value = config.normalize(fixture())
+            self.assertEqual(qualify(value, 'home')['result'], 'not-selected')
+            measure.assert_not_called()
+            raw = fixture()
+            raw['services']['ntp']['enabled'] = True
+            raw['networks']['home']['ipv6'] = {'subnet_id': 1}
+            raw['addressing']['services'] = {'ipv4': '172.30.40.0/24', 'ipv6': 'fd42:1234:5678:700::/64'}
+            self.assertEqual([r['family'] for r in qualify(config.normalize(raw), 'home')['measurements']], [4, 6])
+            self.assertEqual(str(measure.call_args.args[0]), 'fd42:1234:5678:700::40')
+            raw['networks']['home'].pop('ipv6')
+            raw['networks']['home']['ra'] = False
+            self.assertEqual([r['family'] for r in qualify(config.normalize(raw), 'home')['measurements']], [4])
+            del raw['networks']['home']['ipv4'], raw['networks']['home']['dhcp4'], raw['networks']['home']['ra']
+            raw['networks']['home']['ipv6'] = {'subnet_id': 1}
+            self.assertEqual([r['family'] for r in qualify(config.normalize(raw), 'home')['measurements']], [6])
+            raw['networks']['home']['ntp'] = False
+            self.assertEqual(qualify(config.normalize(raw), 'home')['result'], 'not-selected')
+            with self.assertRaises(ValueError):
+                qualify(value, 'misspelling')
 
     def test_publication_is_bounded_across_interrupted_writes_and_rejects_unsafe_paths(self):
         account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())

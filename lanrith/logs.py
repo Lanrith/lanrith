@@ -87,7 +87,8 @@ loki.source.journal "router" {
 loki.process "router_redaction" {
   forward_to = [otelcol.receiver.loki.router.receiver]
   stage.json {
-    expressions = { message = "MESSAGE", journal_boot = "_BOOT_ID", journal_time = "__REALTIME_TIMESTAMP", journal_transport = "_TRANSPORT" }
+    drop_malformed = true
+    expressions = { message = "MESSAGE || 'journal message absent'", journal_boot = "_BOOT_ID", journal_time = "__REALTIME_TIMESTAMP", journal_transport = "_TRANSPORT" }
   }
   stage.structured_metadata {
     values = { journal_boot = "journal_boot", journal_time = "journal_time", journal_transport = "journal_transport" }
@@ -257,9 +258,10 @@ def render(value, *, observer=None):
         'usr/lib/systemd/system/lanrith-telemetry-heartbeat.service': (
             '[Unit]\nDescription=Emit the remote telemetry liveness identity\n'
             'Requires=boot-complete.target alloy.service\n'
-            'After=boot-complete.target alloy.service lanrith-observation.service\n'
-            'ConditionPathExists=/run/lanrith/boot.json\n\n'
-            '[Service]\nType=oneshot\nUser=alloy\nGroup=alloy\n'
+            'After=boot-complete.target alloy.service lanrith-observation.service\n\n'
+            '[Service]\nType=oneshot\nDynamicUser=yes\nUser=_lanrith-heartbeat\n'
+            'TimeoutStartSec=20s\nTimeoutStopSec=5s\n'
+            'ExecCondition=/usr/bin/test -e /run/lanrith/committed-boot.json\n'
             'ExecStart=/usr/bin/lanrith-runtime telemetry\n'
             'NoNewPrivileges=yes\nPrivateTmp=yes\nPrivateDevices=yes\nProtectHome=yes\nProtectSystem=strict\n'
             'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\n'

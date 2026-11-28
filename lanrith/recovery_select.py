@@ -10,7 +10,6 @@ from . import early_failure, factory, recovery_inputs, release, update
 
 
 OPERATOR_SELECTION_QUALIFIED = False
-ONESHOT = Path('/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')
 OBSERVATION_DEADLINE_SECONDS = 900
 
 
@@ -33,6 +32,41 @@ def bounded_observation(observe):
         signal.signal(signal.SIGALRM, previous)
 
 
+def eligible_identity(*, oneshot=None):
+    release.require(os.geteuid() == 0 and Path('/etc/initrd-release').is_file(),
+                    'Fallback selection requires the signed initrd.')
+    installed = factory.read_failure_identity()
+    early_failure.require_fallback_policy(installed)
+    if 'steady_state' not in installed and not OPERATOR_SELECTION_QUALIFIED:
+        raise early_failure.FallbackUnavailable('The signed recovery policy is unqualified for serial selection.')
+    early_failure.accepted_predecessor(installed, oneshot=oneshot)
+    return installed
+
+
+def unavailable_reason():
+    """Report only static policy/selector reasons before offering the command."""
+    try:
+        eligible_identity()
+    except early_failure.FallbackUnavailable as error:
+        return str(error)
+    except (release.ReleaseError, OSError, ValueError, KeyError):
+        return 'The signed policy or boot choices could not be verified.'
+    return None
+
+
+def reboot_selected(selection):
+    identifier = selection['entry']
+    release.require(isinstance(identifier, str) and identifier, 'Missing confirmed boot entry.')
+    installed = eligible_identity(oneshot=identifier)
+    factory.secure_boot()
+    bound = installed['fallback_binding']['release']
+    release.require(selection['sequence'] == bound['sequence'] and
+                    re.sub(r'\+[0-9]+(?:-[0-9]+)?(?=\.efi$)', '', identifier) == bound['uki_name'],
+                    'The confirmed boot entry differs from the signed fallback.')
+    early_failure.accepted_predecessor(installed, oneshot=identifier)
+    update.command(['systemctl', '--force', 'reboot'])
+
+
 def select_bound(*, confirm):
     """Select the bound installed fallback once without changing the default.
 
@@ -40,24 +74,15 @@ def select_bound(*, confirm):
     must return the exact decimal deployment number. The signed running initrd
     must bind the target and fallback; no arbitrary boot path is accepted.
     """
-    release.require(callable(confirm) and os.geteuid() == 0 and Path('/etc/initrd-release').is_file(),
-                    'Fallback selection requires an authenticated recovery initrd.')
+    release.require(callable(confirm), 'Fallback selection requires operator confirmation.')
     def initial_observation():
-        installed = json.loads(release.read(Path('/usr/share/lanrith/initrd-failure.json'), 65536),
-                               object_pairs_hook=release.unique)
-        early_failure.failure_identity(installed)
-        release.require('steady_state' in installed or OPERATOR_SELECTION_QUALIFIED and
-                        early_failure.FALLBACK_AUTHENTICATION_QUALIFIED and
-                        early_failure.ROLLBACK_COMPATIBILITY_QUALIFIED,
-                        'Operator fallback selection is not qualified.')
-        release.require('fallback_binding' in installed, 'No bound fallback is available.')
+        installed = eligible_identity()
         factory.secure_boot()
         binding = installed['fallback_binding']
         disk = recovery_inputs.canonical_disk(binding['disk_by_id'])
         early_failure.observe_boot_esp(disk, binding['esp_uuid'])
         before, rows = recovery_inputs.disk_snapshot(disk)
         esp = recovery_inputs.partition(rows, disk, binding['esp_uuid'], recovery_inputs.ESP_GUID)
-        release.require(not ONESHOT.exists(), 'A pending one-shot boot selection already exists.')
         return installed, binding, disk, before, rows, esp
 
     installed, binding, disk, before, rows, esp = bounded_observation(initial_observation)
@@ -87,7 +112,7 @@ def select_bound(*, confirm):
         bounded_observation(lambda: early_failure.observe_bound_fallback(installed, point))
         bounded_observation(lambda: recovery_inputs.stable_snapshot(disk, (before, rows), esp))
         bounded_observation(factory.secure_boot)
-        release.require(not ONESHOT.exists(), 'A pending one-shot boot selection appeared.')
+        early_failure.accepted_predecessor(installed)
         listing = json.loads(bounded_observation(
             lambda: update.command(['bootctl', '--esp-path='+str(point), '--json=short', 'list'])))
         release.require(isinstance(listing, list), 'Fallback boot inventory is invalid.')
@@ -102,19 +127,16 @@ def select_bound(*, confirm):
                         'Boot loader does not identify the bound fallback.')
         identifier = entries[0]['id']
         bounded_observation(lambda: early_failure.observe_bound_fallback(installed, point))
-        release.require(not ONESHOT.exists(), 'A pending one-shot boot selection appeared.')
+        early_failure.accepted_predecessor(installed)
         # No ESP or default-entry writes: bootctl sets a single EFI one-shot.
         def current_choice():
-            if not ONESHOT.exists():
-                return None
-            data = release.read(ONESHOT, 4096)
             try:
-                return data[4:].decode('utf-16-le').rstrip('\0') if len(data) >= 6 and (len(data)-4) % 2 == 0 else ''
-            except UnicodeError:
-                return ''
+                return early_failure.loader_entry('LoaderEntryOneShot')
+            except FileNotFoundError:
+                return None
         try:
             update.command(['bootctl', '--esp-path='+str(point), 'set-oneshot', identifier])
-            release.require(current_choice() == identifier, 'One-shot fallback selection could not be verified.')
+            early_failure.accepted_predecessor(installed, oneshot=identifier)
             bounded_observation(lambda: recovery_inputs.stable_snapshot(disk, (before, rows), esp))
         except Exception:
             # Clear only the value we just selected. If its identity is unknown,
@@ -123,11 +145,11 @@ def select_bound(*, confirm):
                 selected = current_choice()
                 if selected == identifier:
                     update.command(['bootctl', '--esp-path='+str(point), 'set-oneshot', ''])
-                    release.require(not ONESHOT.exists(), 'Fallback selection cleanup failed.')
+                    release.require(current_choice() is None, 'Fallback selection cleanup failed.')
                 elif selected is not None:
                     raise release.ReleaseError('Fallback selection state is uncertain.')
             except (release.ReleaseError, OSError, ValueError, KeyError, subprocess.SubprocessError):
                 raise release.ReleaseError('Fallback selection state is uncertain.') from None
             raise
     return {'schema': 1, 'scope': 'experimental-one-shot-fallback', 'sequence': sequence,
-            'automatic_reboot': False, 'default_changed': False}
+            'entry': identifier, 'automatic_reboot': False, 'default_changed': False}
