@@ -639,6 +639,19 @@ def serve(contract_path=CONTRACT):
             os.close(descriptor)
 
 
+def guard_device_matches(nft, hook, name, interface):
+    if 'dev' in hook or 'devs' in hook:
+        return hook.get('dev') == interface and 'devs' not in hook
+    # nft 1.0.9 can omit the device in JSON even for a single-device hook.
+    # Its numeric text listing identifies the interface. Match the entire chain
+    # so multiple devices, extra rules or a different policy cannot qualify.
+    listing = subprocess.run([nft, '-n', 'list', 'chain', 'netdev', 'lanrith_identity', name],
+                             capture_output=True, check=True, timeout=5)
+    expected = (f'table netdev lanrith_identity {{ chain {name} {{ type filter hook egress '
+                f'device "{interface}" priority 0; policy accept; jump tp_identity }} }}')
+    return len(listing.stdout) <= 4096 and listing.stdout.split() == expected.encode().split()
+
+
 def verify_guard_hooks(contract):
     listing = subprocess.run([contract['nft_executable'], '-j', '-n', '-t', 'list', 'table',
                               'netdev', 'lanrith_identity'], capture_output=True, check=True, timeout=5)
@@ -656,9 +669,10 @@ def verify_guard_hooks(contract):
             rules[rule['chain']].append(rule['expr'])
     for name, interface in expected.items():
         hook = hooks[name]
-        if ((hook.get('dev'), hook.get('type'), hook.get('hook'), hook.get('prio'), hook.get('policy'))
-                != (interface, 'filter', 'egress', 0, 'accept') or
-                rules[name] != [[{'jump': {'target': 'tp_identity'}}]]):
+        if ((hook.get('type'), hook.get('hook'), hook.get('prio'), hook.get('policy'))
+                != ('filter', 'egress', 0, 'accept') or
+                rules[name] != [[{'jump': {'target': 'tp_identity'}}]] or
+                not guard_device_matches(contract['nft_executable'], hook, name, interface)):
             raise GuardReadinessError('Live policy guard differs for interface '+interface+'.')
 
 
