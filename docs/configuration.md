@@ -254,6 +254,9 @@ Ordinary DNS clients query Unbound. Add an attachment and source address to
 the primary directly. Configured publishers can query from their declared sources.
 A writer needs a TSIG credential and explicit grants. When upgrading an existing
 writer, list the record types and names its publisher maintains.
+Lanrith accepts any number of writer grants and static record names within the
+overall configuration file size limit of 1 MiB. A publisher with a TXT registry
+also needs grants for its ownership record names.
 
 ```yaml
 direct_readers:

@@ -154,6 +154,26 @@ class AuthoritativeTests(unittest.TestCase):
         authority['enabled'] = False
         self.assertNotIn('etc/bind/named.conf', config.render(value))
 
+    def test_large_zone_keeps_exact_writer_grants(self):
+        value = declaration()
+        authority = value['services']['dns']['authoritative']
+        records = {f'host-{i}': {'A': '192.0.2.1'} for i in range(4100)}
+        authority['zones']['example.test']['records'] = records
+        writer = authority['writers']['first']
+        writer['grants'] = [{'name': name, 'types': ['TXT']} for name in records]
+        files = config.render(value)
+        grants = [line.strip() for line in files['etc/bind/named.conf'].splitlines()
+                  if line.strip().startswith('grant "first-key"')]
+        self.assertEqual(grants, [f'grant "first-key" name {name}.example.test. TXT;' for name in records])
+        zone_lines = set(files['usr/share/lanrith/zones/db.example.test'].splitlines())
+        self.assertTrue(all(f'{name} IN A 192.0.2.1' in zone_lines for name in records))
+        writer['grants'][-1]['name'] = 'outside.example.'
+        with self.assertRaises(ReleaseError):
+            config.render(value)
+        writer['grants'] = {'name': 'single', 'types': ['A']}
+        with self.assertRaisesRegex(ReleaseError, 'must be a list'):
+            config.render(value)
+
     def test_routed_resolver_client_needs_a_separate_authority_grant(self):
         from test_routing import declaration as routed_declaration
         value = routed_declaration()

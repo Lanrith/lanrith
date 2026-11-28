@@ -149,7 +149,7 @@ def dns_records(value):
         intent.fields(settings, {'persistent', 'records', 'records_from', 'managed_rrsets', 'discovery_delegation'})
         intent.boolean(settings.get('persistent', False))
         records = settings.get('records', {})
-        require(isinstance(records, dict) and len(records) <= 4096, 'Invalid DNS records.')
+        require(isinstance(records, dict), 'Invalid DNS records.')
         resolved = {}
         for label, rr in records.items():
             domain(label)
@@ -196,7 +196,8 @@ def dns_records(value):
                       {'zone', 'sources', 'key_name', 'credential'})
         require(writer['zone'] in zones, 'DNS writer references an undeclared zone.')
         require(not active or 'grants' in writer, 'Specify explicit grants for each authoritative DNS writer.')
-        grants = intent.sequence(writer.get('grants', []), 64)
+        grants = writer.get('grants', [])
+        require(isinstance(grants, list), 'DNS writer grants must be a list.')
         require(not active or grants or writer.get('zone_transfer') is True,
                 'DNS writer needs grants or transfer access.')
         for grant in grants:
