@@ -373,12 +373,12 @@ def exercise(example):
                     for port in (123, 161, 5353, 12345):
                         probe(namespace, gateway, port, False, 'udp')
                     remote = next(peer for _, peer, version in uplink if version == family)
-                    translated = '198.51.100.1' if family == 4 else address
-                    # Both reviewed examples explicitly permit their client
-                    # networks to the uplink; do not derive expectations from
-                    # the compiler's rule interpretation.
-                    probe(namespace, remote, 8888, True, peer=translated)
-                    probe(namespace, remote, 8888, True, 'udp', peer=translated)
+                    # Both examples provide IPv4 masquerading and local-only IPv6.
+                    # The upstream has a return route even for the denied IPv6 probe.
+                    allowed = family == 4
+                    peer = '198.51.100.1' if allowed else None
+                    probe(namespace, remote, 8888, allowed, peer=peer)
+                    probe(namespace, remote, 8888, allowed, 'udp', peer=peer)
                     # Observe the upstream receiver, so asymmetric replies cannot
                     # make an admitted spoof look like a correctly rejected packet.
                     spoof = '203.0.113.99' if family == 4 else '2001:db8:dead::99'
@@ -396,6 +396,19 @@ def exercise(example):
                     # A synthetic global IPv6 source would otherwise remain
                     # preferred for later UDP replies to the upstream peer.
                     ns(namespace, 'ip', 'address', 'del', spoof+('/32' if family == 4 else '/128'), 'dev', 'eth0')
+            # A private upstream route makes the named IPv6 destination reachable
+            # under the same access rule, preserving the client's source address.
+            remote6 = next(peer for _, peer, family in uplink if family == 6)
+            client6 = next(peer for _, peer, family in first_client[2] if family == 6)
+            network = value['networks'][first_client[1]]
+            network['ipv6_upstream_routes'] = [remote6+'/128']
+            rules.write_text(config.render(value)['etc/nftables.conf'])
+            ns('router', 'nft', '--file', str(rules))
+            for protocol in ('tcp', 'udp'):
+                probe(first_client[0], remote6, 8888, True, protocol, peer=client6)
+            del network['ipv6_upstream_routes']
+            rules.write_text(config.render(value)['etc/nftables.conf'])
+            ns('router', 'nft', '--file', str(rules))
             for gateway, remote, family in uplink:
                 probe('upstream', gateway, 22, False)
                 for _, _, addresses in clients:
@@ -439,6 +452,8 @@ def exercise(example):
                 probe(first[0], target, 8889, False)
                 # Even an explicit wildcard permit cannot override isolation,
                 # internal-source validation on WAN, or DHCP/link-local guards.
+                # Allow the first LAN to return traffic to the private upstream peer.
+                value['networks'][first[1]]['ipv6_upstream_routes'] = [remote6+'/128']
                 value['networks'][second[1]]['forwarding'] = False
                 value['access'] = {'rules': [{'action': 'allow', 'from': 'any', 'to': 'any'}]}
                 rules.write_text(config.render(value)['etc/nftables.conf'])
