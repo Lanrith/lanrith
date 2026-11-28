@@ -489,6 +489,10 @@ paging from the first request or `unpaged` for a directory that can return
 both searches in full. Referrals, incomplete reads and timeouts leave the
 previous grant expiry in force.
 
+When you declare a mapping or search mode, image assembly checks the settings
+and bind DN with the reader binary inside that image. The check runs offline
+and requires no directory password.
+
 With metrics enabled, a separate credential-free identity observes verified
 directory TLS. Its results describe transport health; authenticated collection
 and fresh grants have separate requirements. See [router health metrics](metrics.md).

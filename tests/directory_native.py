@@ -28,7 +28,7 @@ CHECKS = {'ldaps-ipv4-ipv6', 'starttls-ipv4-ipv6', 'hostname-and-authority-valid
           'reader-and-observer-exact-egress', 'managed-source-return', 'other-identities-destination-port-source-interface-denied',
           'independent-observer-identity', 'private-fresh-observation', 'installed-trust-overlap-and-rotation', 'disabled-components-remove-paths'}
 IMPLEMENTATION = ('lanrith/directory_config.py', 'lanrith/directory_runtime.py', 'lanrith/firewall.py', 'lanrith/release.py',
-                  'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py',
+                  'lanrith/metrics.py', 'lanrith/router_metrics_runtime.py', 'lanrith/integrations.py', 'lanrith/directory_settings.py',
                   'lanrith/config.py', 'lanrith/dns64.py', 'lanrith/build.py', 'lanrith/runtime_plan.py',
                   'tests/test_directory.py', 'tests/test_radius.py', 'tests/test_policy_agent.py', 'tests/test_intent.py')
 SUCCESS = bytes.fromhex('300c02010178070a010004000400')

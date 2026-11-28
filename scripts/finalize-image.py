@@ -142,7 +142,11 @@ def finalize_policy(root):
         raise ValueError('Policy profile scratch path already exists.')
     scratch.mkdir(mode=0o700)
     program = r'''
-import json, pathlib, subprocess
+import json, pathlib, subprocess, sys
+sys.path.insert(0, '/usr/lib/lanrith')
+from lanrith.policy_runtime import load_contract, check_reader_configuration
+
+check_reader_configuration(load_contract()['directory'])
 root = pathlib.Path('/run/lanrith-policy-build')
 backend = pathlib.Path('/usr/lib/lanrith-build/policy-backend')
 selected = backend.read_text().strip()

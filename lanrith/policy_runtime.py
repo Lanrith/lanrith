@@ -296,6 +296,21 @@ def credential(contract):
         raise PolicyRuntimeError('Directory credential encoding differs.') from error
 
 
+def reader_configuration(directory):
+    return {
+        'schema_version': 1, 'directory_url': directory['url'], 'base_dn': directory['base_dn'],
+        'helper_socket': '/run/router-policy-ipc/requests.sock', 'custom_ca': True,
+        **{key: directory[key] for key in ('search_mode', 'mapping') if key in directory},
+    }
+
+
+def check_reader_configuration(directory):
+    """Check custom LDAP settings with the image's reader before the image is signed."""
+    if 'mapping' in directory or 'search_mode' in directory:
+        subprocess.run(['/usr/bin/router-policy-reader', '-check-config', '-check-bind-dn', directory['bind_dn']],
+                       input=json.dumps(reader_configuration(directory)).encode(), check=True, timeout=10)
+
+
 def prepare_reader(contract, password):
     account = pwd.getpwnam('router-policy-reader')
     if account.pw_uid == 0:
@@ -313,10 +328,7 @@ def prepare_reader(contract, password):
     private_directory(READER, owner=account.pw_uid, group=account.pw_gid)
     source = Path(contract['directory']['ca_file'])
     ca = read(source, 64*1024)
-    reader = {'schema_version': 1, 'directory_url': contract['directory']['url'],
-              'base_dn': contract['directory']['base_dn'],
-              'helper_socket': '/run/router-policy-ipc/requests.sock', 'custom_ca': True,
-              **{key: contract['directory'][key] for key in ('search_mode', 'mapping') if key in contract['directory']}}
+    reader = reader_configuration(contract['directory'])
     atomic(READER/'reader.json', reader, owner=account.pw_uid, group=account.pw_gid)
     atomic(READER/'credentials.json', {'bind_dn': contract['directory']['bind_dn'],
                                       'password': password}, owner=account.pw_uid, group=account.pw_gid)

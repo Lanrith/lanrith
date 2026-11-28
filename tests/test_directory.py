@@ -60,6 +60,11 @@ class DirectoryTests(unittest.TestCase):
             self.assertEqual(outputs['reader.json']['search_mode'], 'unpaged')
             self.assertNotIn('fixture only', json.dumps(outputs['reader.json']))
             self.assertEqual(outputs['credentials.json']['bind_dn'], source['bind_dn'])
+            with mock.patch.object(policy_runtime.subprocess, 'run') as check:
+                policy_runtime.check_reader_configuration(contract['directory'])
+            self.assertEqual(check.call_args.args[0], ['/usr/bin/router-policy-reader', '-check-config',
+                                                       '-check-bind-dn', source['bind_dn']])
+            self.assertEqual(json.loads(check.call_args.kwargs['input']), outputs['reader.json'])
 
         alternate = dict(source['mapping'], device_active='userAccountControl', disabled_bit=2,
                          user_scope='subtree', group_scope='one', user_id='objectGUID', user_id_encoding='hex')
@@ -82,6 +87,9 @@ class DirectoryTests(unittest.TestCase):
         directory = json.loads(config.render(raw)[path])['directory']
         self.assertNotIn('mapping', directory)
         self.assertNotIn('search_mode', directory)
+        with mock.patch.object(policy_runtime.subprocess, 'run') as check:
+            policy_runtime.check_reader_configuration(directory)
+        check.assert_not_called()
 
     def test_shared_radius_source_is_opt_in_and_limited_to_the_directory_tuple(self):
         from test_radius import declaration as with_radius, provider_export
