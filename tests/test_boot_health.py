@@ -10,16 +10,33 @@ from unittest.mock import Mock, patch
 from lanrith import boot_health, config, runtime_plan
 from lanrith.release import ReleaseError
 from test_authoritative import declaration
+from test_logs import declaration as logs_declaration
+from test_snmp import fixture as snmp_profile
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def monitored_profile():
+    value = logs_declaration()
+    value['services'].update(declaration()['services'])
+    value['observability'].update({
+        'metrics': {'enabled': True, 'clients': [{'network': 'home'}]},
+        'snmp': snmp_profile()['observability']['snmp'],
+        'ids': {'enabled': True},
+    })
+    value['hardware']['interfaces']['oob'] = {'match': {'mac': '02:00:00:00:99:01'}}
+    value['networks']['management'] = {'interface': 'oob', 'ipv4': '192.0.2.0/28',
+                                       'role': 'management', 'forwarding': False, 'dns': False, 'ntp': False}
+    value['networks']['lab'] = {'interface': 'lan', 'vlan': 40, 'ipv4': '198.51.100.0/28',
+                                'namespace': 'lab-test', 'forwarding': False, 'dns': False, 'ntp': False}
+    return value
+
+
 class BootHealthTests(unittest.TestCase):
-    def test_template_and_full_profiles_match_the_actual_renderer(self):
-        for filename in ('minimal', 'full'):
-            with self.subTest(profile=filename):
-                value = config.load(ROOT/'examples'/f'{filename}.yaml')
+    def test_minimal_and_monitored_profiles_match_the_actual_renderer(self):
+        for profile_name, value in (('minimal', config.load(ROOT/'examples/minimal.yaml')), ('monitored', monitored_profile())):
+            with self.subTest(profile=profile_name):
                 files = config.render(value)
                 plan = json.loads(files['usr/share/lanrith/health.json'])
                 boot_health.validate(plan)
@@ -33,20 +50,20 @@ class BootHealthTests(unittest.TestCase):
                 for address in checks['listeners']:
                     self.assertIn('interface: '+address+'\n', files['etc/unbound/unbound.conf.d/lanrith.conf'])
                 self.assertFalse(any(unit.endswith('.timer') for unit in plan['units']))
-                if filename == 'minimal':
+                if profile_name == 'minimal':
                     self.assertEqual(checks['queries'], [['localhost.', 'A', ['127.0.0.1']]])
                     self.assertNotIn('wan', interfaces)
                     continue
                 self.assertEqual(set(runtime_plan.advisory_timers(config.normalize(value))),
                                  {'lanrith-telemetry-heartbeat.timer', 'lanrith-router-metrics.timer',
                                   'lanrith-ntp-health.timer', 'lanrith-directory-health.timer', 'lanrith-ids-rotate.timer'})
-                self.assertIn({'to': '0.0.0.0/0', 'via': '192.0.2.1'}, interfaces['wan0']['routes'])
-                self.assertEqual(interfaces['trunk0.40']['namespace'], 'example-lab')
-                self.assertTrue(interfaces['mgmt0']['carrier_optional'])
-                zone = files['usr/share/lanrith/zones/db.site.example.test']
+                self.assertIn({'to': '0.0.0.0/0', 'via': '10.243.0.1'}, interfaces['wan']['routes'])
+                self.assertEqual(interfaces['lan.40']['namespace'], 'lab-test')
+                self.assertTrue(interfaces['oob']['carrier_optional'])
+                zone = files['usr/share/lanrith/zones/db.home.arpa']
                 for name in ('dns', 'ns1', 'ntp', 'snmp', 'metrics'):
                     addresses = next(answers for owner, kind, answers in checks['queries']
-                                     if owner == name+'.site.example.test.' and kind == 'AAAA')
+                                     if owner == name+'.home.arpa.' and kind == 'AAAA')
                     self.assertIn(name+' IN AAAA '+addresses[0]+'\n', zone)
                 self.assertFalse(any(owner.startswith('directory.') for owner, _, _ in checks['queries']))
 
