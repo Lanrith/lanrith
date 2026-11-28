@@ -74,6 +74,13 @@ class MeasuredContentTests(unittest.TestCase):
             self.skipTest('systemd-measure oracle is unavailable.')
         required = (b'.linux', b'.initrd', b'.pcrpkey', b'.pcrsig')
         optional = (b'.osrel', b'.cmdline', b'.ucode', b'.splash', b'.dtb', b'.uname', b'.sbat')
+        # systemd-measure 257.13 on the target Debian release produced these PCRs.
+        # Older host tools can still check the other sections directly.
+        microcode_pcrs = {
+            (b'.ucode',): '7594123c8d95b8a6ec4024585207fa234723f9112355dec31bfb4bcad21aca0e',
+            optional: 'b889f74cce73c20d8e0ccd663300c696ac33dcd756badf1e1cbee62c9f0af8b6',
+        }
+        supports_microcode = '--ucode=' in subprocess.check_output([measure, '--help'], text=True)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for extra in ((), *((x,) for x in optional), optional):
@@ -85,8 +92,13 @@ class MeasuredContentTests(unittest.TestCase):
                             section = root/name[1:].decode()
                             section.write_bytes(data)
                             args.append('--'+section.name+'='+str(section))
-                    output = json.loads(subprocess.check_output(args))
-                    pcr = bytes.fromhex(output['sha256'][0]['hash'])
+                    if b'.ucode' in extra and not supports_microcode:
+                        reference = microcode_pcrs[extra]
+                    else:
+                        reference = json.loads(subprocess.check_output(args))['sha256'][0]['hash']
+                        if extra in microcode_pcrs:
+                            self.assertEqual(reference, microcode_pcrs[extra])
+                    pcr = bytes.fromhex(reference)
                     expected = hashlib.sha256(bytes(32)+bytes.fromhex('0000017f00000001000b03000800')+
                                               hashlib.sha256(pcr).digest()).hexdigest()
                     self.assertEqual(measured_boot.initrd_policy_digest(image), expected)
