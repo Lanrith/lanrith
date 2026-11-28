@@ -91,7 +91,7 @@ class StagingFaultError(release.ReleaseError):
         super().__init__('Inactive-slot interruption failed: '+json.dumps(diagnostic, sort_keys=True))
 
 
-def interrupt_staging(guest, disk, sequence, accepted, *, timeout=900):
+def interrupt_staging(guest, disk, sequence, accepted, upload_path, *, timeout=900):
     """Cut guest power only after a real inactive-slot GPT write is visible."""
     regular(disk)
     release.require(type(sequence) is int and type(accepted) is int and sequence > accepted > 0,
@@ -124,7 +124,7 @@ def interrupt_staging(guest, disk, sequence, accepted, *, timeout=900):
     # Files drain both streams even if the child emits more than a pipe holds.
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         process = subprocess.Popen(guest.ssh_arguments(
-            f'sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/{sequence}'),
+            'sudo lanrith-runtime promote '+shlex.quote(upload_path)),
             stdin=subprocess.DEVNULL, stdout=output, stderr=errors, env=guest.environment)
         try:
             while time.monotonic() < deadline:
@@ -1371,12 +1371,16 @@ done''')
         guest.ssh('sudo lanrith-runtime promote '+second_path, timeout=900)
         guest.close()
         boot(guest)
-        release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
-                        'One-shot update did not boot the new deployment.')
+        candidate = json.loads(guest.ssh('lanrith-runtime status').stdout)
+        release.require(candidate['deployment_sequence'] == 10 and
+                        (candidate.get('boot') or {}).get('accepted') is False,
+                        'Expected a healthy one-shot boot awaiting explicit acceptance.')
         check_state(guest, state, 'Update changed populated state or host identity.')
         rejected = guest.ssh('sudo lanrith-runtime promote '+third_path, success=False, timeout=900)
-        release.require(rejected.returncode != 0 and b'Accept the running boot as default' in rejected.stderr,
-                        'An unaccepted update could overwrite the last accepted fallback.')
+        release.require(rejected.returncode != 0 and b'Current committed boot acceptance is unavailable.' in rejected.stderr,
+                        'The next update was not refused for lack of committed boot acceptance.')
+        root(guest, 'test ! -e /var/lib/lanrith/update-inbox/11')
+        print('Native VM: unaccepted boot refused the next upload before admission.', flush=True)
         guest.close()
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 9,
@@ -1393,16 +1397,15 @@ done''')
                         'The installed updater accepted a tampered manifest.')
         guest.ssh('rm -rf -- '+third_path)
         third_path = upload(guest, third)
-        # The admitted store must survive the earlier power cycles. Keep the
-        # authorized foreground SSH session alive until the actual disk fault.
-        root(guest, 'test -d /var/lib/lanrith/update-inbox/11')
-        fault = interrupt_staging(guest, disk, 11, 10)
+        # The accepted predecessor can now admit a valid upload. Interrupt only
+        # after its authenticated inbox copy exists and inactive-slot writes begin.
+        fault = interrupt_staging(guest, disk, 11, 10, third_path)
         boot(guest)
         release.require(json.loads(guest.ssh('lanrith-runtime status').stdout)['deployment_sequence'] == 10,
                         'Accepted update did not persist.')
         check_state(guest, state, 'Interrupted staging changed populated state.')
-        # Resume the authenticated, durable inbox after discarding guest RAM.
-        # The untrusted upload is not required to survive this power cut.
+        # Resume from the authenticated inbox with the original upload removed.
+        guest.ssh('rm -rf -- '+shlex.quote(third_path))
         guest.ssh('sudo lanrith-runtime stage /var/lib/lanrith/update-inbox/11', timeout=900)
         guest.close()
         guest.start()
